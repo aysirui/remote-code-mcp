@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Monitor,
   FolderOpened,
@@ -10,171 +8,32 @@ import {
   Lock,
   Delete,
 } from '@element-plus/icons-vue'
-const browserWindow = window
-const token = ref(sessionStorage.getItem('rcm_key') || ''),
-  status = ref<any>({}),
-  workspaces = ref<any[]>([]),
-  writeApprovals = ref<Array<{
-    id: string
-    workspaceName: string
-    path: string
-    bytes: number
-    preview: string
-    truncated: boolean
-    createdAt: number
-  }>>([]),
-  gateway = ref(''),
-  folder = ref(''),
-  folderName = ref(''),
-  showAdd = ref(false),
-  browse = ref<any>(null),
-  pairing = ref<any>(null),
-  code = ref('')
-let timer: any
-if (location.hash.includes('token=')) {
-  const t = new URLSearchParams(location.hash.slice(1)).get('token')
-  if (t) {
-    token.value = t
-    sessionStorage.setItem('rcm_key', t)
-    history.replaceState(null, '', location.pathname)
-  }
-}
-async function api(path: string, method = 'GET', data?: any) {
-  const r = await fetch('/local/api/' + path, {
-    method,
-    headers: { Authorization: 'Bearer ' + token.value, 'content-type': 'application/json' },
-    body: data === undefined ? undefined : JSON.stringify(data),
-  })
-  const x = await r.json()
-  if (!r.ok) throw Error(x.error || 'Request failed')
-  return x
-}
-async function refresh() {
-  if (!token.value) return
-  try {
-    status.value = await api('status')
-    workspaces.value = await api('workspaces')
-    writeApprovals.value = await api('write-approvals')
-    gateway.value = status.value.gateway
-  } catch (e: any) {
-    ElMessage.error(e.message)
-  }
-}
-async function answerWriteApproval(id: string, approve: boolean) {
-  try {
-    if (approve) {
-      await ElMessageBox.confirm(
-        '批准后，当前远程请求将修改所列文件。只批准你明确认识的请求。',
-        '确认本地文件写入',
-        { type: 'warning', confirmButtonText: '允许写入' },
-      )
-    }
-    await api('write-approvals/' + encodeURIComponent(id), 'POST', { approve })
-    await refresh()
-    ElMessage.success(approve ? '已批准本次写入' : '已拒绝本次写入')
-  } catch (e: any) {
-    if (e !== 'cancel') ElMessage.error(e.message || '操作失败')
-  }
-}
-
-async function updateGateway() {
-  try {
-    await ElMessageBox.confirm('更换服务地址会解绑当前设备，确定继续吗？', '切换 Gateway', {
-      type: 'warning',
-    })
-    await api('config', 'POST', { gateway: gateway.value })
-    await refresh()
-    ElMessage.success('服务地址已更新')
-  } catch (e: any) {
-    if (e !== 'cancel') ElMessage.error(e.message)
-  }
-}
-async function startPair() {
-  try {
-    pairing.value = await api('pair/start', 'POST')
-    ElMessage.success('配对码已生成')
-  } catch (e: any) {
-    ElMessage.error(e.message)
-  }
-}
-async function finishPair() {
-  if (!pairing.value) return
-  try {
-    const r = await api('pair/complete', 'POST', {
-      id: pairing.value.id,
-      privateSecret: pairing.value.privateSecret,
-    })
-    if (r.status === 'complete') {
-      pairing.value = null
-      ElMessage.success('设备绑定成功')
-      await refresh()
-    } else ElMessage.info('请先在平台输入配对码并确认绑定')
-  } catch (e: any) {
-    ElMessage.error(e.message)
-  }
-}
-async function openBrowse(p?: string) {
-  try {
-    browse.value = await api('browse' + (p ? '?path=' + encodeURIComponent(p) : ''))
-  } catch (e: any) {
-    ElMessage.error(e.message)
-  }
-}
-function pickDir() {
-  if (!browse.value) return
-  folder.value = browse.value.path
-  browse.value = null
-}
-async function addWorkspace() {
-  try {
-    await api('workspaces', 'POST', { root: folder.value, name: folderName.value })
-    showAdd.value = false
-    folder.value = ''
-    folderName.value = ''
-    await refresh()
-    ElMessage.success('工作区授权成功')
-  } catch (e: any) {
-    ElMessage.error(e.message)
-  }
-}
-async function toggleWrite(w: any) {
-  try {
-    if (!w.permissions.write)
-      await ElMessageBox.confirm(
-        '允许 AI 修改这个项目的文件？仅对你明确授权的工作区开放。',
-        '开启写入权限',
-        { type: 'warning' },
-      )
-    await api('workspaces/' + w.id, 'PATCH', { write: !w.permissions.write })
-    await refresh()
-  } catch (e: any) {
-    if (e !== 'cancel') ElMessage.error(e.message)
-  }
-}
-async function remove(w: any) {
-  try {
-    await ElMessageBox.confirm('确认移除 ' + w.name + ' 的授权？', '移除工作区', {
-      type: 'warning',
-    })
-    await api('workspaces/' + w.id, 'DELETE')
-    await refresh()
-  } catch {}
-}
-async function unpair() {
-  try {
-    await ElMessageBox.confirm(
-      '本地将停止连接，若想完全撤销云端设备凭据，请同时在 Web Console 解绑。',
-      '断开设备',
-    )
-    await api('unpair', 'POST')
-    await refresh()
-  } catch {}
-}
-onMounted(() => {
-  refresh()
-  timer = setInterval(refresh, 8000)
-})
-onUnmounted(() => clearInterval(timer))
+import { useRuntimeConsole } from './use-runtime-console'
+const {
+  browserWindow,
+  token,
+  status,
+  workspaces,
+  writeApprovals,
+  gateway,
+  folder,
+  folderName,
+  showAdd,
+  browse,
+  pairing,
+  code,
+  refresh,
+  answerWriteApproval,
+  updateGateway,
+  startPair,
+  finishPair,
+  openBrowse,
+  pickDir,
+  addWorkspace,
+  toggleWrite,
+  remove,
+  unpair,
+} = useRuntimeConsole()
 </script>
 <template>
   <div class="layout">
@@ -209,11 +68,23 @@ onUnmounted(() => clearInterval(timer))
             <strong>{{ approval.workspaceName }}</strong>
             <div>{{ approval.path }}</div>
             <div class="muted">{{ approval.bytes }} 字节待写入</div>
-            <pre style="max-height: 160px; overflow: auto; white-space: pre-wrap; background: #f6f8fb; padding: 8px">{{ approval.preview }}</pre>
+            <pre
+              style="
+                max-height: 160px;
+                overflow: auto;
+                white-space: pre-wrap;
+                background: #f6f8fb;
+                padding: 8px;
+              "
+              >{{ approval.preview }}</pre>
             <div v-if="approval.truncated" class="muted">仅展示前 2000 个字符，请谨慎确认</div>
           </div>
-          <el-button type="danger" plain @click="answerWriteApproval(approval.id, false)">拒绝</el-button>
-          <el-button type="primary" @click="answerWriteApproval(approval.id, true)">批准本次</el-button>
+          <el-button type="danger" plain @click="answerWriteApproval(approval.id, false)"
+            >拒绝</el-button
+          >
+          <el-button type="primary" @click="answerWriteApproval(approval.id, true)"
+            >批准本次</el-button
+          >
         </div>
       </div>
       <div class="card">

@@ -1,14 +1,6 @@
-import {
-  mysqlTable,
-  varchar,
-  text,
-  timestamp,
-  boolean,
-  index,
-  uniqueIndex,
-  int,
-} from 'drizzle-orm/mysql-core'
+import { mysqlTable, varchar, text, timestamp, boolean, index } from 'drizzle-orm/mysql-core'
 const id = () => varchar('id', { length: 48 }).primaryKey()
+/** 平台用户、角色与强制改密状态；密码只保存 bcrypt Hash。 */
 export const users = mysqlTable('users', {
   id: id(),
   email: varchar('email', { length: 255 }).notNull().unique(),
@@ -18,6 +10,7 @@ export const users = mysqlTable('users', {
   status: varchar('status', { length: 20 }).notNull().default('active'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 })
+/** 服务器 Session 的 SHA-256 摘要及到期时间，不保存明文 Session Cookie。 */
 export const sessions = mysqlTable(
   'sessions',
   {
@@ -27,6 +20,7 @@ export const sessions = mysqlTable(
   },
   (t) => [index('sess_user_idx').on(t.userId)],
 )
+/** 绑定到某个用户的 Runtime 设备及其连接状态。 */
 export const devices = mysqlTable(
   'devices',
   {
@@ -40,6 +34,7 @@ export const devices = mysqlTable(
   },
   (t) => [index('device_owner_idx').on(t.userId)],
 )
+/** 一次性设备配对事务，保存哈希化配对码与临时加密凭据。 */
 export const pairings = mysqlTable('pairings', {
   id: id(),
   codeHash: varchar('code_hash', { length: 128 }).notNull().unique(),
@@ -51,6 +46,7 @@ export const pairings = mysqlTable('pairings', {
   tokenCiphertext: text('token_ciphertext'),
   expiresAt: timestamp('expires_at').notNull(),
 })
+/** 设备 Bearer Token 摘要及撤销时间。 */
 export const deviceTokens = mysqlTable(
   'device_tokens',
   {
@@ -61,6 +57,7 @@ export const deviceTokens = mysqlTable(
   },
   (t) => [index('device_token_idx').on(t.deviceId)],
 )
+/** 工作区本地授权与云端授权独立保存，执行权限取二者交集。 */
 export const workspaces = mysqlTable(
   'workspaces',
   {
@@ -77,6 +74,7 @@ export const workspaces = mysqlTable(
   },
   (t) => [index('ws_owner_idx').on(t.userId, t.deviceId)],
 )
+/** 动态注册的 OAuth 客户端及其允许的回调地址。 */
 export const oauthClients = mysqlTable('oauth_clients', {
   id: id(),
   clientId: varchar('client_id', { length: 255 }).notNull().unique(),
@@ -84,6 +82,7 @@ export const oauthClients = mysqlTable('oauth_clients', {
   clientName: varchar('client_name', { length: 255 }),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 })
+/** 短期一次性 OAuth 授权码及 PKCE 挑战信息。 */
 export const oauthCodes = mysqlTable('oauth_codes', {
   id: id(),
   codeHash: varchar('code_hash', { length: 128 }).notNull().unique(),
@@ -95,6 +94,7 @@ export const oauthCodes = mysqlTable('oauth_codes', {
   resource: text('resource').notNull(),
   expiresAt: timestamp('expires_at').notNull(),
 })
+/** OAuth 访问令牌摘要、Scope、受众与失效信息。 */
 export const oauthTokens = mysqlTable('oauth_tokens', {
   id: id(),
   tokenHash: varchar('token_hash', { length: 128 }).notNull().unique(),
@@ -105,6 +105,7 @@ export const oauthTokens = mysqlTable('oauth_tokens', {
   expiresAt: timestamp('expires_at').notNull(),
   revokedAt: timestamp('revoked_at'),
 })
+/** 记录用户、设备及工作区相关操作和结果。 */
 export const auditLogs = mysqlTable('audit_logs', {
   id: id(),
   userId: varchar('user_id', { length: 48 }),

@@ -5,13 +5,24 @@ dotenv.config({ path: path.resolve(process.cwd(), '../../.env') })
 import { NestFactory } from '@nestjs/core'
 import { Module } from '@nestjs/common'
 import { Identity, Store, DeviceHub } from './core'
-import { ApiController } from './controllers'
+import {
+  AuthController,
+  AccountController,
+  AdminController,
+  PairingController,
+} from './controllers'
 import { OAuthController, OAuthService } from './oauth'
 import { installMcp } from './mcp'
 import cookieParser from 'cookie-parser'
 import { json, urlencoded, type Request, type Response, type NextFunction } from 'express'
 @Module({
-  controllers: [ApiController, OAuthController],
+  controllers: [
+    AuthController,
+    AccountController,
+    AdminController,
+    PairingController,
+    OAuthController,
+  ],
   providers: [Store, Identity, DeviceHub, OAuthService],
 })
 class AppModule {}
@@ -29,8 +40,10 @@ async function main() {
     res.setHeader('Referrer-Policy', 'no-referrer')
     res.setHeader('X-Frame-Options', 'DENY')
     if (req.path === '/oauth/authorize') {
-      res.setHeader('Content-Security-Policy',
-        "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+      res.setHeader(
+        'Content-Security-Policy',
+        "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+      )
     }
     next()
   })
@@ -50,8 +63,7 @@ async function main() {
       return next()
     if (hits.size >= 10000) {
       const now = Date.now()
-      for (const [key, value] of hits)
-        if (value.until <= now) hits.delete(key)
+      for (const [key, value] of hits) if (value.until <= now) hits.delete(key)
       // Fail closed rather than allow unbounded per-process memory growth.
       if (hits.size >= 10000) return res.status(429).json({ error: 'rate_limited' })
     }

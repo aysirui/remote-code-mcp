@@ -12,8 +12,9 @@ describe('administrator initialization boundary', () => {
   test('public registration can never claim reserved ADMIN_EMAIL', async () => {
     process.env.ADMIN_EMAIL = 'admin@example.com'
     const identity = new Identity({} as Store)
-    await expect(identity.register('ADMIN@example.com', 'a-strong-password-123'))
-      .rejects.toThrow('Reserved administrator address')
+    await expect(identity.register('ADMIN@example.com', 'a-strong-password-123')).rejects.toThrow(
+      'Reserved administrator address',
+    )
   })
 
   test('a session requiring a password change cannot access guarded APIs', async () => {
@@ -23,7 +24,8 @@ describe('administrator initialization boundary', () => {
       status: 'active',
       passwordChangeRequired: true,
     } as Awaited<ReturnType<Identity['userBySession']>>)
-    await expect(identity.requireUser({} as Parameters<Identity['requireUser']>[0]))
-      .rejects.toThrow(ForbiddenException)
+    await expect(
+      identity.requireUser({} as Parameters<Identity['requireUser']>[0]),
+    ).rejects.toThrow(ForbiddenException)
   })
 })

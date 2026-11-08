@@ -1,4 +1,5 @@
-import type { Request, Response } from 'express'
+import type { Express, Request, Response } from 'express'
+import type { RpcRequest } from '@rcm/protocol'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
@@ -7,7 +8,7 @@ import { OAuthService } from './oauth'
 import * as S from './schema'
 import { eq } from 'drizzle-orm'
 
-export function installMcp(expressApp: any, oauth: OAuthService, hub: DeviceHub, store: Store) {
+export function installMcp(expressApp: Express, oauth: OAuthService, hub: DeviceHub, store: Store) {
   expressApp.get('/mcp', (_req: Request, res: Response) => res.status(405).end())
   expressApp.delete('/mcp', (_req: Request, res: Response) => res.status(405).end())
   expressApp.post('/mcp', async (req: Request, res: Response) => {
@@ -33,31 +34,38 @@ export function installMcp(expressApp: any, oauth: OAuthService, hub: DeviceHub,
       name: string,
       description: string,
       inputSchema: Record<string, z.ZodTypeAny>,
-      handler: (args: any) => Promise<any>,
+      handler: (args: Record<string, unknown>) => Promise<unknown>,
       readOnly = true,
     ) =>
       server.registerTool(
         name,
         { description, inputSchema, annotations: { readOnlyHint: readOnly } },
-        async (args: any) => {
+        async (args) => {
           try {
             const data = await handler(args)
+            const objectData =
+              typeof data === 'object' && data !== null && !Array.isArray(data)
+                ? (data as Record<string, unknown>)
+                : null
             const readable =
-              data && typeof data.content === 'string'
-                ? data.content + (data.sha256 ? '\n\nSHA-256: ' + data.sha256 : '')
+              objectData && typeof objectData.content === 'string'
+                ? objectData.content +
+                  (typeof objectData.sha256 === 'string' ? '\n\nSHA-256: ' + objectData.sha256 : '')
                 : typeof data === 'string'
                   ? data
-                  : JSON.stringify(data)
+                  : (JSON.stringify(data) ?? 'null')
             return {
               content: [{ type: 'text' as const, text: readable }],
-              structuredContent:
-                typeof data === 'object' && data !== null && !Array.isArray(data)
-                  ? data
-                  : { value: data },
+              structuredContent: objectData ?? { value: data },
             }
-          } catch (e: any) {
+          } catch (error: unknown) {
             return {
-              content: [{ type: 'text' as const, text: String(e?.message || e) }],
+              content: [
+                {
+                  type: 'text' as const,
+                  text: error instanceof Error ? error.message : String(error),
+                },
+              ],
               isError: true,
             }
           }
@@ -83,20 +91,26 @@ export function installMcp(expressApp: any, oauth: OAuthService, hub: DeviceHub,
           name: w.name,
           deviceId: w.deviceId,
           read: w.localEnabled && w.cloudEnabled && w.localRead && w.cloudRead,
-          write: w.localEnabled && w.cloudEnabled && w.localRead && w.cloudRead && w.localWrite && w.cloudWrite,
+          write:
+            w.localEnabled &&
+            w.cloudEnabled &&
+            w.localRead &&
+            w.cloudRead &&
+            w.localWrite &&
+            w.cloudWrite,
           enabled: w.localEnabled && w.cloudEnabled,
           online: hub.isOnline(w.deviceId),
         }))
       },
     )
-    const exec = (op: any, fields: any) =>
+    const exec = (op: RpcRequest['operation'], fields: Record<string, z.ZodTypeAny>) =>
       simple(
         op.replace('.', '_'),
         `Execute ${op} on your authorized local workspace`,
         { workspaceId: z.string(), ...fields },
-        async (args: any) => {
+        async (args) => {
           const { workspaceId, ...payload } = args
-          return hub.execute(userId, workspaceId, op, payload)
+          return hub.execute(userId, String(workspaceId), op, payload)
         },
         op !== 'file.write',
       )

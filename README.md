@@ -190,13 +190,15 @@ pnpm test
 ## 8. 源码与配置
 
 - `apps/server/src/schema.ts`：Drizzle 数据库模型。
-- `apps/server/src/core.ts`：账户存储、WSS 连接注册表、RPC Dispatcher。
-- `apps/server/src/controllers.ts`：账号、设备配对、用户与管理员管理 API。
+- `apps/server/src/identity.ts` / `store.ts` / `device-hub.ts`：身份、持久化与设备 RPC 分层（`core.ts` 仅统一导出）。
+- `apps/server/src/auth.controller.ts` / `account.controller.ts` / `admin.controller.ts` / `pairing.controller.ts`：按身份、用户、管理员、配对拆分的 API。
 - `apps/server/src/oauth.ts`：MVP OAuth 授权服务。
 - `apps/server/src/mcp.ts`：MCP Streamable HTTP / Tools。
-- `apps/runtime/src/executors.ts`：本地文件和 Git 执行逻辑。
-- `apps/runtime/src/main.ts`：WSS Agent + localhost API + Vue 静态站点。
-- `apps/console/src/App.vue`：平台前台/管理员 UI。
-- `apps/runtime/web/src/App.vue`：Runtime 本地 UI。
+- `apps/runtime/src/executors.ts`：工具调度与授权；文件/Git 安全操作分别位于 `file-operations.ts`、`git-operations.ts`、`path-safety.ts`。
+- `apps/runtime/src/main.ts`：设备 WSS 生命周期；`local-server.ts` 负责 localhost API 与 Vue 静态资源，`write-approvals.ts` 负责本地审批。
+- `apps/console/src/App.vue`：平台 UI 模板；`use-console.ts` 负责页面逻辑，`api.ts` 使用 Axios 与 CSRF。
+- `apps/runtime/web/src/App.vue`：Runtime 本地 UI 模板；`use-runtime-console.ts` 负责逻辑，`http.ts` 使用 Axios。
 
 LICENSE: 代码可作为自有项目进一步开发。请自行检查依赖项许可和部署环境的法律合规要求。
+
+开发时的完整模块职责与中文注释约定详见 [CODE_STRUCTURE.md](CODE_STRUCTURE.md)。

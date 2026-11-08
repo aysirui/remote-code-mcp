@@ -19,7 +19,8 @@
     "vue": "catalog:",
     "element-plus": "catalog:",
     "pinia": "catalog:",
-    "@element-plus/icons-vue": "^2.3.2"
+    "@element-plus/icons-vue": "^2.3.2",
+    "axios": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

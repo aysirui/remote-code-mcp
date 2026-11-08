@@ -13,7 +13,8 @@
     "vue-router": "^4.5.0",
     "pinia": "catalog:",
     "element-plus": "catalog:",
-    "@element-plus/icons-vue": "^2.3.2"
+    "@element-plus/icons-vue": "^2.3.2",
+    "axios": "catalog:"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "catalog:",

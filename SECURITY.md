@@ -51,6 +51,7 @@ docker compose build
 ```
 
 Additionally verify:
+
 1. User A cannot operate User B's workspace ID or device ID.
 2. Disabled local/cloud workspaces remain disabled after reconnect.
 3. A revoked device's old WebSocket cannot send a valid response for a new connection.

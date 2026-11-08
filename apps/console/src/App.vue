@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Monitor,
   FolderOpened,
@@ -15,221 +13,44 @@ import {
   Plus,
   SwitchButton,
 } from '@element-plus/icons-vue'
-import { request, base, type Device, type Workspace, type User as Account } from './api'
-const me = ref<Account | null>(null),
-  loading = ref(true),
-  page = ref(window.location.pathname.startsWith('/admin') ? 'admin-overview' : 'overview')
-const email = ref(''),
-  password = ref(''),
-  registering = ref(false),
-  devices = ref<Device[]>([]),
-  workspaces = ref<Workspace[]>([]),
-  users = ref<Account[]>([]),
-  logs = ref<any[]>([]),
-  adminDevices = ref<Device[]>([]),
-  adminLogs = ref<any[]>([]),
-  stats = ref<any>({}),
-  grants = ref<any[]>([])
-const pairingCode = ref('')
-const currentPassword = ref('')
-const newPassword = ref('')
-const newPasswordConfirm = ref('')
-const isAdmin = computed(() => ['admin', 'super_admin'].includes(me.value?.role || ''))
-const location = window.location
-const q = new URLSearchParams(location.search),
-  returnTo = q.get('returnTo')
-async function load() {
-  try {
-    me.value = await request('/api/auth/me')
-    if (!me.value?.passwordChangeRequired) await refresh()
-  } catch {
-    me.value = null
-  } finally {
-    loading.value = false
-  }
-}
-async function refresh() {
-  if (!me.value || me.value.passwordChangeRequired) return
-  try {
-    ;[devices.value, workspaces.value, logs.value, grants.value] = await Promise.all([
-      request('/api/me/devices'),
-      request('/api/me/workspaces'),
-      request('/api/me/audit-logs'),
-      request('/api/me/oauth-grants'),
-    ])
-    if (isAdmin.value) {
-      ;[users.value, stats.value, adminDevices.value, adminLogs.value] = await Promise.all([
-        request('/api/admin/users'),
-        request('/api/admin/overview'),
-        request('/api/admin/devices'),
-        request('/api/admin/audit-logs'),
-      ])
-    }
-  } catch (e: any) {
-    ElMessage.error(e.message)
-  }
-}
-async function signIn() {
-  try {
-    if (registering.value) {
-      await request('/api/auth/register', 'POST', { email: email.value, password: password.value })
-      ElMessage.success('注册成功，请登录')
-      registering.value = false
-      return
-    }
-    me.value = await request('/api/auth/login', 'POST', {
-      email: email.value,
-      password: password.value,
-    })
-    if (me.value?.passwordChangeRequired) {
-      currentPassword.value = password.value
-      password.value = ''
-      ElMessage.warning('首次登录请先修改临时密码')
-      return
-    }
-    if (returnTo) {
-      const target = new URL(returnTo)
-      const allow = new URL(import.meta.env.VITE_API_URL || location.origin)
-      if (target.origin === allow.origin) {
-        location.href = target.toString()
-        return
-      }
-    }
-    await refresh()
-    ElMessage.success('登录成功')
-  } catch (e: any) {
-    ElMessage.error(e.message)
-  }
-}
-async function changePassword() {
-  if (!currentPassword.value || !newPassword.value) {
-    ElMessage.warning('请输入旧密码和新密码')
-    return
-  }
-  if (newPassword.value !== newPasswordConfirm.value) {
-    ElMessage.error('两次输入的新密码不一致')
-    return
-  }
-  try {
-    await request('/api/auth/change-password', 'POST', {
-      currentPassword: currentPassword.value,
-      newPassword: newPassword.value,
-    })
-    currentPassword.value = ''
-    newPassword.value = ''
-    newPasswordConfirm.value = ''
-    me.value = null
-    password.value = ''
-    ElMessage.success('密码修改成功，请使用新密码重新登录')
-  } catch (e: any) {
-    ElMessage.error(e.message)
-  }
-}
-
-async function logout() {
-  await request('/api/auth/logout', 'POST')
-  me.value = null
-  page.value = 'overview'
-}
-async function rename(d: Device) {
-  try {
-    const { value } = await ElMessageBox.prompt('设备名称', '重命名设备', {
-      inputValue: d.name,
-      inputValidator: (v) => v.trim().length > 0,
-    })
-    await request(`/api/me/devices/${d.id}`, 'PATCH', { name: value })
-    await refresh()
-  } catch {}
-}
-async function revoke(d: Device) {
-  try {
-    await ElMessageBox.confirm(`解绑后 ${d.name} 将立刻无法访问本平台，需重新配对。`, '确认解绑', {
-      type: 'warning',
-      confirmButtonText: '解绑设备',
-    })
-    await request(`/api/me/devices/${d.id}`, 'DELETE')
-    await refresh()
-  } catch {}
-}
-async function approve() {
-  try {
-    await request('/api/device/pairing/approve', 'POST', { code: pairingCode.value })
-    pairingCode.value = ''
-    ElMessage.success('设备绑定成功')
-    await refresh()
-  } catch (e: any) {
-    ElMessage.error(e.message)
-  }
-}
-async function revokeGrant(g: any) {
-  try {
-    await ElMessageBox.confirm(
-      '撤销后，相关 AI 客户端需要重新授权才能调用 MCP 工具。',
-      '撤销 AI 连接',
-      { type: 'warning' },
-    )
-    await request('/api/me/oauth-grants/' + encodeURIComponent(g.clientId), 'DELETE')
-    await refresh()
-    ElMessage.success('授权已撤销')
-  } catch {}
-}
-async function disableWorkspace(w: Workspace) {
-  try {
-    await ElMessageBox.confirm('停用后，AI 无法继续访问该工作区。', '停用工作区', {
-      type: 'warning',
-    })
-    await request('/api/me/workspaces/' + w.id, 'PATCH', { enabled: false })
-    await refresh()
-  } catch {}
-}
-async function adminRevoke(d: Device) {
-  try {
-    await ElMessageBox.confirm('撤销后设备必须重新绑定。', '管理员撤销设备', { type: 'warning' })
-    await request('/api/admin/devices/' + d.id + '/revoke', 'POST')
-    await refresh()
-  } catch {}
-}
-async function setUserStatus(u: Account) {
-  try {
-    await ElMessageBox.confirm(
-      `确定将 ${u.email} 设为${u.status === 'active' ? '禁用' : '启用'}？`,
-      '账户状态',
-    )
-    await request(`/api/admin/users/${u.id}/status`, 'PATCH', {
-      status: u.status === 'active' ? 'disabled' : 'active',
-    })
-    await refresh()
-  } catch {}
-}
-function navigate(p: string) {
-  page.value = p
-  history.replaceState(null, '', p.startsWith('admin-') ? '/admin' : '/console')
-}
-function copyUrl() {
-  navigator.clipboard.writeText((import.meta.env.VITE_API_URL || location.origin) + '/mcp')
-  ElMessage.success('MCP URL 已复制')
-}
-onMounted(() => {
-  if (location.pathname === '/activate') page.value = 'activate'
-  load()
-})
-const title = computed(
-  () =>
-    (
-      ({
-        overview: '工作台概览',
-        devices: '我的设备',
-        workspaces: '工作区',
-        connections: 'AI 连接',
-        history: '操作记录',
-        activate: '绑定新设备',
-        'admin-overview': '平台概览',
-        'admin-users': '用户管理',
-        'admin-devices': '平台设备',
-        'admin-audit': '安全审计',
-      }) as any
-    )[page.value] || '工作台',
-)
+import { useConsole } from './use-console'
+const {
+  me,
+  loading,
+  page,
+  email,
+  password,
+  registering,
+  devices,
+  workspaces,
+  users,
+  logs,
+  adminDevices,
+  adminLogs,
+  stats,
+  grants,
+  pairingCode,
+  currentPassword,
+  newPassword,
+  newPasswordConfirm,
+  isAdmin,
+  title,
+  mcpUrl,
+  load,
+  refresh,
+  signIn,
+  changePassword,
+  logout,
+  rename,
+  revoke,
+  approve,
+  revokeGrant,
+  disableWorkspace,
+  adminRevoke,
+  setUserStatus,
+  navigate,
+  copyUrl,
+} = useConsole()
 </script>
 <template>
   <div v-if="loading" style="padding: 60px; text-align: center">
@@ -286,13 +107,29 @@ const title = computed(
         <p class="muted">{{ me.email }}</p>
         <el-form @submit.prevent="changePassword">
           <el-form-item label="当前临时密码">
-            <el-input v-model="currentPassword" type="password" show-password autocomplete="current-password" />
+            <el-input
+              v-model="currentPassword"
+              type="password"
+              show-password
+              autocomplete="current-password"
+            />
           </el-form-item>
           <el-form-item label="新密码（12–72 UTF-8 字节）">
-            <el-input v-model="newPassword" type="password" show-password autocomplete="new-password" />
+            <el-input
+              v-model="newPassword"
+              type="password"
+              show-password
+              autocomplete="new-password"
+            />
           </el-form-item>
           <el-form-item label="再次输入新密码">
-            <el-input v-model="newPasswordConfirm" type="password" show-password autocomplete="new-password" @keyup.enter="changePassword" />
+            <el-input
+              v-model="newPasswordConfirm"
+              type="password"
+              show-password
+              autocomplete="new-password"
+              @keyup.enter="changePassword"
+            />
           </el-form-item>
           <el-button type="primary" @click="changePassword">确认修改密码</el-button>
           <el-button @click="logout">退出登录</el-button>
@@ -496,7 +333,7 @@ const title = computed(
               授权。
             </p>
             <div style="display: flex; gap: 10px; margin-top: 20px">
-              <el-input readonly :model-value="(base || location.origin) + '/mcp'" /><el-button
+              <el-input readonly :model-value="mcpUrl" /><el-button
                 type="primary"
                 :icon="CopyDocument"
                 @click="copyUrl"

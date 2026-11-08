@@ -14,10 +14,7 @@ const ws = (write = false) => ({
   root: workspaceRoot,
   permissions: { read: true, write },
 })
-const rpc = (
-  operation: RpcRequest['operation'],
-  payload: unknown,
-): RpcRequest => ({
+const rpc = (operation: RpcRequest['operation'], payload: unknown): RpcRequest => ({
   kind: 'request',
   version: 1,
   id: 'test-request',
@@ -36,7 +33,14 @@ afterEach(async () => {
 })
 
 test('rejects directory traversal and absolute paths', async () => {
-  for (const requested of ['../private.txt', '/etc/passwd', '.git/config', '.env', '.npmrc', 'nested/.env.production']) {
+  for (const requested of [
+    '../private.txt',
+    '/etc/passwd',
+    '.git/config',
+    '.env',
+    '.npmrc',
+    'nested/.env.production',
+  ]) {
     await expect(resolveSafe(ws(), requested)).rejects.toThrow()
   }
 })
@@ -54,18 +58,37 @@ test('rejects symlink pointing outside authorized directory', async () => {
 })
 
 test('write is rejected for read-only workspace', async () => {
-  await expect(execute(ws(false), rpc('file.write', {
-    path: 'README.md', content: 'different', expectedSha256: sha('original'),
-  }))).rejects.toThrow('PERMISSION_DENIED')
+  await expect(
+    execute(
+      ws(false),
+      rpc('file.write', {
+        path: 'README.md',
+        content: 'different',
+        expectedSha256: sha('original'),
+      }),
+    ),
+  ).rejects.toThrow('PERMISSION_DENIED')
 })
 
 test('write requires current hash, and stale hash fails', async () => {
-  await execute(ws(true), rpc('file.write', {
-    path: 'README.md', content: 'replaced', expectedSha256: sha('original'),
-  }))
-  await expect(execute(ws(true), rpc('file.write', {
-    path: 'README.md', content: 'stale', expectedSha256: sha('original'),
-  }))).rejects.toThrow('FILE_CONFLICT')
+  await execute(
+    ws(true),
+    rpc('file.write', {
+      path: 'README.md',
+      content: 'replaced',
+      expectedSha256: sha('original'),
+    }),
+  )
+  await expect(
+    execute(
+      ws(true),
+      rpc('file.write', {
+        path: 'README.md',
+        content: 'stale',
+        expectedSha256: sha('original'),
+      }),
+    ),
+  ).rejects.toThrow('FILE_CONFLICT')
   const read = await execute(ws(), rpc('file.read', { path: 'README.md' }))
   expect(read).toHaveProperty('content', 'replaced')
 })

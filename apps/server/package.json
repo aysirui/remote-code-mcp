@@ -1,0 +1,46 @@
+{
+  "name": "@rcm/server",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "db:generate": "drizzle-kit generate",
+    "test": "jest --runInBand",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "db:migrate": "drizzle-kit migrate",
+    "admin:init": "tsx src/admin-init.ts"
+  },
+  "dependencies": {
+    "@rcm/protocol": "workspace:*",
+    "@nestjs/common": "^11.1.0",
+    "@nestjs/core": "^11.1.0",
+    "@nestjs/platform-express": "^11.1.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "@modelcontextprotocol/sdk": "^1.24.0",
+    "drizzle-orm": "^0.44.0",
+    "mysql2": "^3.15.0",
+    "zod": "catalog:",
+    "ws": "catalog:",
+    "bcryptjs": "^3.0.0",
+    "jose": "^6.0.0",
+    "cookie-parser": "^1.4.7",
+    "express": "^5.1.0",
+    "dotenv": "^17.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/ws": "^8.18.0",
+    "@types/express": "^5.0.0",
+    "@types/cookie-parser": "^1.4.0",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jest": "catalog:",
+    "jest": "catalog:",
+    "ts-jest": "catalog:",
+    "typescript": "catalog:",
+    "tsx": "catalog:",
+    "drizzle-kit": "^0.31.0"
+  }
+}

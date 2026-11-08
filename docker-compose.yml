@@ -1,0 +1,42 @@
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: remote_code_mcp
+      MYSQL_USER: rcm
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD}
+    volumes: [mysql_data:/var/lib/mysql]
+    healthcheck:
+      test: ['CMD-SHELL', 'mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent']
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks: [internal]
+  server:
+    build: { context: ., dockerfile: docker/Dockerfile.server }
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: mysql://rcm:${MYSQL_PASSWORD}@mysql:3306/remote_code_mcp
+      APP_SECRET: ${APP_SECRET:?Set APP_SECRET}
+      PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL}
+      CONSOLE_URL: ${CONSOLE_URL:?Set CONSOLE_URL}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL}
+      PORT: 3000
+    depends_on:
+      mysql: { condition: service_healthy }
+    expose: ['3000']
+    networks: [internal]
+  console:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.console
+      args: { VITE_API_URL: '${PUBLIC_URL}' }
+    restart: unless-stopped
+    expose: ['80']
+    networks: [internal]
+volumes:
+  mysql_data:
+networks:
+  internal:

@@ -1,0 +1,25 @@
+{
+  "name": "@rcm/console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vue-tsc --noEmit && vite build",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "vue": "catalog:",
+    "vue-router": "^4.5.0",
+    "pinia": "catalog:",
+    "element-plus": "catalog:",
+    "@element-plus/icons-vue": "^2.3.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "catalog:",
+    "vite": "catalog:",
+    "typescript": "catalog:",
+    "vue-tsc": "catalog:",
+    "@types/node": "catalog:"
+  }
+}

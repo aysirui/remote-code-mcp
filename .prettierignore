@@ -1,0 +1,15 @@
+node_modules
+dist
+coverage
+.output
+.generated
+.git
+
+pnpm-lock.yaml
+
+*.min.js
+*.min.css
+
+**/drizzle/meta
+**/generated
+**/*.snap

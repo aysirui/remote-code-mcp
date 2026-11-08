@@ -1,0 +1,4 @@
+# Production: reverse-proxy https://mcp.example.com -> server:3000
+# and https://console.example.com -> console:80.
+# Ensure WebSocket Upgrade for /agent/connect.
+# Do NOT expose MySQL or Runtime local UI publicly.

@@ -39,12 +39,8 @@ async function main() {
     res.setHeader('X-Content-Type-Options', 'nosniff')
     res.setHeader('Referrer-Policy', 'no-referrer')
     res.setHeader('X-Frame-Options', 'DENY')
-    if (req.path === '/oauth/authorize') {
-      res.setHeader(
-        'Content-Security-Policy',
-        "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
-      )
-    }
+    // OAuth 授权页的 CSP 由 OAuthController 在校验已注册 redirect_uri 后设置。
+    // 静态 form-action 'self' 会使 Chromium 阻止 POST 后跨域回调的 303/302。
     next()
   })
   app.use(cookieParser())

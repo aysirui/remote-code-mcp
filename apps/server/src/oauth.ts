@@ -127,6 +127,15 @@ export class OAuthController {
       )
       return res.redirect(frontend() + '/login?returnTo=' + next)
     }
+    // 仅允许提交到本站以及已经通过 client_id + redirect_uris 精确匹配的回调源。
+    // Chromium 会对表单 POST 后的重定向链校验 form-action；只设 'self' 会拦截 OAuth 回跳。
+    const callbackOrigin = new URL(q.redirect_uri).origin
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' " +
+        callbackOrigin +
+        "; frame-ancestors 'none'; base-uri 'none'",
+    )
     const csrf = secret()
     res.cookie('rcm_oauth_csrf', hash(csrf), {
       httpOnly: true,
@@ -214,7 +223,8 @@ export class OAuthController {
     dest.searchParams.set('code', raw)
     dest.searchParams.set('state', String(b.state || ''))
     oauthLog('authorize.approved', { clientId: client.clientId, userId: user.id })
-    res.redirect(dest.toString())
+    // POST/Redirect/GET：303 明确要求浏览器以 GET 打开客户端回调，避免转发 POST 表单数据。
+    res.redirect(303, dest.toString())
   }
   /** 单次授权可签发 access/refresh；refresh 使用事务行锁与一次性旋转。 */
   @Post('oauth/token') async token(

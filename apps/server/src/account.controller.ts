@@ -10,7 +10,7 @@ import {
   NotFoundException,
 } from '@nestjs/common'
 import type { Request } from 'express'
-import { eq, and, desc } from 'drizzle-orm'
+import { eq, and, desc, isNull } from 'drizzle-orm'
 import { Identity } from './identity'
 import { Store } from './store'
 import { DeviceHub } from './device-hub'
@@ -115,34 +115,50 @@ export class AccountController {
     await this.store.audit('workspace.restrict', 'success', u.id, w.deviceId, id)
     return { ok: true }
   }
-  /** 汇总当前账户尚未撤销、未过期的 OAuth 客户端授权。 */
+  /** 持久授权关系不随一小时 Access Token 到期而消失。 */
   @Get('me/oauth-grants') async oauthGrants(@Req() req: Request) {
     const u = await this.id.requireUser(req)
-    const ts = await this.store.db
-      .select()
-      .from(S.oauthTokens)
-      .where(eq(S.oauthTokens.userId, u.id))
-    const active = ts.filter((t) => !t.revokedAt && t.expiresAt > new Date())
-    return [
-      ...new Map(
-        active.map((t) => [
-          t.clientId,
-          { clientId: t.clientId, scope: t.scope, expiresAt: t.expiresAt },
-        ]),
-      ).values(),
-    ]
+    const rows = await this.store.db
+      .select({
+        id: S.oauthGrants.id,
+        clientId: S.oauthGrants.clientId,
+        clientName: S.oauthClients.clientName,
+        scope: S.oauthGrants.scope,
+        createdAt: S.oauthGrants.createdAt,
+        lastUsedAt: S.oauthGrants.lastUsedAt,
+      })
+      .from(S.oauthGrants)
+      .leftJoin(S.oauthClients, eq(S.oauthGrants.clientId, S.oauthClients.clientId))
+      .where(and(eq(S.oauthGrants.userId, u.id), isNull(S.oauthGrants.revokedAt)))
+    return rows
   }
-  /** 撤销当前用户指定 OAuth 客户端的令牌。 */
+  /** 撤销授权、所有 Access Tokens 和所有 Refresh Token family。 */
   @Delete('me/oauth-grants/:clientId') async revokeOauth(
     @Req() req: Request,
     @Param('clientId') clientId: string,
   ) {
     csrf(req)
     const u = await this.id.requireUser(req)
-    await this.store.db
-      .update(S.oauthTokens)
-      .set({ revokedAt: new Date() })
-      .where(and(eq(S.oauthTokens.userId, u.id), eq(S.oauthTokens.clientId, clientId)))
+    await this.store.db.transaction(async (tx) => {
+      const grants = await tx
+        .select()
+        .from(S.oauthGrants)
+        .where(and(eq(S.oauthGrants.userId, u.id), eq(S.oauthGrants.clientId, clientId)))
+      for (const grant of grants) {
+        await tx
+          .update(S.oauthRefreshTokens)
+          .set({ revokedAt: new Date() })
+          .where(eq(S.oauthRefreshTokens.grantId, grant.id))
+      }
+      await tx
+        .update(S.oauthGrants)
+        .set({ revokedAt: new Date() })
+        .where(and(eq(S.oauthGrants.userId, u.id), eq(S.oauthGrants.clientId, clientId)))
+      await tx
+        .update(S.oauthTokens)
+        .set({ revokedAt: new Date() })
+        .where(and(eq(S.oauthTokens.userId, u.id), eq(S.oauthTokens.clientId, clientId)))
+    })
     await this.store.audit('oauth.revoke', 'success', u.id)
     return { ok: true }
   }

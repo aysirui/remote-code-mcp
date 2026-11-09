@@ -1,5 +1,5 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common'
-import { and, eq, gt } from 'drizzle-orm'
+import { and, eq, gt, isNull } from 'drizzle-orm'
 import { Store } from './store'
 import { hash } from './security'
 import * as S from './schema'
@@ -25,6 +25,18 @@ export class OAuthService {
       !t.scope.split(' ').includes('mcp:tools')
     )
       throw new UnauthorizedException('Invalid MCP token')
+    // 新签发的访问令牌必须仍属于有效授权；兼容迁移前的历史 Token。
+    if (t.grantId) {
+      const grant = await this.store.one(
+        this.store.db
+          .select()
+          .from(S.oauthGrants)
+          .where(and(eq(S.oauthGrants.id, t.grantId), isNull(S.oauthGrants.revokedAt)))
+          .limit(1),
+      )
+      if (!grant || grant.userId !== t.userId || grant.clientId !== t.clientId)
+        throw new UnauthorizedException('OAuth authorization revoked')
+    }
     const u = await this.store.one(
       this.store.db.select().from(S.users).where(eq(S.users.id, t.userId)).limit(1),
     )

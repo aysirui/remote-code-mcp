@@ -61,10 +61,22 @@ export class AdminController {
       await this.store.db.delete(S.sessions).where(eq(S.sessions.userId, target))
       const ds = await this.store.db.select().from(S.devices).where(eq(S.devices.userId, target))
       for (const d of ds) this.hub.disconnect(d.id)
-      await this.store.db
-        .update(S.oauthTokens)
-        .set({ revokedAt: new Date() })
-        .where(eq(S.oauthTokens.userId, target))
+      await this.store.db.transaction(async (tx) => {
+        const grants = await tx.select().from(S.oauthGrants).where(eq(S.oauthGrants.userId, target))
+        for (const grant of grants)
+          await tx
+            .update(S.oauthRefreshTokens)
+            .set({ revokedAt: new Date() })
+            .where(eq(S.oauthRefreshTokens.grantId, grant.id))
+        await tx
+          .update(S.oauthGrants)
+          .set({ revokedAt: new Date() })
+          .where(eq(S.oauthGrants.userId, target))
+        await tx
+          .update(S.oauthTokens)
+          .set({ revokedAt: new Date() })
+          .where(eq(S.oauthTokens.userId, target))
+      })
     }
     await this.store.audit('admin.user_status', 'success', u.id)
     return { ok: true }

@@ -86,7 +86,7 @@ ChatGPT OAuth 接入前，建议先验证：
 - OAuth 客户端可完成 DCR → Authorization Code + PKCE → Token，并在请求 `/mcp` 时使用 Bearer Token。
 - 调用 `device_list`、`workspace_list`、`file_read` 和 `git_status`。
 
-**ChatGPT 连接方式**：在 ChatGPT 中添加自定义 MCP Server（服务器 URL），输入 `https://mcp.example.com/mcp`，使用 OAuth 授权同一个平台账号。该版本实现的是 DCR public OAuth client + PKCE 的最小闭环；未实现 CIMD、刷新令牌与完整认证服务的合规性测试。ChatGPT 的实际连接行为可能需要补充标准兼容适配。
+**ChatGPT 连接方式**：在 ChatGPT 中添加自定义 MCP Server（服务器 URL），输入 `https://mcp.example.com/mcp`，使用 OAuth 授权同一个平台账号。该版本实现的是 DCR public OAuth client + PKCE 的最小闭环；未实现 CIMD 与完整认证服务的合规性测试；已实现 Refresh Token 一次性轮换，但尚需与 ChatGPT 做端到端互操作测试。ChatGPT 的实际连接行为可能需要补充标准兼容适配。
 
 ## 4. Dokploy 一键部署（Docker Compose）
 
@@ -139,6 +139,17 @@ Dokploy 对 Compose 环境变量的处理是：Environment 面板的变量会供
 | `git_diff`       | 未暂存 Git Diff                                 | Read          |
 
 MCP 返回同时具有 TextContent 和（对于对象数据）structuredContent，不声明 outputSchema，以提高不同 MCP Host 的兼容性。
+
+## 5.1 OAuth 客户端授权与刷新令牌
+
+- OAuth 授权关系保存在 `oauth_grants`，与一小时有效期的 Access Token 独立；Console 的“已授权 AI 客户端”不再因 Access Token 过期而隐藏。
+- 授权码 + PKCE 成功兑换后返回 `access_token`（3600 秒）和 `refresh_token`（最长 30 天）；支持 `POST /oauth/token` 使用 `grant_type=refresh_token`、`client_id`、`refresh_token` 换取新的 Access Token 和 Refresh Token。
+- Refresh Token 服务端只保存 SHA-256 摘要，每次刷新原子消费旧令牌并发放新令牌；再次使用已消费令牌视为重放并撤销同一 Token family。过期、撤销或检测到重放后需要重新进行授权。
+- 用户可通过 Console 撤销某客户端授权，服务端同时撤销该客户端已有 Access/Refresh Token。授权数据按用户+客户端隔离。
+- 服务端在标准输出记录结构化 OAuth 安全事件（不含 code、token、PKCE、Cookie、CSRF、请求体）；拒绝请求会附带 `request_id` 方便定位。发生在 BunkerWeb 的拦截需要结合 WAF 日志判断。
+- 数据库部署使用新的 `0001_oauth_grants_refresh` 增量迁移，并回填历史未撤销的 Token 对应的客户端授权关系，但不会延长旧 Token 的有效期，也不会为旧 Token 补发 Refresh Token。旧客户端若已过期需重新完成 OAuth 授权。
+- **无感刷新由客户端发起**：RCM 提供标准 Refresh Token 协议，具备自动刷新实现的 MCP 客户端可自行续期；不能保证所有 ChatGPT 客户端版本都自动使用 Refresh Token，需做实际兼容验证。
+- 部署后验证：授权码兑换得到两种 Token；过期 Access Token 返回 401；刷新成功后新 Access Token 可使用；旧 Refresh Token 再次使用被拒绝；Console 撤销后 Access/Refresh Token 均被拒绝；重复并发刷新不可同时成功。
 
 ## 6. 安全约束与已知限制
 

@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Req, Res, Body, Query, BadRequestException } from '@nestjs/common'
 import type { Request, Response } from 'express'
-import { eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import { createHash } from 'node:crypto'
 import { Identity } from './identity'
 import { Store } from './store'
@@ -16,6 +16,7 @@ import {
   equals,
 } from './oauth-utils'
 import * as S from './schema'
+import { oauthLog, oauthError } from './oauth-telemetry'
 
 /** 保留统一导出入口，供 MCP 和 NestJS Provider 引用。 */
 export { OAuthService } from './oauth-service'
@@ -48,7 +49,7 @@ export class OAuthController {
       token_endpoint: origin() + '/oauth/token',
       registration_endpoint: origin() + '/oauth/register',
       response_types_supported: ['code'],
-      grant_types_supported: ['authorization_code'],
+      grant_types_supported: ['authorization_code', 'refresh_token'],
       code_challenge_methods_supported: ['S256'],
       token_endpoint_auth_methods_supported: ['none'],
       scopes_supported: ['mcp:tools'],
@@ -73,12 +74,16 @@ export class OAuthController {
       redirectUris: JSON.stringify(uris),
       clientName: String(b.client_name || 'MCP Client').slice(0, 255),
     })
+    oauthLog('client.registered', {
+      clientId,
+      clientName: String(b.client_name || 'MCP Client').slice(0, 100),
+    })
     res.status(201).json({
       client_id: clientId,
       client_name: b.client_name || 'MCP Client',
       redirect_uris: uris,
       token_endpoint_auth_method: 'none',
-      grant_types: ['authorization_code'],
+      grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
     })
   }
@@ -90,7 +95,13 @@ export class OAuthController {
   ) {
     const required = ['client_id', 'redirect_uri', 'state', 'code_challenge', 'resource']
     if (required.some((k) => typeof q[k] !== 'string' || !q[k]))
-      return res.status(400).send('Missing OAuth parameters')
+      return oauthError(
+        res,
+        400,
+        'invalid_request',
+        'Missing OAuth parameters',
+        'authorize.missing_parameters',
+      )
     const client = await this.oauth.client(q.client_id)
     if (
       !client ||
@@ -101,7 +112,14 @@ export class OAuthController {
       q.resource !== canonicalResource() ||
       !(q.scope || 'mcp:tools').split(' ').includes('mcp:tools')
     )
-      return res.status(400).send('Invalid OAuth request')
+      return oauthError(
+        res,
+        400,
+        'invalid_request',
+        'Invalid OAuth request',
+        'authorize.invalid_request',
+      )
+    oauthLog('authorize.view', { clientId: q.client_id })
     const current = await this.auth.userBySession(req)
     if (!current || current.status !== 'active' || current.passwordChangeRequired) {
       const next = encodeURIComponent(
@@ -143,7 +161,13 @@ export class OAuthController {
       !req.cookies?.rcm_oauth_csrf ||
       !equals(hash(String(b.csrf || '')), req.cookies.rcm_oauth_csrf)
     )
-      return res.status(403).send('Invalid CSRF')
+      return oauthError(
+        res,
+        403,
+        'invalid_csrf',
+        'Authorization confirmation expired or missing',
+        'authorize.csrf_rejected',
+      )
     const issuedAt = String(b.issued_at || '')
     if (
       !/^\d{13}$/.test(issuedAt) ||
@@ -154,7 +178,13 @@ export class OAuthController {
         oauthConsentSignature(b, user.id, String(b.csrf), issuedAt),
       )
     )
-      return res.status(403).send('Invalid OAuth consent')
+      return oauthError(
+        res,
+        403,
+        'invalid_consent',
+        'Authorization confirmation invalid or expired',
+        'authorize.consent_rejected',
+      )
     // Invalidate the one-time browser consent before issuing an authorization code.
     res.clearCookie('rcm_oauth_csrf', { path: '/oauth' })
     const client = await this.oauth.client(String(b.client_id || ''))
@@ -183,16 +213,123 @@ export class OAuthController {
     const dest = new URL(b.redirect_uri)
     dest.searchParams.set('code', raw)
     dest.searchParams.set('state', String(b.state || ''))
+    oauthLog('authorize.approved', { clientId: client.clientId, userId: user.id })
     res.redirect(dest.toString())
   }
-  /** 验证 PKCE 并原子消费授权码，签发短期访问令牌。 */
+  /** 单次授权可签发 access/refresh；refresh 使用事务行锁与一次性旋转。 */
   @Post('oauth/token') async token(
     @Req() req: Request,
     @Res() res: Response,
     @Body() b: Record<string, string>,
   ) {
+    res.set('Cache-Control', 'no-store')
+    res.set('Pragma', 'no-cache')
+    const failure = (code: string, event: string) =>
+      oauthError(
+        res,
+        400,
+        code,
+        code === 'invalid_grant'
+          ? 'Authorization or refresh token invalid'
+          : 'Invalid OAuth token request',
+        event,
+      )
+    if (b.grant_type === 'refresh_token') {
+      if (!b.refresh_token || !b.client_id)
+        return failure('invalid_request', 'token.refresh_invalid_request')
+      const tokenHash = hash(String(b.refresh_token))
+      const result = await this.store.db.transaction(async (tx) => {
+        const rows = await tx
+          .select()
+          .from(S.oauthRefreshTokens)
+          .where(eq(S.oauthRefreshTokens.tokenHash, tokenHash))
+          .limit(1)
+          .for('update')
+        const old = rows[0]
+        if (!old || old.clientId !== b.client_id) return null
+        const grantRows = await tx
+          .select()
+          .from(S.oauthGrants)
+          .where(eq(S.oauthGrants.id, old.grantId))
+          .limit(1)
+          .for('update')
+        const grant = grantRows[0]
+        const accountRows = grant
+          ? await tx.select().from(S.users).where(eq(S.users.id, grant.userId)).limit(1)
+          : []
+        if (!accountRows[0] || accountRows[0].status !== 'active') return null
+        if (
+          !grant ||
+          grant.revokedAt ||
+          grant.clientId !== b.client_id ||
+          grant.resource !== canonicalResource() ||
+          old.expiresAt <= new Date() ||
+          old.revokedAt
+        )
+          return null
+        // A consumed token is a replay: revoke the whole family and its active access tokens.
+        if (old.consumedAt) {
+          await tx
+            .update(S.oauthRefreshTokens)
+            .set({ revokedAt: new Date() })
+            .where(eq(S.oauthRefreshTokens.familyId, old.familyId))
+          await tx
+            .update(S.oauthTokens)
+            .set({ revokedAt: new Date() })
+            .where(and(eq(S.oauthTokens.grantId, grant.id), isNull(S.oauthTokens.revokedAt)))
+          return { replay: true as const }
+        }
+        const now = new Date()
+        const nextRefresh = secret()
+        const access = secret()
+        await tx
+          .update(S.oauthRefreshTokens)
+          .set({ consumedAt: now })
+          .where(eq(S.oauthRefreshTokens.id, old.id))
+        await tx.insert(S.oauthRefreshTokens).values({
+          id: uid(),
+          tokenHash: hash(nextRefresh),
+          familyId: old.familyId,
+          grantId: grant.id,
+          clientId: grant.clientId,
+          expiresAt: old.expiresAt,
+        })
+        await tx.insert(S.oauthTokens).values({
+          id: uid(),
+          tokenHash: hash(access),
+          clientId: grant.clientId,
+          userId: grant.userId,
+          grantId: grant.id,
+          scope: grant.scope,
+          resource: grant.resource,
+          expiresAt: new Date(Date.now() + 3600_000),
+        })
+        await tx
+          .update(S.oauthGrants)
+          .set({ lastUsedAt: now })
+          .where(eq(S.oauthGrants.id, grant.id))
+        return { access, refresh: nextRefresh, scope: grant.scope }
+      })
+      if (!result || 'replay' in result) {
+        oauthLog(result ? 'token.refresh_replay' : 'token.refresh_denied', {
+          clientId: b.client_id,
+        })
+        return failure('invalid_grant', 'token.refresh_failed')
+      }
+      oauthLog('token.refreshed', { clientId: b.client_id })
+      return res.json({
+        access_token: result.access,
+        refresh_token: result.refresh,
+        token_type: 'Bearer',
+        expires_in: 3600,
+        scope: result.scope,
+      })
+    }
     if (b.grant_type !== 'authorization_code' || !b.code || !b.code_verifier || !b.client_id)
-      return res.status(400).json({ error: 'invalid_request' })
+      return failure(
+        b.grant_type === 'authorization_code' ? 'invalid_request' : 'unsupported_grant_type',
+        'token.code_invalid_request',
+      )
     const code = await this.store.one(
       this.store.db
         .select()
@@ -207,7 +344,7 @@ export class OAuthController {
       code.redirectUri !== b.redirect_uri ||
       b.resource !== code.resource
     )
-      return res.status(400).json({ error: 'invalid_grant' })
+      return failure('invalid_grant', 'token.code_invalid')
     const verifier = String(b.code_verifier)
     if (
       verifier.length < 43 ||
@@ -215,11 +352,11 @@ export class OAuthController {
       !/^[A-Za-z0-9._~-]+$/.test(verifier) ||
       createHash('sha256').update(verifier).digest('base64url') !== code.codeChallenge
     )
-      return res.status(400).json({ error: 'invalid_grant' })
+      return failure('invalid_grant', 'token.pkce_invalid')
     const client = await this.oauth.client(code.clientId)
-    if (!client) return res.status(400).json({ error: 'invalid_client' })
+    if (!client) return failure('invalid_client', 'token.client_invalid')
     const access = secret()
-    // A row lock ensures the same authorization code cannot be redeemed concurrently.
+    const refresh = secret()
     const redeemed = await this.store.db.transaction(async (tx) => {
       const rows = await tx
         .select()
@@ -228,8 +365,9 @@ export class OAuthController {
         .limit(1)
         .for('update')
       const locked = rows[0]
-      if (!locked || locked.expiresAt <= new Date()) return false
       if (
+        !locked ||
+        locked.expiresAt <= new Date() ||
         locked.clientId !== b.client_id ||
         locked.redirectUri !== b.redirect_uri ||
         locked.resource !== b.resource ||
@@ -237,19 +375,64 @@ export class OAuthController {
       )
         return false
       await tx.delete(S.oauthCodes).where(eq(S.oauthCodes.id, locked.id))
+      // Re-consent activates an existing grant, preserving client identity.
+      const existing = await tx
+        .select()
+        .from(S.oauthGrants)
+        .where(
+          and(eq(S.oauthGrants.userId, locked.userId), eq(S.oauthGrants.clientId, locked.clientId)),
+        )
+        .limit(1)
+        .for('update')
+      const grantId = existing[0]?.id || uid()
+      if (existing[0]) {
+        await tx
+          .update(S.oauthGrants)
+          .set({
+            scope: locked.scope,
+            resource: locked.resource,
+            revokedAt: null,
+            lastUsedAt: new Date(),
+          })
+          .where(eq(S.oauthGrants.id, grantId))
+      } else {
+        await tx.insert(S.oauthGrants).values({
+          id: grantId,
+          userId: locked.userId,
+          clientId: locked.clientId,
+          scope: locked.scope,
+          resource: locked.resource,
+          lastUsedAt: new Date(),
+        })
+      }
       await tx.insert(S.oauthTokens).values({
         id: uid(),
         tokenHash: hash(access),
         clientId: locked.clientId,
         userId: locked.userId,
+        grantId,
         scope: locked.scope,
         resource: locked.resource,
-        expiresAt: new Date(Date.now() + 3600 * 1000),
+        expiresAt: new Date(Date.now() + 3600_000),
+      })
+      await tx.insert(S.oauthRefreshTokens).values({
+        id: uid(),
+        tokenHash: hash(refresh),
+        familyId: uid(),
+        grantId,
+        clientId: locked.clientId,
+        expiresAt: new Date(Date.now() + 30 * 86400_000),
       })
       return true
     })
-    if (!redeemed) return res.status(400).json({ error: 'invalid_grant' })
-    res.set('Cache-Control', 'no-store')
-    res.json({ access_token: access, token_type: 'Bearer', expires_in: 3600, scope: code.scope })
+    if (!redeemed) return failure('invalid_grant', 'token.code_replayed')
+    oauthLog('token.issued', { clientId: code.clientId, userId: code.userId })
+    return res.json({
+      access_token: access,
+      refresh_token: refresh,
+      token_type: 'Bearer',
+      expires_in: 3600,
+      scope: code.scope,
+    })
   }
 }

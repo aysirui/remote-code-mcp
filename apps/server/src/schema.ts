@@ -1,4 +1,12 @@
-import { mysqlTable, varchar, text, timestamp, boolean, index } from 'drizzle-orm/mysql-core'
+import {
+  mysqlTable,
+  varchar,
+  text,
+  timestamp,
+  boolean,
+  index,
+  uniqueIndex,
+} from 'drizzle-orm/mysql-core'
 const id = () => varchar('id', { length: 48 }).primaryKey()
 /** 平台用户、角色与强制改密状态；密码只保存 bcrypt Hash。 */
 export const users = mysqlTable('users', {
@@ -100,6 +108,7 @@ export const oauthTokens = mysqlTable('oauth_tokens', {
   tokenHash: varchar('token_hash', { length: 128 }).notNull().unique(),
   clientId: varchar('client_id', { length: 255 }).notNull(),
   userId: varchar('user_id', { length: 48 }).notNull(),
+  grantId: varchar('grant_id', { length: 48 }),
   scope: varchar('scope', { length: 255 }).notNull(),
   resource: text('resource').notNull(),
   expiresAt: timestamp('expires_at').notNull(),
@@ -115,3 +124,37 @@ export const auditLogs = mysqlTable('audit_logs', {
   status: varchar('status', { length: 32 }).notNull(),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 })
+
+/** 长期客户端授权，与短期 Access Token 分离。 */
+export const oauthGrants = mysqlTable(
+  'oauth_grants',
+  {
+    id: id(),
+    userId: varchar('user_id', { length: 48 }).notNull(),
+    clientId: varchar('client_id', { length: 255 }).notNull(),
+    scope: varchar('scope', { length: 255 }).notNull(),
+    resource: text('resource').notNull(),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    lastUsedAt: timestamp('last_used_at'),
+    revokedAt: timestamp('revoked_at'),
+  },
+  (t) => [uniqueIndex('oauth_grant_user_client_unique').on(t.userId, t.clientId)],
+)
+/** 一次性轮换的 Refresh Token，仅保存摘要；familyId 关联重放后的整族撤销。 */
+export const oauthRefreshTokens = mysqlTable(
+  'oauth_refresh_tokens',
+  {
+    id: id(),
+    tokenHash: varchar('token_hash', { length: 128 }).notNull().unique(),
+    familyId: varchar('family_id', { length: 48 }).notNull(),
+    grantId: varchar('grant_id', { length: 48 }).notNull(),
+    clientId: varchar('client_id', { length: 255 }).notNull(),
+    expiresAt: timestamp('expires_at').notNull(),
+    consumedAt: timestamp('consumed_at'),
+    revokedAt: timestamp('revoked_at'),
+  },
+  (t) => [
+    index('oauth_refresh_family_idx').on(t.familyId),
+    index('oauth_refresh_grant_idx').on(t.grantId),
+  ],
+)

@@ -105,7 +105,13 @@ export type AuditLog = {
 }
 
 /** 当前用户授予 OAuth 客户端的有效权限。 */
-export type OAuthGrant = { clientId: string; scope: string; expiresAt: string }
+export type OAuthGrant = {
+  clientId: string
+  clientName?: string | null
+  scope: string
+  createdAt: string
+  lastUsedAt?: string | null
+}
 
 /** 管理员首页统计数据。 */
 export type OverviewStats = {

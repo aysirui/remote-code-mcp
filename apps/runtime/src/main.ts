@@ -1,10 +1,11 @@
 import { WebSocket } from 'ws'
 import { randomBytes } from 'node:crypto'
-import { load, publicWs, type Config } from './state'
+import { load, publicWs, getWritePolicy, requiresWriteApproval, type Config } from './state'
 import { execute } from './executors'
 import { RpcRequestSchema, type RpcRequest } from '@rcm/protocol'
 import { WriteApprovalQueue } from './write-approvals'
 import { startLocalServer } from './local-server'
+import { LocalEvents } from './local-events'
 
 const port = Number(process.env.RUNTIME_PORT || 18787)
 const localKey = randomBytes(32).toString('base64url')
@@ -15,9 +16,10 @@ let stopped = false
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined
 
 /**
- * 文件写入必须在本地页面逐次批准，队列在设备断开时统一取消。
+ * 每个工作区独立决定自动写入或逐次审批；断线时取消全部待审批任务。
  */
-const approvals = new WriteApprovalQueue()
+const events = new LocalEvents()
+const approvals = new WriteApprovalQueue(() => events.publish('write-approvals'))
 
 /** 断开设备 WebSocket，并取消所有尚未完成的写入审批。 */
 function disconnect() {
@@ -27,6 +29,7 @@ function disconnect() {
   const previous = socket
   socket = undefined
   online = false
+  events.publish('status')
   previous?.close()
 }
 const stat = () => ({
@@ -58,6 +61,7 @@ function connect() {
   connection.on('open', () => {
     if (socket !== connection) return
     online = true
+    events.publish('status')
     connection.send(
       JSON.stringify({
         kind: 'hello',
@@ -77,17 +81,28 @@ function connect() {
       if (!workspace) throw Error('WORKSPACE_NOT_FOUND')
       if (parsed.deadlineAt < Date.now()) throw Error('REQUEST_EXPIRED')
       if (parsed.operation === 'file.write') {
-        const approved = await approvals.request(parsed, workspace)
-        if (!approved) throw Error('WRITE_APPROVAL_DENIED_OR_EXPIRED')
-        if (socket !== connection) throw Error('CONNECTION_REPLACED')
+        // 读写权限是任何写入策略的前置条件，未授权写入不进入审批队列。
+        if (!workspace.enabled || !workspace.permissions.read || !workspace.permissions.write)
+          throw Error('WORKSPACE_WRITE_NOT_ALLOWED')
+
+        const policy = getWritePolicy(workspace)
+        if (requiresWriteApproval(workspace)) {
+          // 逐次审批模式最多等待 30 秒；默认及旧版工作区保持这一安全行为。
+          const approved = await approvals.request(parsed, workspace)
+          if (!approved) throw Error('WRITE_APPROVAL_DENIED_OR_EXPIRED')
+        }
+
+        // 自动写入也不能绕过连接、时限、工作区和写入策略重新验证。
+        if (socket !== connection || connection.readyState !== WebSocket.OPEN)
+          throw Error('CONNECTION_REPLACED')
         if (parsed.deadlineAt < Date.now()) throw Error('REQUEST_EXPIRED')
-        // The local grant may have been removed or disabled during approval.
         const currentWorkspace = config.workspaces.find((w) => w.id === parsed.workspaceId)
         if (
           currentWorkspace !== workspace ||
           !workspace.enabled ||
           !workspace.permissions.read ||
-          !workspace.permissions.write
+          !workspace.permissions.write ||
+          getWritePolicy(workspace) !== policy
         )
           throw Error('WORKSPACE_PERMISSION_REVOKED')
       }
@@ -111,6 +126,7 @@ function connect() {
   connection.on('close', () => {
     if (socket !== connection) return
     online = false
+    events.publish('status')
     socket = undefined
     if (!stopped && config.deviceToken) reconnectTimer = setTimeout(connect, 3500)
   })
@@ -135,6 +151,7 @@ async function boot() {
     localKey,
     config,
     approvals,
+    events,
     status: stat,
     disconnect,
     connect,

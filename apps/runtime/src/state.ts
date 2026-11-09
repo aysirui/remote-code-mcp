@@ -3,8 +3,22 @@ import path from 'node:path'
 import os from 'node:os'
 import { randomUUID } from 'node:crypto'
 import type { WorkspacePublic } from '@rcm/protocol'
-/** 本地工作区模型：公开授权信息 + 仅保存在本机的根路径。 */
-export type LocalWorkspace = WorkspacePublic & { root: string }
+/** 本地写入策略：auto 表示免逐次确认，approval 表示每次写入前人工批准。 */
+export type WritePolicy = 'auto' | 'approval'
+
+/**
+ * 本地工作区模型：写入策略与绝对路径都只保存在 Runtime。
+ * 旧配置不存在 writePolicy 时视为 approval，避免升级后扩大 AI 写入权限。
+ */
+export type LocalWorkspace = WorkspacePublic & { root: string; writePolicy?: WritePolicy }
+
+/** 对旧配置和未知值采取保守策略，防止未授权自动写入。 */
+export const getWritePolicy = (workspace: LocalWorkspace): WritePolicy =>
+  workspace.writePolicy === 'auto' ? 'auto' : 'approval'
+
+/** 仅拥有读写权限的工作区才能执行写入；默认策略必须经过逐次审批。 */
+export const requiresWriteApproval = (workspace: LocalWorkspace): boolean =>
+  getWritePolicy(workspace) === 'approval'
 /** Runtime 持久化配置；设备 Token 不得上传到云端日志或界面。 */
 export type Config = {
   gateway: string

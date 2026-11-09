@@ -8,6 +8,7 @@ const reportError = (error: unknown) => {
 }
 
 import { requestLocal } from './http'
+import { subscribeLocalEvents, type LocalEventName } from './local-events'
 
 /** Runtime 与云端的连接状态，设备 Token 故意不包含在响应中。 */
 interface RuntimeStatus {
@@ -20,6 +21,8 @@ interface RuntimeStatus {
 
 /** 本地页面的工作区视图，root 不会被同步到云端。 */
 interface WorkspaceView {
+  /** 写入策略仅属于本机设置，不同步给云端 Gateway。 */
+  writePolicy: 'auto' | 'approval'
   id: string
   name: string
   root: string
@@ -71,7 +74,13 @@ export function useRuntimeConsole() {
     browse = ref<DirectoryBrowser | null>(null),
     pairing = ref<PairingRequest | null>(null),
     code = ref('')
-  let timer: ReturnType<typeof setInterval> | undefined
+  let unsubscribeEvents: (() => void) | undefined
+  /** 用户修改 Gateway 地址后保持草稿，定时状态更新不得覆盖输入。 */
+  const gatewayDirty = ref(false)
+  function setGatewayDraft(value: string) {
+    gateway.value = value
+    gatewayDirty.value = true
+  }
   if (location.hash.includes('token=')) {
     const t = new URLSearchParams(location.hash.slice(1)).get('token')
     if (t) {
@@ -87,16 +96,49 @@ export function useRuntimeConsole() {
     data?: unknown,
   ) => requestLocal<T>(path, token.value, method, data)
 
-  /** 读取本地 Runtime 状态、已授权工作区和待审批写入；失败时保持现有视图。 */
+  /** 轻量更新设备连接状态；不读取工作区，也不覆盖用户正在编辑的 Gateway URL。 */
+  async function refreshStatus() {
+    if (!token.value) return
+    const next = await api<RuntimeStatus>('status')
+    status.value = next
+    if (!gatewayDirty.value) gateway.value = next.gateway
+    // 设备离线时不会收到写入请求，清空已结束连接的审批显示。
+    if (!next.online) writeApprovals.value = []
+  }
+
+  /** 仅在设备在线时轮询待审批写入，保障 30 秒审批时限内可见。 */
+  async function refreshApprovals() {
+    if (!token.value || !status.value.online) return
+    writeApprovals.value = await api<WriteApprovalView[]>('write-approvals')
+  }
+
+  /** 读取工作区授权；不会因设备状态定时轮询而重复获取。 */
+  async function refreshWorkspaces() {
+    if (!token.value) return
+    workspaces.value = await api<WorkspaceView[]>('workspaces')
+  }
+
+  /** 用户手动刷新及本地配置变更后完整刷新三个独立视图。 */
   async function refresh() {
     if (!token.value) return
     try {
-      status.value = await api<RuntimeStatus>('status')
-      workspaces.value = await api<WorkspaceView[]>('workspaces')
-      writeApprovals.value = await api<WriteApprovalView[]>('write-approvals')
-      gateway.value = status.value.gateway
+      await refreshStatus()
+      await Promise.all([refreshWorkspaces(), refreshApprovals()])
     } catch (error: unknown) {
       reportError(error)
+    }
+  }
+
+  /** 处理 SSE 推送的三个本地视图快照，不修改正在编辑的 Gateway 草稿。 */
+  function applyEvent(name: LocalEventName, payload: unknown) {
+    if (name === 'status') {
+      const next = payload as RuntimeStatus
+      status.value = next
+      if (!gatewayDirty.value) gateway.value = next.gateway
+    } else if (name === 'workspaces') {
+      workspaces.value = payload as WorkspaceView[]
+    } else if (name === 'write-approvals') {
+      writeApprovals.value = payload as WriteApprovalView[]
     }
   }
   /** 要求用户明确确认一次文件写入请求，提交同意或拒绝结果。 */
@@ -124,6 +166,8 @@ export function useRuntimeConsole() {
         type: 'warning',
       })
       await api('config', 'POST', { gateway: gateway.value })
+      // 配置保存成功后，允许状态刷新重新同步服务端的规范化地址。
+      gatewayDirty.value = false
       await refresh()
       ElMessage.success('服务地址已更新')
     } catch (error: unknown) {
@@ -200,6 +244,26 @@ export function useRuntimeConsole() {
       reportError(error)
     }
   }
+  /** 每个工作区独立选择写入模式；自动写入必须经过显式风险确认。 */
+  async function changeWritePolicy(w: WorkspaceView, policy: 'auto' | 'approval') {
+    if (policy === (w.writePolicy || 'approval')) return
+    try {
+      if (!w.enabled || !w.permissions.write) throw Error('请先开启该工作区写入权限')
+      if (policy === 'auto') {
+        await ElMessageBox.confirm(
+          '自动写入模式下，AI 可以在授权工作区内连续修改文件，无需每次确认。仍会校验文件路径、敏感文件及版本冲突。确定开启吗？',
+          '开启自动写入',
+          { type: 'warning', confirmButtonText: '确认自动写入', distinguishCancelAndClose: true },
+        )
+      }
+      await api('workspaces/' + w.id, 'PATCH', { writePolicy: policy })
+      await refresh()
+      ElMessage.success(policy === 'auto' ? '已开启自动写入' : '已切换为逐次审批')
+    } catch (error: unknown) {
+      reportError(error)
+    }
+  }
+
   /** 确认后删除本地工作区授权并同步云端。 */
   async function remove(w: WorkspaceView) {
     try {
@@ -226,11 +290,14 @@ export function useRuntimeConsole() {
     }
   }
   onMounted(() => {
-    refresh()
-    timer = setInterval(refresh, 8000)
+    if (!token.value) return
+    // SSE 首次连接即推送状态、工作区和审批快照，无需重复 HTTP 轮询。
+    unsubscribeEvents = subscribeLocalEvents(token.value, applyEvent, (error) =>
+      console.warn('Runtime 本地事件流中断，正在重连', error),
+    )
   })
   onUnmounted(() => {
-    if (timer) clearInterval(timer)
+    unsubscribeEvents?.()
   })
   /** 页面模板可访问的响应式状态与动作。 */
   return {
@@ -240,6 +307,7 @@ export function useRuntimeConsole() {
     workspaces,
     writeApprovals,
     gateway,
+    setGatewayDraft,
     folder,
     folderName,
     showAdd,
@@ -255,6 +323,7 @@ export function useRuntimeConsole() {
     pickDir,
     addWorkspace,
     toggleWrite,
+    changeWritePolicy,
     remove,
     unpair,
   }

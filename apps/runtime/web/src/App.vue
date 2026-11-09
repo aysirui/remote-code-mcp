@@ -16,6 +16,7 @@ const {
   workspaces,
   writeApprovals,
   gateway,
+  setGatewayDraft,
   folder,
   folderName,
   showAdd,
@@ -31,6 +32,7 @@ const {
   pickDir,
   addWorkspace,
   toggleWrite,
+  changeWritePolicy,
   remove,
   unpair,
 } = useRuntimeConsole()
@@ -43,7 +45,7 @@ const {
         <div class="muted" style="margin-left: 51px">本地工作区与 AI 执行权限管理</div>
       </div>
       <el-tag :type="status.online ? 'success' : 'info'" effect="light" size="large">{{
-        status.online ? '● Gateway 已连接' : '○ Gateway 未连接'
+        !status.paired ? '○ 设备未绑定' : status.online ? '● Gateway 已连接' : '○ Gateway 未连接'
       }}</el-tag>
     </header>
     <el-alert
@@ -99,10 +101,11 @@ const {
         </div>
         <el-divider />
         <div class="row">
-          <el-input v-model="gateway" placeholder="https://mcp.example.com" /><el-button
-            @click="updateGateway"
-            >设置服务器</el-button
-          >
+          <el-input
+            :model-value="gateway"
+            placeholder="https://mcp.example.com"
+            @update:model-value="setGatewayDraft"
+          /><el-button @click="updateGateway">设置服务器</el-button>
         </div>
         <div v-if="!status.paired" style="margin-top: 20px">
           <el-alert
@@ -154,11 +157,21 @@ const {
           </div>
           <el-tag :type="w.permissions.write ? 'warning' : 'info'">{{
             w.permissions.write ? '读写' : '只读'
-          }}</el-tag
-          ><el-button text type="primary" @click="toggleWrite(w)">{{
+          }}</el-tag>
+          <el-select
+            v-if="w.permissions.write && w.enabled"
+            :model-value="w.writePolicy || 'approval'"
+            style="width: 150px"
+            aria-label="工作区写入策略"
+            @change="(policy: 'auto' | 'approval') => changeWritePolicy(w, policy)"
+          >
+            <el-option label="逐次审批" value="approval" />
+            <el-option label="自动写入" value="auto" />
+          </el-select>
+          <el-button text type="primary" @click="toggleWrite(w)">{{
             w.permissions.write ? '设为只读' : '开启写入'
-          }}</el-button
-          ><el-button text type="danger" :icon="Delete" @click="remove(w)" />
+          }}</el-button>
+          <el-button text type="danger" :icon="Delete" @click="remove(w)" />
         </div>
       </div>
       <div class="card">

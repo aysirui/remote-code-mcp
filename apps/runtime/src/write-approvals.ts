@@ -30,6 +30,9 @@ interface PendingApproval extends WriteApprovalInfo {
 export class WriteApprovalQueue {
   private readonly pending = new Map<string, PendingApproval>()
 
+  /** 由 Runtime 注入事件通知器，审批队列变化时推送给本地管理页面。 */
+  constructor(private readonly notify: () => void = () => {}) {}
+
   /** 获取本地 UI 可用的待处理任务，避免泄露 Promise 处理器。 */
   list(): WriteApprovalInfo[] {
     return [...this.pending.values()].map(
@@ -54,6 +57,7 @@ export class WriteApprovalQueue {
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id)
+        this.notify()
         resolve(false)
       }, 30000)
       this.pending.set(id, {
@@ -68,6 +72,7 @@ export class WriteApprovalQueue {
         resolve,
         timeout,
       })
+      this.notify()
     })
   }
 
@@ -77,6 +82,7 @@ export class WriteApprovalQueue {
     if (!approval) return false
     this.pending.delete(id)
     clearTimeout(approval.timeout)
+    this.notify()
     approval.resolve(approved)
     return true
   }

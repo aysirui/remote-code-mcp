@@ -3,9 +3,10 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { publicWs, save, type Config } from './state'
+import { getWritePolicy, publicWs, save, type Config, type WritePolicy } from './state'
 import { postGateway } from './gateway-client'
 import type { WriteApprovalQueue } from './write-approvals'
+import type { LocalEvents, LocalEventName } from './local-events'
 
 /** 本地管理 HTTP Server 的外部依赖，由 Runtime 主入口注入以避免全局状态耦合。 */
 export interface LocalServerOptions {
@@ -13,6 +14,7 @@ export interface LocalServerOptions {
   localKey: string
   config: Config
   approvals: WriteApprovalQueue
+  events: LocalEvents
   status: () => object
   disconnect: () => void
   connect: () => void
@@ -25,7 +27,7 @@ export interface LocalServerOptions {
  * 并强制 Host / Origin 校验，避免 DNS Rebinding 与跨站滥用。
  */
 export function startLocalServer(options: LocalServerOptions) {
-  const { port, localKey, config, approvals, status, disconnect, connect, sync } = options
+  const { port, localKey, config, approvals, events, status, disconnect, connect, sync } = options
   const app = express()
   app.disable('x-powered-by')
   app.use(express.json({ limit: '1mb' }))
@@ -49,6 +51,46 @@ export function startLocalServer(options: LocalServerOptions) {
     res.setHeader('Referrer-Policy', 'no-referrer')
     res.setHeader('Cache-Control', 'no-store')
     next()
+  })
+
+  /**
+   * 本地状态 SSE 订阅：复用 Bearer 鉴权，不把启动 Token 放在 URL 查询参数。
+   * 首次连接发送完整快照，后续仅推送变化的资源；断连时移除监听器。
+   */
+  app.get('/local/api/events', (req, res) => {
+    res.status(200)
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
+    res.setHeader('Connection', 'keep-alive')
+    res.setHeader('X-Accel-Buffering', 'no')
+    res.flushHeaders()
+
+    const send = (name: LocalEventName) => {
+      if (res.destroyed || res.writableEnded) return
+      const payload =
+        name === 'status'
+          ? status()
+          : name === 'workspaces'
+            ? config.workspaces.map((w) => ({
+                ...publicWs(w),
+                root: w.root,
+                writePolicy: getWritePolicy(w),
+              }))
+            : approvals.list()
+      res.write(`event: ${name}\ndata: ${JSON.stringify(payload)}\n\n`)
+    }
+
+    send('status')
+    send('workspaces')
+    send('write-approvals')
+
+    const unsubscribe = events.subscribe(send)
+    const heartbeat = setInterval(() => {
+      if (!res.destroyed && !res.writableEnded) res.write(': keepalive\n\n')
+    }, 25000)
+    req.on('close', () => {
+      clearInterval(heartbeat)
+      unsubscribe()
+    })
   })
 
   /** 当前设备连接状态，不包含原始设备凭据。 */
@@ -84,6 +126,7 @@ export function startLocalServer(options: LocalServerOptions) {
       config.deviceId = undefined
       config.deviceToken = undefined
       await save(config)
+      events.publish('status')
       res.json(status())
     } catch (error: unknown) {
       res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid gateway' })
@@ -116,6 +159,7 @@ export function startLocalServer(options: LocalServerOptions) {
         config.deviceId = result.deviceId
         config.deviceToken = result.token
         await save(config)
+        events.publish('status')
         connect()
       }
       res.json({ status: result.status, deviceId: result.deviceId })
@@ -130,6 +174,7 @@ export function startLocalServer(options: LocalServerOptions) {
     config.deviceId = undefined
     config.deviceToken = undefined
     await save(config)
+    events.publish('status')
     res.json(status())
   })
 
@@ -168,10 +213,12 @@ export function startLocalServer(options: LocalServerOptions) {
         root,
         enabled: true,
         permissions: { read: true, write: false },
+        writePolicy: 'approval' as WritePolicy,
       }
       config.workspaces.push(workspace)
       await save(config)
       await sync()
+      events.publish('workspaces')
       res.json(workspace)
     } catch (error: unknown) {
       res.status(400).json({ error: error instanceof Error ? error.message : 'Workspace failed' })
@@ -185,12 +232,39 @@ export function startLocalServer(options: LocalServerOptions) {
       res.status(404).end()
       return
     }
-    if (typeof req.body.enabled === 'boolean') workspace.enabled = req.body.enabled
-    if (typeof req.body.write === 'boolean') workspace.permissions.write = req.body.write
-    if (!workspace.enabled || !workspace.permissions.write) approvals.rejectWorkspace(workspace.id)
+    // 只接受已知策略值，禁止未知输入隐式开启自动写入。
+    const policy = req.body?.writePolicy
+    if (policy !== undefined && policy !== 'approval' && policy !== 'auto') {
+      res.status(400).json({ error: 'Invalid write policy' })
+      return
+    }
+    const enabled = typeof req.body.enabled === 'boolean' ? req.body.enabled : workspace.enabled
+    const write = typeof req.body.write === 'boolean' ? req.body.write : workspace.permissions.write
+    if (policy === 'auto' && (!enabled || !write || !workspace.permissions.read)) {
+      res.status(400).json({ error: 'Enable workspace write permission before automatic writes' })
+      return
+    }
+    const previousPolicy = getWritePolicy(workspace)
+    workspace.enabled = enabled
+    workspace.permissions.write = write
+    if (policy !== undefined) workspace.writePolicy = policy
+    // 关闭写入后恢复默认审批策略，避免下次重新开启时意外自动写入。
+    if (!workspace.permissions.write) workspace.writePolicy = 'approval'
+    // 缩小写入权限或更换策略，都必须立即拒绝已排队的旧审批。
+    if (
+      !workspace.enabled ||
+      !workspace.permissions.write ||
+      previousPolicy !== getWritePolicy(workspace)
+    )
+      approvals.rejectWorkspace(workspace.id)
     await save(config)
     await sync()
-    res.json(workspace)
+    events.publish('workspaces')
+    res.json({
+      ...publicWs(workspace),
+      root: workspace.root,
+      writePolicy: getWritePolicy(workspace),
+    })
   })
 
   /** 移除工作区授权并同步云端，同时立即拒绝该工作区的待审批操作。 */
@@ -199,6 +273,7 @@ export function startLocalServer(options: LocalServerOptions) {
     config.workspaces = config.workspaces.filter((w) => w.id !== req.params.id)
     await save(config)
     await sync()
+    events.publish('workspaces')
     res.json({ ok: true })
   })
 

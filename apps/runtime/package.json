@@ -17,6 +17,7 @@
     "ws": "catalog:",
     "zod": "catalog:",
     "vue": "catalog:",
+    "vue-router": "^4.5.0",
     "element-plus": "catalog:",
     "pinia": "catalog:",
     "@element-plus/icons-vue": "^2.3.2",

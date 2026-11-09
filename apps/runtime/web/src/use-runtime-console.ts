@@ -328,3 +328,6 @@ export function useRuntimeConsole() {
     unpair,
   }
 }
+
+/** 根组件提供给 Runtime 各路由页面的共享状态和操作。 */
+export type RuntimeContext = ReturnType<typeof useRuntimeConsole>

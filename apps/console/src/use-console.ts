@@ -1,4 +1,6 @@
 import { computed, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
+import { pagePaths, router } from './router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 /** 区分用户主动取消弹窗和真正的接口失败，避免悄悄吞掉错误。 */
@@ -24,8 +26,9 @@ import {
  */
 export function useConsole() {
   const me = ref<Account | null>(null),
-    loading = ref(true),
-    page = ref(window.location.pathname.startsWith('/admin') ? 'admin-overview' : 'overview')
+    loading = ref(true)
+  const route = useRoute()
+  const page = computed(() => String(route.name || 'overview'))
   const email = ref(''),
     password = ref(''),
     registering = ref(false),
@@ -146,7 +149,7 @@ export function useConsole() {
   async function logout() {
     await request('/api/auth/logout', 'POST')
     me.value = null
-    page.value = 'overview'
+    await router.push('/console')
   }
   /** 修改设备显示名称，操作失败不改变页面状态。 */
   async function rename(d: Device) {
@@ -243,8 +246,8 @@ export function useConsole() {
   }
   /** 切换 Console 内部页面，并保持 URL 与当前视图一致。 */
   function navigate(p: string) {
-    page.value = p
-    history.replaceState(null, '', p.startsWith('admin-') ? '/admin' : '/console')
+    const target = pagePaths[p]
+    if (target) void router.push(target)
   }
   /** 复制 MCP Server URL 供 AI 客户端连接。 */
   function copyUrl() {
@@ -252,8 +255,7 @@ export function useConsole() {
     ElMessage.success('MCP URL 已复制')
   }
   onMounted(() => {
-    if (location.pathname === '/activate') page.value = 'activate'
-    load()
+    void load()
   })
   /** 页面标识到中文标题的映射，未匹配时统一使用默认标题。 */
   const pageTitles: Record<string, string> = {
@@ -309,3 +311,6 @@ export function useConsole() {
     copyUrl,
   }
 }
+
+/** 单例 Console 根组件向各路由页面提供的业务上下文类型。 */
+export type ConsoleContext = ReturnType<typeof useConsole>

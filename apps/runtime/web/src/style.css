@@ -92,3 +92,79 @@ body {
     gap: 10px;
   }
 }
+
+/* 本地管理独立路由与导航 */
+.runtime-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.runtime-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.runtime-nav a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 16px;
+  color: #5b6b82;
+  text-decoration: none;
+  border-radius: 9px;
+  font-weight: 600;
+  font-size: 14px;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.runtime-nav a:hover {
+  background: #e9f0ff;
+  color: #2258c8;
+}
+.runtime-nav a.router-link-active {
+  background: #eaf1ff;
+  color: #215ed7;
+}
+.runtime-main {
+  min-height: 320px;
+}
+@media (max-width: 600px) {
+  .runtime-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .runtime-nav {
+    width: 100%;
+  }
+  .runtime-nav a {
+    flex: 1;
+    justify-content: center;
+    padding: 10px;
+  }
+}
+
+.runtime-main .project.row {
+  flex-wrap: wrap;
+}
+.runtime-main .project .el-select {
+  flex-shrink: 0;
+}
+@media (max-width: 600px) {
+  .runtime-main .project.row {
+    align-items: flex-start;
+  }
+  .runtime-main .project.row > div[style*='flex: 1'] {
+    flex-basis: 100%;
+  }
+  .runtime-main .row {
+    flex-wrap: wrap;
+  }
+  .runtime-main .row .el-input {
+    min-width: 180px;
+    flex: 1;
+  }
+}

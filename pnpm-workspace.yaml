@@ -2,6 +2,11 @@ packages:
   - apps/*
   - packages/*
 
+# 使用 Rollup 官方 WASM 实现，避免 Windows 平台构建时加载 .node 原生扩展。
+# 此覆盖作用于整个工作区；更新依赖后需重新执行 pnpm install 生成锁文件。
+overrides:
+  rollup: npm:@rollup/wasm-node@4.68.0
+
 catalog:
   axios: ^1.13.2
   typescript: ^5.9.0

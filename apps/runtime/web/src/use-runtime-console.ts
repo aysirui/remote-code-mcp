@@ -19,10 +19,19 @@ interface RuntimeStatus {
   name: string
 }
 
+/** 只在 Runtime 本地保存的命令配置。 */
+interface CommandView {
+  id: string
+  name: string
+  executable: string
+  args: string[]
+}
+
 /** 本地页面的工作区视图，root 不会被同步到云端。 */
 interface WorkspaceView {
   /** 写入策略仅属于本机设置，不同步给云端 Gateway。 */
   writePolicy: 'auto' | 'approval'
+  commands?: CommandView[]
   id: string
   name: string
   root: string
@@ -49,6 +58,7 @@ interface PairingRequest {
 /** 用户批准写文件时展示的摘要，完整内容保存在服务端审批队列中。 */
 interface WriteApprovalView {
   id: string
+  operation: string
   workspaceName: string
   path: string
   bytes: number
@@ -73,7 +83,12 @@ export function useRuntimeConsole() {
     showAdd = ref(false),
     browse = ref<DirectoryBrowser | null>(null),
     pairing = ref<PairingRequest | null>(null),
-    code = ref('')
+    code = ref(''),
+    commandWorkspace = ref<WorkspaceView | null>(null),
+    commandId = ref(''),
+    commandName = ref(''),
+    commandExecutable = ref(''),
+    commandArgs = ref('[]')
   let unsubscribeEvents: (() => void) | undefined
   /** 用户修改 Gateway 地址后保持草稿，定时状态更新不得覆盖输入。 */
   const gatewayDirty = ref(false)
@@ -145,15 +160,19 @@ export function useRuntimeConsole() {
   async function answerWriteApproval(id: string, approve: boolean) {
     try {
       if (approve) {
+        const item = writeApprovals.value.find((x) => x.id === id)
+        const sensitive = item?.operation === 'file.delete' || item?.operation === 'command.run'
         await ElMessageBox.confirm(
-          '批准后，当前远程请求将修改所列文件。只批准你明确认识的请求。',
-          '确认本地文件写入',
-          { type: 'warning', confirmButtonText: '允许写入' },
+          sensitive
+            ? '这项操作可能删除文件或执行项目代码，且无法保证撤销。请核对工作区、路径和命令后再批准。'
+            : '批准后，当前远程请求将修改授权工作区中的文件。只批准你明确认识的请求。',
+          sensitive ? '确认高风险本地操作' : '确认本地文件操作',
+          { type: 'warning', confirmButtonText: sensitive ? '批准执行' : '允许修改' },
         )
       }
       await api('write-approvals/' + encodeURIComponent(id), 'POST', { approve })
       await refresh()
-      ElMessage.success(approve ? '已批准本次写入' : '已拒绝本次写入')
+      ElMessage.success(approve ? '已批准本次操作' : '已拒绝本次操作')
     } catch (error: unknown) {
       reportError(error)
     }
@@ -264,6 +283,51 @@ export function useRuntimeConsole() {
     }
   }
 
+  /** 编辑工作区下的本地命令白名单：远程 AI 不可修改 executable 或 args。 */
+  function showCommandForm(w: WorkspaceView) {
+    commandWorkspace.value = w
+    commandId.value = ''
+    commandName.value = ''
+    commandExecutable.value = ''
+    commandArgs.value = '[]'
+  }
+
+  async function addCommand() {
+    const workspace = commandWorkspace.value
+    if (!workspace) return
+    try {
+      const args: unknown = JSON.parse(commandArgs.value)
+      if (!Array.isArray(args) || !args.every((item) => typeof item === 'string'))
+        throw Error('参数必须是 JSON 字符串数组，例如 ["run", "lint"]')
+      await api('workspaces/' + workspace.id + '/commands', 'POST', {
+        id: commandId.value,
+        name: commandName.value,
+        executable: commandExecutable.value,
+        args,
+      })
+      commandWorkspace.value = null
+      await refresh()
+      ElMessage.success('本地命令已添加')
+    } catch (error: unknown) {
+      reportError(error)
+    }
+  }
+
+  async function deleteCommand(w: WorkspaceView, command: CommandView) {
+    try {
+      await ElMessageBox.confirm(
+        '确认移除 ' + command.name + '？这会使尚未完成的审批请求失效。',
+        '移除本地命令',
+        { type: 'warning' },
+      )
+      await api('workspaces/' + w.id + '/commands/' + encodeURIComponent(command.id), 'DELETE')
+      await refresh()
+      ElMessage.success('本地命令已移除')
+    } catch (error: unknown) {
+      reportError(error)
+    }
+  }
+
   /** 确认后删除本地工作区授权并同步云端。 */
   async function remove(w: WorkspaceView) {
     try {
@@ -324,6 +388,14 @@ export function useRuntimeConsole() {
     addWorkspace,
     toggleWrite,
     changeWritePolicy,
+    commandWorkspace,
+    commandId,
+    commandName,
+    commandExecutable,
+    commandArgs,
+    showCommandForm,
+    addCommand,
+    deleteCommand,
     remove,
     unpair,
   }

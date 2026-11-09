@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { ToolInputs, type RpcRequest } from '@rcm/protocol'
 import type { LocalWorkspace } from './state'
+import { resolveCommand } from './command-operations'
 
 /** 本地管理员页面可展示的待写入任务摘要，不包含完整的文件内容。 */
 export interface WriteApprovalInfo {
@@ -8,6 +9,7 @@ export interface WriteApprovalInfo {
   workspaceId: string
   workspaceName: string
   path: string
+  operation: string
   bytes: number
   preview: string
   truncated: boolean
@@ -36,11 +38,22 @@ export class WriteApprovalQueue {
   /** 获取本地 UI 可用的待处理任务，避免泄露 Promise 处理器。 */
   list(): WriteApprovalInfo[] {
     return [...this.pending.values()].map(
-      ({ id, workspaceId, workspaceName, path, bytes, preview, truncated, createdAt }) => ({
+      ({
         id,
         workspaceId,
         workspaceName,
         path,
+        operation,
+        bytes,
+        preview,
+        truncated,
+        createdAt,
+      }) => ({
+        id,
+        workspaceId,
+        workspaceName,
+        path,
+        operation,
         bytes,
         preview,
         truncated,
@@ -52,7 +65,39 @@ export class WriteApprovalQueue {
   /** 远程写入请求进入审批队列，超时自动拒绝。 */
   request(req: RpcRequest, workspace: LocalWorkspace): Promise<boolean> {
     if (this.pending.size >= 20) throw Error('TOO_MANY_PENDING_WRITE_APPROVALS')
-    const payload = ToolInputs['file.write'].parse(req.payload)
+    let pathLabel = ''
+    let preview = ''
+    let bytes = 0
+    if (req.operation === 'file.write') {
+      const payload = ToolInputs['file.write'].parse(req.payload)
+      pathLabel = payload.path
+      preview = payload.content.slice(0, 2000)
+      bytes = Buffer.byteLength(payload.content, 'utf8')
+    } else if (req.operation === 'file.mkdir') {
+      const payload = ToolInputs['file.mkdir'].parse(req.payload)
+      pathLabel = payload.path
+      preview = '创建目录' + (payload.recursive ? '（含父目录）' : '')
+    } else if (req.operation === 'file.move') {
+      const payload = ToolInputs['file.move'].parse(req.payload)
+      pathLabel = payload.from + ' → ' + payload.to
+      preview = '移动或重命名本地文件/目录，不覆盖目标'
+    } else if (req.operation === 'file.delete') {
+      const payload = ToolInputs['file.delete'].parse(req.payload)
+      pathLabel = payload.path
+      preview = payload.recursive ? '递归删除目录（不可撤销）' : '删除文件或空目录（不可撤销）'
+    } else if (req.operation === 'command.run') {
+      const payload = ToolInputs['command.run'].parse(req.payload)
+      const selected = resolveCommand(workspace, payload.command)
+      pathLabel = selected.name + ' (' + selected.id + ')'
+      preview =
+        '程序：' +
+        selected.executable +
+        '\\n参数：' +
+        JSON.stringify(selected.args) +
+        '\\n工作区：' +
+        workspace.name +
+        '\\n执行此程序可能访问工作区外的数据，请只批准可信命令。'
+    } else throw Error('UNSUPPORTED_APPROVAL_OPERATION')
     const id = randomUUID()
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
@@ -64,10 +109,11 @@ export class WriteApprovalQueue {
         id,
         workspaceId: workspace.id,
         workspaceName: workspace.name,
-        path: payload.path,
-        bytes: Buffer.byteLength(payload.content, 'utf8'),
-        preview: payload.content.slice(0, 2000),
-        truncated: payload.content.length > 2000,
+        path: pathLabel,
+        operation: req.operation,
+        bytes,
+        preview,
+        truncated: preview.length > 2000,
         createdAt: Date.now(),
         resolve,
         timeout,

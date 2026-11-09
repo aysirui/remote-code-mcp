@@ -13,6 +13,14 @@ const {
   addWorkspace,
   toggleWrite,
   changeWritePolicy,
+  commandWorkspace,
+  commandId,
+  commandName,
+  commandExecutable,
+  commandArgs,
+  showCommandForm,
+  addCommand,
+  deleteCommand,
   remove,
 } = inject<RuntimeContext>('runtime')!
 </script>
@@ -50,9 +58,62 @@ const {
       <el-button text type="primary" @click="toggleWrite(w)">{{
         w.permissions.write ? '设为只读' : '开启写入'
       }}</el-button>
+      <el-button text type="primary" :disabled="!w.enabled" @click="showCommandForm(w)"
+        >添加命令</el-button
+      >
       <el-button text type="danger" :icon="Delete" @click="remove(w)" />
+      <div v-if="w.commands?.length" class="command-list">
+        <div v-for="cmd in w.commands" :key="cmd.id" class="command-item">
+          <div>
+            <strong>{{ cmd.name }}</strong>
+            <span class="muted"> · {{ cmd.id }}</span>
+            <div class="muted command-line">{{ cmd.executable }} {{ cmd.args.join(' ') }}</div>
+          </div>
+          <el-button text type="danger" @click="deleteCommand(w, cmd)">移除命令</el-button>
+        </div>
+      </div>
     </div>
   </div>
+  <el-dialog
+    :model-value="!!commandWorkspace"
+    title="添加工作区命令"
+    width="min(560px, 95vw)"
+    @close="commandWorkspace = null"
+  >
+    <el-alert
+      title="命令只保存在本机，AI 只能按 ID 调用，每次执行仍需本地确认。"
+      type="warning"
+      :closable="false"
+      style="margin-bottom: 18px"
+    />
+    <el-form label-position="top" @submit.prevent="addCommand">
+      <el-form-item label="命令 ID（英文小写，唯一）">
+        <el-input v-model="commandId" placeholder="lint-check" maxlength="40" />
+      </el-form-item>
+      <el-form-item label="显示名称">
+        <el-input v-model="commandName" placeholder="检查项目代码" maxlength="80" />
+      </el-form-item>
+      <el-form-item label="可执行程序">
+        <el-input v-model="commandExecutable" placeholder="例如 node、git 或绝对路径" />
+      </el-form-item>
+      <el-form-item label="固定参数（JSON 字符串数组）">
+        <el-input v-model="commandArgs" type="textarea" :rows="3" placeholder='["--version"]' />
+      </el-form-item>
+      <div class="muted">
+        不能配置 Shell
+        脚本文件。命令运行时可能访问工作区之外的文件，务必使用低权限账户，并只添加可信程序。
+      </div>
+    </el-form>
+    <template #footer>
+      <el-button @click="commandWorkspace = null">取消</el-button>
+      <el-button
+        type="primary"
+        :disabled="!commandId || !commandName || !commandExecutable"
+        @click="addCommand"
+        >保存本地命令</el-button
+      >
+    </template>
+  </el-dialog>
   <el-dialog v-model="showAdd" title="添加本地工作区" width="min(520px,95vw)"
     ><el-form label-position="top"
       ><el-form-item label="项目文件夹绝对路径"

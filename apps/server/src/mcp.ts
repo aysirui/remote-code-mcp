@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from 'express'
-import type { RpcRequest } from '@rcm/protocol'
+import { operationRequiresWrite, type RpcRequest } from '@rcm/protocol'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
@@ -112,7 +112,7 @@ export function installMcp(expressApp: Express, oauth: OAuthService, hub: Device
           const { workspaceId, ...payload } = args
           return hub.execute(userId, String(workspaceId), op, payload)
         },
-        op !== 'file.write',
+        !operationRequiresWrite(op),
       )
     exec('file.list', { path: z.string().default('.') })
     exec('file.read', { path: z.string() })
@@ -121,6 +121,26 @@ export function installMcp(expressApp: Express, oauth: OAuthService, hub: Device
       path: z.string(),
       content: z.string().max(524288),
       expectedSha256: z.string().optional(),
+    })
+    exec('file.mkdir', {
+      path: z.string().min(1).max(500),
+      recursive: z.boolean().default(false),
+    })
+    exec('file.move', {
+      from: z.string().min(1).max(500),
+      to: z.string().min(1).max(500),
+    })
+    exec('file.delete', {
+      path: z.string().min(1).max(500),
+      recursive: z.boolean().default(false),
+      expectedSha256: z
+        .string()
+        .regex(/^[a-f0-9]{64}$/)
+        .optional(),
+    })
+    exec('command.list', {})
+    exec('command.run', {
+      command: z.string().regex(/^[a-z][a-z0-9_-]{1,39}$/),
     })
     exec('git.status', {})
     exec('git.diff', {})

@@ -168,3 +168,33 @@ body {
     flex: 1;
   }
 }
+
+/* Workspace 自定义命令：附属信息独占一行，避免挤压读写权限按钮。 */
+.command-list {
+  flex-basis: 100%;
+  width: 100%;
+  margin: 8px 0 0 50px;
+  padding: 8px 14px;
+  background: #f8fafc;
+  border: 1px solid #edf0f5;
+  border-radius: 10px;
+}
+.command-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+}
+.command-item + .command-item {
+  border-top: 1px solid #edf0f5;
+}
+.command-line {
+  overflow-wrap: anywhere;
+  margin-top: 4px;
+}
+@media (max-width: 600px) {
+  .command-list {
+    margin-left: 0;
+  }
+}

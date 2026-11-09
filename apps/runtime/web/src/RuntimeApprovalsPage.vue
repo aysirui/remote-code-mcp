@@ -5,11 +5,11 @@ const { writeApprovals, answerWriteApproval } = inject<RuntimeContext>('runtime'
 </script>
 <template>
   <div class="card">
-    <div class="title">待审批的文件修改（30 秒后自动拒绝）</div>
+    <div class="title">待审批的本地操作（30 秒后自动拒绝）</div>
     <el-alert
       v-if="writeApprovals.length"
-      title="远程 AI 请求修改本地文件"
-      description="请核对工作区与文件路径；没有批准的请求不会执行。"
+      title="远程 AI 请求执行本地操作"
+      description="请核对工作区、文件路径和命令；删除及命令执行始终需要确认。"
       type="warning"
       :closable="false"
       style="margin: 12px 0"
@@ -17,6 +17,9 @@ const { writeApprovals, answerWriteApproval } = inject<RuntimeContext>('runtime'
     <div v-for="approval in writeApprovals" :key="approval.id" class="project row">
       <div style="flex: 1; min-width: 0; word-break: break-all">
         <strong>{{ approval.workspaceName }}</strong>
+        <el-tag type="warning" size="small" style="margin-left: 8px">{{
+          approval.operation
+        }}</el-tag>
         <div>{{ approval.path }}</div>
         <div class="muted">{{ approval.bytes }} 字节待写入</div>
         <pre
@@ -35,6 +38,6 @@ const { writeApprovals, answerWriteApproval } = inject<RuntimeContext>('runtime'
       >
       <el-button type="primary" @click="answerWriteApproval(approval.id, true)">批准本次</el-button>
     </div>
-    <el-empty v-if="!writeApprovals.length" description="暂无待审批的文件修改" />
+    <el-empty v-if="!writeApprovals.length" description="暂无待审批的本地操作" />
   </div>
 </template>

@@ -7,6 +7,7 @@ import { getWritePolicy, publicWs, save, type Config, type WritePolicy } from '.
 import { postGateway } from './gateway-client'
 import type { WriteApprovalQueue } from './write-approvals'
 import type { LocalEvents, LocalEventName } from './local-events'
+import { validateLocalCommand } from './command-operations'
 
 /** 本地管理 HTTP Server 的外部依赖，由 Runtime 主入口注入以避免全局状态耦合。 */
 export interface LocalServerOptions {
@@ -74,6 +75,7 @@ export function startLocalServer(options: LocalServerOptions) {
                 ...publicWs(w),
                 root: w.root,
                 writePolicy: getWritePolicy(w),
+                commands: w.commands || [],
               }))
             : approvals.list()
       res.write(`event: ${name}\ndata: ${JSON.stringify(payload)}\n\n`)
@@ -196,7 +198,14 @@ export function startLocalServer(options: LocalServerOptions) {
 
   /** 工作区详情仅供本地管理页面使用，包含目录绝对路径。 */
   app.get('/local/api/workspaces', (_req, res) =>
-    res.json(config.workspaces.map((w) => ({ ...publicWs(w), root: w.root }))),
+    res.json(
+      config.workspaces.map((w) => ({
+        ...publicWs(w),
+        root: w.root,
+        writePolicy: getWritePolicy(w),
+        commands: w.commands || [],
+      })),
+    ),
   )
 
   /** 授权一个本地目录，默认只读；拒绝将家目录或文件系统根目录整体授权。 */
@@ -265,6 +274,50 @@ export function startLocalServer(options: LocalServerOptions) {
       root: workspace.root,
       writePolicy: getWritePolicy(workspace),
     })
+  })
+
+  /**
+   * 用户只能从本机管理界面配置固定命令，不能通过远程 RPC 提交 executable 或 args。
+   * 命令修改不改变云端授权元数据；待审批的旧命令请求必须失效。
+   */
+  app.post('/local/api/workspaces/:id/commands', async (req, res) => {
+    try {
+      const workspace = config.workspaces.find((w) => w.id === req.params.id)
+      if (!workspace) return res.status(404).json({ error: 'Workspace not found' })
+      const command = validateLocalCommand(req.body)
+      if ((workspace.commands || []).length >= 20) throw Error('TOO_MANY_COMMANDS')
+      if ((workspace.commands || []).some((item) => item.id === command.id))
+        throw Error('COMMAND_ALREADY_EXISTS')
+      workspace.commands = [...(workspace.commands || []), command]
+      await save(config)
+      approvals.rejectWorkspace(workspace.id)
+      events.publish('workspaces')
+      return res.json(command)
+    } catch (error: unknown) {
+      return res
+        .status(400)
+        .json({ error: error instanceof Error ? error.message : 'Invalid command' })
+    }
+  })
+
+  /** 删除本地命令配置并取消所有待审批的工作区请求。 */
+  app.delete('/local/api/workspaces/:id/commands/:commandId', async (req, res) => {
+    try {
+      const workspace = config.workspaces.find((w) => w.id === req.params.id)
+      if (!workspace) return res.status(404).json({ error: 'Workspace not found' })
+      const current = workspace.commands || []
+      if (!current.some((item) => item.id === req.params.commandId))
+        return res.status(404).json({ error: 'Command not found' })
+      workspace.commands = current.filter((item) => item.id !== req.params.commandId)
+      await save(config)
+      approvals.rejectWorkspace(workspace.id)
+      events.publish('workspaces')
+      return res.json({ ok: true })
+    } catch (error: unknown) {
+      return res
+        .status(400)
+        .json({ error: error instanceof Error ? error.message : 'Delete failed' })
+    }
   })
 
   /** 移除工作区授权并同步云端，同时立即拒绝该工作区的待审批操作。 */

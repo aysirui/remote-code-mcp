@@ -7,6 +7,11 @@ export const Operations = [
   'file.read',
   'file.search',
   'file.write',
+  'file.mkdir',
+  'file.move',
+  'file.delete',
+  'command.list',
+  'command.run',
   'git.status',
   'git.diff',
 ] as const
@@ -14,5 +19,6 @@ export const Operations = [
 /** 平台和本地 Runtime 之间共享的操作名称。 */
 export type Operation = (typeof Operations)[number]
 
-/** 写操作需要双端写入授权，以及 Runtime 本地逐次审批。 */
-export const operationRequiresWrite = (operation: Operation): boolean => operation === 'file.write'
+/** 会修改本地工作区的操作必须同时通过云端和 Runtime 写入权限校验。 */
+export const operationRequiresWrite = (operation: Operation): boolean =>
+  ['file.write', 'file.mkdir', 'file.move', 'file.delete', 'command.run'].includes(operation)

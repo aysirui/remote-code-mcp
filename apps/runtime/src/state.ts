@@ -10,7 +10,19 @@ export type WritePolicy = 'auto' | 'approval'
  * 本地工作区模型：写入策略与绝对路径都只保存在 Runtime。
  * 旧配置不存在 writePolicy 时视为 approval，避免升级后扩大 AI 写入权限。
  */
-export type LocalWorkspace = WorkspacePublic & { root: string; writePolicy?: WritePolicy }
+/** 仅由本地用户配置的固定可执行命令，不同步给云端设备元数据。 */
+export interface LocalCommand {
+  id: string
+  name: string
+  executable: string
+  args: string[]
+}
+
+export type LocalWorkspace = WorkspacePublic & {
+  root: string
+  writePolicy?: WritePolicy
+  commands?: LocalCommand[]
+}
 
 /** 对旧配置和未知值采取保守策略，防止未授权自动写入。 */
 export const getWritePolicy = (workspace: LocalWorkspace): WritePolicy =>

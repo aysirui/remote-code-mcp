@@ -3,7 +3,15 @@ import path from 'node:path'
 import { ToolInputs, operationRequiresWrite, type RpcRequest } from '@rcm/protocol'
 import type { LocalWorkspace } from './state'
 import { resolveSafe, isSensitive } from './path-safety'
-import { readChecked, writeChecked, sha } from './file-operations'
+import {
+  readChecked,
+  writeChecked,
+  mkdirChecked,
+  moveChecked,
+  deleteChecked,
+  sha,
+} from './file-operations'
+import { runCheckedCommand, listCommands } from './command-operations'
 import { gitStatus, gitDiff } from './git-operations'
 
 /** 保持路径安全检查为工具执行器的公共入口，便于安全测试直接调用。 */
@@ -12,7 +20,7 @@ export { resolveSafe } from './path-safety'
 /**
  * Runtime 工具调度。
  * 每次请求先校验工作区 ID、截止时间、读写授权及 Zod 参数，
- * 再调用文件/Git 领域执行器，禁止任意命令执行。
+ * 再调用文件/Git 领域执行器；只允许固定命令预设，拒绝任意 Shell。
  */
 export async function execute(w: LocalWorkspace, req: RpcRequest) {
   if (req.workspaceId !== w.id) throw Error('WORKSPACE_ID_MISMATCH')
@@ -79,6 +87,27 @@ export async function execute(w: LocalWorkspace, req: RpcRequest) {
     case 'file.write': {
       const payload = ToolInputs['file.write'].parse(req.payload)
       return writeChecked(w, payload.path, payload.content, payload.expectedSha256)
+    }
+    case 'file.mkdir': {
+      const payload = ToolInputs['file.mkdir'].parse(req.payload)
+      return mkdirChecked(w, payload.path, payload.recursive)
+    }
+    case 'file.move': {
+      const payload = ToolInputs['file.move'].parse(req.payload)
+      return moveChecked(w, payload.from, payload.to)
+    }
+    case 'file.delete': {
+      const payload = ToolInputs['file.delete'].parse(req.payload)
+      return deleteChecked(w, payload.path, payload.recursive, payload.expectedSha256)
+    }
+    case 'command.list': {
+      ToolInputs['command.list'].parse(req.payload)
+      // 仅暴露命令名称和 ID；可执行程序及固定参数只在本地审批页面显示。
+      return listCommands(w).map(({ id, name }) => ({ id, name }))
+    }
+    case 'command.run': {
+      const payload = ToolInputs['command.run'].parse(req.payload)
+      return runCheckedCommand(w, payload.command)
     }
     case 'git.status':
       return gitStatus(w)

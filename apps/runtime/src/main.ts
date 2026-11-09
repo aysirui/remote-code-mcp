@@ -2,10 +2,11 @@ import { WebSocket } from 'ws'
 import { randomBytes } from 'node:crypto'
 import { load, publicWs, getWritePolicy, requiresWriteApproval, type Config } from './state'
 import { execute } from './executors'
-import { RpcRequestSchema, type RpcRequest } from '@rcm/protocol'
+import { RpcRequestSchema, operationRequiresWrite, type RpcRequest } from '@rcm/protocol'
 import { WriteApprovalQueue } from './write-approvals'
 import { startLocalServer } from './local-server'
 import { LocalEvents } from './local-events'
+import { commandFingerprint, resolveCommand } from './command-operations'
 
 const port = Number(process.env.RUNTIME_PORT || 18787)
 const localKey = randomBytes(32).toString('base64url')
@@ -80,13 +81,26 @@ function connect() {
       const workspace = config.workspaces.find((x) => x.id === parsed.workspaceId)
       if (!workspace) throw Error('WORKSPACE_NOT_FOUND')
       if (parsed.deadlineAt < Date.now()) throw Error('REQUEST_EXPIRED')
-      if (parsed.operation === 'file.write') {
+      if (operationRequiresWrite(parsed.operation)) {
         // 读写权限是任何写入策略的前置条件，未授权写入不进入审批队列。
         if (!workspace.enabled || !workspace.permissions.read || !workspace.permissions.write)
           throw Error('WORKSPACE_WRITE_NOT_ALLOWED')
 
         const policy = getWritePolicy(workspace)
-        if (requiresWriteApproval(workspace)) {
+        // 将本次请求对应的命令定义绑定到审批前的快照，防止审批期间修改命令。
+        const approvedCommand =
+          parsed.operation === 'command.run'
+            ? commandFingerprint(
+                resolveCommand(
+                  workspace,
+                  String((parsed.payload as { command?: unknown }).command),
+                ),
+              )
+            : undefined
+        // 删除操作和项目命令永远要求本地逐次审批，不能被自动写入策略绕过。
+        const alwaysApprove =
+          parsed.operation === 'file.delete' || parsed.operation === 'command.run'
+        if (alwaysApprove || requiresWriteApproval(workspace)) {
           // 逐次审批模式最多等待 30 秒；默认及旧版工作区保持这一安全行为。
           const approved = await approvals.request(parsed, workspace)
           if (!approved) throw Error('WRITE_APPROVAL_DENIED_OR_EXPIRED')
@@ -102,10 +116,15 @@ function connect() {
           !workspace.enabled ||
           !workspace.permissions.read ||
           !workspace.permissions.write ||
-          getWritePolicy(workspace) !== policy
+          getWritePolicy(workspace) !== policy ||
+          (approvedCommand !== undefined &&
+            commandFingerprint(
+              resolveCommand(workspace, String((parsed.payload as { command?: unknown }).command)),
+            ) !== approvedCommand)
         )
           throw Error('WORKSPACE_PERMISSION_REVOKED')
       }
+      // 非写操作继续走 execute 内的工作区权限验证。
       const data = await execute(workspace, parsed)
       if (connection.readyState === WebSocket.OPEN)
         connection.send(JSON.stringify({ kind: 'response', id: parsed.id, success: true, data }))

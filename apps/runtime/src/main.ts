@@ -1,6 +1,15 @@
 import { WebSocket } from 'ws'
+import { runtimeVersion } from './version'
 import { randomBytes } from 'node:crypto'
-import { load, publicWs, getWritePolicy, requiresWriteApproval, type Config } from './state'
+import {
+  load,
+  publicWs,
+  getWritePolicy,
+  requiresWriteApproval,
+  activeServer,
+  serverWorkspaces,
+  type Config,
+} from './state'
 import { execute } from './executors'
 import { RpcRequestSchema, operationRequiresWrite, type RpcRequest } from '@rcm/protocol'
 import { WriteApprovalQueue } from './write-approvals'
@@ -14,6 +23,7 @@ let config: Config
 let socket: WebSocket | undefined
 let online = false
 let stopped = false
+let connectionError = ''
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined
 
 /**
@@ -30,23 +40,43 @@ function disconnect() {
   const previous = socket
   socket = undefined
   online = false
+  connectionError = ''
   events.publish('status')
   previous?.close()
 }
-const stat = () => ({
-  online,
-  paired: !!config.deviceToken,
-  deviceId: config.deviceId,
-  gateway: config.gateway,
-  name: config.name,
-  workspaces: config.workspaces.map(publicWs),
-})
+const stat = () => {
+  const server = activeServer(config)
+  return {
+    online,
+    runtimeVersion,
+    paired: !!server.deviceToken,
+    deviceId: server.deviceId,
+    serverId: server.id,
+    gateway: server.gateway,
+    name: config.name,
+    serverName: server.name,
+    paused: server.paused,
+    connectionError,
+    servers: config.servers.map((item) => ({
+      id: item.id,
+      name: item.name,
+      gateway: item.gateway,
+      deviceId: item.deviceId,
+      paired: !!item.deviceToken,
+      paused: item.paused,
+      workspaceCount: item.workspaces.filter((grant) => grant.authorized).length,
+    })),
+    workspaces: serverWorkspaces(config).map(publicWs),
+  }
+}
 /** 建立出站 WSS，设备身份由 Bearer 凭据认证；重连时发送工作区快照。 */
 function connect() {
-  if (stopped || !config.deviceToken || socket) return
+  const server = activeServer(config)
+  if (stopped || server.paused || !server.deviceToken || socket) return
+  connectionError = ''
   if (reconnectTimer) clearTimeout(reconnectTimer)
   reconnectTimer = undefined
-  const wsURL = new URL(config.gateway)
+  const wsURL = new URL(server.gateway)
   if (!['http:', 'https:'].includes(wsURL.protocol)) return
   // Never send the device Bearer token over an unencrypted remote connection.
   if (wsURL.protocol === 'http:' && !['127.0.0.1', 'localhost'].includes(wsURL.hostname)) {
@@ -56,7 +86,7 @@ function connect() {
   wsURL.protocol = wsURL.protocol === 'https:' ? 'wss:' : 'ws:'
   wsURL.pathname = '/agent/connect'
   const connection = new WebSocket(wsURL.toString(), {
-    headers: { Authorization: 'Bearer ' + config.deviceToken },
+    headers: { Authorization: 'Bearer ' + server.deviceToken },
   })
   socket = connection
   connection.on('open', () => {
@@ -66,8 +96,8 @@ function connect() {
     connection.send(
       JSON.stringify({
         kind: 'hello',
-        runtimeVersion: '0.1.0',
-        workspaces: config.workspaces.map(publicWs),
+        runtimeVersion,
+        workspaces: serverWorkspaces(config, server).map(publicWs),
       }),
     )
     console.log('Gateway connected')
@@ -78,8 +108,9 @@ function connect() {
     try {
       const parsed = RpcRequestSchema.parse(JSON.parse(raw.toString()))
       req = parsed
-      const workspace = config.workspaces.find((x) => x.id === parsed.workspaceId)
+      const workspace = serverWorkspaces(config, server).find((x) => x.id === parsed.workspaceId)
       if (!workspace) throw Error('WORKSPACE_NOT_FOUND')
+      const accessSnapshot = JSON.stringify(workspace)
       if (parsed.deadlineAt < Date.now()) throw Error('REQUEST_EXPIRED')
       if (operationRequiresWrite(parsed.operation)) {
         // 读写权限是任何写入策略的前置条件，未授权写入不进入审批队列。
@@ -110,9 +141,11 @@ function connect() {
         if (socket !== connection || connection.readyState !== WebSocket.OPEN)
           throw Error('CONNECTION_REPLACED')
         if (parsed.deadlineAt < Date.now()) throw Error('REQUEST_EXPIRED')
-        const currentWorkspace = config.workspaces.find((w) => w.id === parsed.workspaceId)
+        const currentWorkspace = serverWorkspaces(config, server).find(
+          (w) => w.id === parsed.workspaceId,
+        )
         if (
-          currentWorkspace !== workspace ||
+          JSON.stringify(currentWorkspace) !== accessSnapshot ||
           !workspace.enabled ||
           !workspace.permissions.read ||
           !workspace.permissions.write ||
@@ -142,12 +175,23 @@ function connect() {
       }
     }
   })
-  connection.on('close', () => {
+  connection.on('close', (code) => {
     if (socket !== connection) return
+    if (code === 4003) connectionError = '此服务器上的设备绑定已撤销，请解除失效绑定后重新配对。'
     online = false
     events.publish('status')
     socket = undefined
-    if (!stopped && config.deviceToken) reconnectTimer = setTimeout(connect, 3500)
+    if (!stopped && !server.paused && server.deviceToken && !connectionError)
+      reconnectTimer = setTimeout(connect, 3500)
+  })
+  connection.on('unexpected-response', (_request, response) => {
+    response.resume()
+    if (socket !== connection) return
+    if (response.statusCode === 401 || response.statusCode === 403) {
+      connectionError = '服务器拒绝设备凭据，请先解除失效绑定，再重新配对。'
+      events.publish('status')
+    }
+    connection.terminate()
   })
   connection.on('error', (e) => console.error('Gateway WebSocket', e.message))
 }
@@ -157,8 +201,8 @@ async function sync() {
     socket.send(
       JSON.stringify({
         kind: 'hello',
-        runtimeVersion: '0.1.0',
-        workspaces: config.workspaces.map(publicWs),
+        runtimeVersion,
+        workspaces: serverWorkspaces(config).map(publicWs),
       }),
     )
 }

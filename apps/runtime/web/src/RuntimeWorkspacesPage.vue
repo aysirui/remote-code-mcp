@@ -3,7 +3,9 @@ import { inject } from 'vue'
 import type { RuntimeContext } from './use-runtime-console'
 import { Plus, FolderOpened, Delete } from '@element-plus/icons-vue'
 const {
+  status,
   workspaces,
+  toggleWorkspaceAuthorization,
   showAdd,
   folder,
   folderName,
@@ -29,24 +31,31 @@ const {
     <div class="row between">
       <div>
         <div class="title">本地工作区</div>
-        <div class="muted">只有你明确添加的目录可以被远程访问</div>
+        <div class="muted">当前服务器：{{ status.serverName }} · {{ status.gateway }}</div>
       </div>
       <el-button type="primary" :icon="Plus" @click="showAdd = true">添加项目</el-button>
     </div>
-    <el-empty v-if="!workspaces.length" description="尚未授权任何本地工作区" />
+    <p class="muted">每台服务器的工作区授权和写入策略独立保存。新增服务器默认没有访问权限。</p>
+    <el-empty v-if="!workspaces.length" description="尚未添加本地工作区" />
     <div v-for="w in workspaces" :key="w.id" class="project row">
       <div class="badge">
         <el-icon><FolderOpened /></el-icon>
       </div>
-      <div style="flex: 1; min-width: 0">
+      <div class="workspace-info">
         <strong>{{ w.name }}</strong>
         <div class="muted" style="word-break: break-all">{{ w.root }}</div>
       </div>
       <el-tag :type="w.permissions.write ? 'warning' : 'info'">{{
-        w.permissions.write ? '读写' : '只读'
+        !w.authorized ? '未授权' : w.permissions.write ? '读写' : '只读'
       }}</el-tag>
+      <el-button
+        text
+        :type="w.authorized ? 'danger' : 'primary'"
+        @click="toggleWorkspaceAuthorization(w)"
+        >{{ w.authorized ? '取消授权' : '授权当前服务器' }}</el-button
+      >
       <el-select
-        v-if="w.permissions.write && w.enabled"
+        v-if="w.authorized && w.permissions.write && w.enabled"
         :model-value="w.writePolicy || 'approval'"
         style="width: 150px"
         aria-label="工作区写入策略"
@@ -55,13 +64,23 @@ const {
         <el-option label="逐次审批" value="approval" />
         <el-option label="自动写入" value="auto" />
       </el-select>
-      <el-button text type="primary" @click="toggleWrite(w)">{{
+      <el-button v-if="w.authorized" text type="primary" @click="toggleWrite(w)">{{
         w.permissions.write ? '设为只读' : '开启写入'
       }}</el-button>
-      <el-button text type="primary" :disabled="!w.enabled" @click="showCommandForm(w)"
+      <el-button
+        text
+        type="primary"
+        :disabled="!w.authorized || !w.enabled"
+        @click="showCommandForm(w)"
         >添加命令</el-button
       >
-      <el-button text type="danger" :icon="Delete" @click="remove(w)" />
+      <el-button
+        text
+        type="danger"
+        :icon="Delete"
+        :aria-label="`从本机清单移除 ${w.name}`"
+        @click="remove(w)"
+      />
       <div v-if="w.commands?.length" class="command-list">
         <div v-for="cmd in w.commands" :key="cmd.id" class="command-item">
           <div>
@@ -81,7 +100,7 @@ const {
     @close="commandWorkspace = null"
   >
     <el-alert
-      title="命令只保存在本机，AI 只能按 ID 调用，每次执行仍需本地确认。"
+      title="命令定义供本机目录共用，仅已获读写授权的服务器可请求执行，每次仍需本地确认。"
       type="warning"
       :closable="false"
       style="margin-bottom: 18px"
@@ -130,7 +149,7 @@ const {
         ><el-input v-model="folderName" placeholder="my-app" /></el-form-item></el-form
     ><el-alert
       title="默认只读"
-      description="添加后默认只允许列目录、搜索、读取文件与 Git 查询。写入权限可稍后单独开启。"
+      description="仅向当前服务器授予只读权限，其他服务器不会自动获得访问权限。写入权限可稍后单独开启。"
       type="info"
       :closable="false"
     /><template #footer

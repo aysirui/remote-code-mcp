@@ -1,6 +1,6 @@
 {
   "name": "@rcm/runtime",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "dev": "pnpm build:web && tsx watch src/main.ts",

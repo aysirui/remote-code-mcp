@@ -10,13 +10,28 @@ const reportError = (error: unknown) => {
 import { requestLocal } from './http'
 import { subscribeLocalEvents, type LocalEventName } from './local-events'
 
-/** Runtime 与云端的连接状态，设备 Token 故意不包含在响应中。 */
+interface ServerView {
+  id: string
+  name: string
+  gateway: string
+  deviceId?: string
+  paired: boolean
+  paused: boolean
+  workspaceCount: number
+}
+/** 每个服务器的独立配对摘要，响应中不包含设备 Token。 */
 interface RuntimeStatus {
+  runtimeVersion: string
   online: boolean
   paired: boolean
   deviceId?: string
   gateway: string
   name: string
+  serverId: string
+  serverName: string
+  paused: boolean
+  connectionError?: string
+  servers: ServerView[]
 }
 
 /** 只在 Runtime 本地保存的命令配置。 */
@@ -29,6 +44,8 @@ interface CommandView {
 
 /** 本地页面的工作区视图，root 不会被同步到云端。 */
 interface WorkspaceView {
+  serverId: string
+  authorized: boolean
   /** 写入策略仅属于本机设置，不同步给云端 Gateway。 */
   writePolicy: 'auto' | 'approval'
   commands?: CommandView[]
@@ -48,6 +65,7 @@ interface DirectoryBrowser {
 
 /** 十分钟有效的一次性设备配对申请。 */
 interface PairingRequest {
+  serverId: string
   id: string
   code: string
   privateSecret: string
@@ -74,10 +92,23 @@ interface WriteApprovalView {
 export function useRuntimeConsole() {
   const browserWindow = window
   const token = ref(sessionStorage.getItem('rcm_key') || ''),
-    status = ref<RuntimeStatus>({ online: false, paired: false, gateway: '', name: '' }),
+    status = ref<RuntimeStatus>({
+      runtimeVersion: '',
+      online: false,
+      paired: false,
+      gateway: '',
+      name: '',
+      serverId: '',
+      serverName: '',
+      paused: false,
+      servers: [],
+    }),
     workspaces = ref<WorkspaceView[]>([]),
     writeApprovals = ref<WriteApprovalView[]>([]),
-    gateway = ref(''),
+    showAddServer = ref(false),
+    serverName = ref(''),
+    serverGateway = ref(''),
+    serverBusy = ref(false),
     folder = ref(''),
     folderName = ref(''),
     showAdd = ref(false),
@@ -90,11 +121,15 @@ export function useRuntimeConsole() {
     commandExecutable = ref(''),
     commandArgs = ref('[]')
   let unsubscribeEvents: (() => void) | undefined
-  /** 用户修改 Gateway 地址后保持草稿，定时状态更新不得覆盖输入。 */
-  const gatewayDirty = ref(false)
-  function setGatewayDraft(value: string) {
-    gateway.value = value
-    gatewayDirty.value = true
+  function applyStatus(next: RuntimeStatus) {
+    if (status.value.serverId !== next.serverId) {
+      workspaces.value = []
+      writeApprovals.value = []
+      pairing.value = null
+      commandWorkspace.value = null
+      showAdd.value = false
+    }
+    status.value = next
   }
   if (location.hash.includes('token=')) {
     const t = new URLSearchParams(location.hash.slice(1)).get('token')
@@ -115,8 +150,7 @@ export function useRuntimeConsole() {
   async function refreshStatus() {
     if (!token.value) return
     const next = await api<RuntimeStatus>('status')
-    status.value = next
-    if (!gatewayDirty.value) gateway.value = next.gateway
+    applyStatus(next)
     // 设备离线时不会收到写入请求，清空已结束连接的审批显示。
     if (!next.online) writeApprovals.value = []
   }
@@ -130,7 +164,9 @@ export function useRuntimeConsole() {
   /** 读取工作区授权；不会因设备状态定时轮询而重复获取。 */
   async function refreshWorkspaces() {
     if (!token.value) return
-    workspaces.value = await api<WorkspaceView[]>('workspaces')
+    const serverId = status.value.serverId
+    const next = await api<WorkspaceView[]>('workspaces')
+    if (status.value.serverId === serverId) workspaces.value = next
   }
 
   /** 用户手动刷新及本地配置变更后完整刷新三个独立视图。 */
@@ -148,8 +184,7 @@ export function useRuntimeConsole() {
   function applyEvent(name: LocalEventName, payload: unknown) {
     if (name === 'status') {
       const next = payload as RuntimeStatus
-      status.value = next
-      if (!gatewayDirty.value) gateway.value = next.gateway
+      applyStatus(next)
     } else if (name === 'workspaces') {
       workspaces.value = payload as WorkspaceView[]
     } else if (name === 'write-approvals') {
@@ -178,43 +213,103 @@ export function useRuntimeConsole() {
     }
   }
 
-  /** 切换 Gateway 地址会解除现有设备绑定，必须先让用户确认。 */
-  async function updateGateway() {
+  async function manageServer(action: () => Promise<unknown>, message: string) {
+    if (serverBusy.value) return
+    serverBusy.value = true
     try {
-      await ElMessageBox.confirm('更换服务地址会解绑当前设备，确定继续吗？', '切换 Gateway', {
-        type: 'warning',
-      })
-      await api('config', 'POST', { gateway: gateway.value })
-      // 配置保存成功后，允许状态刷新重新同步服务端的规范化地址。
-      gatewayDirty.value = false
+      await action()
       await refresh()
-      ElMessage.success('服务地址已更新')
+      ElMessage.success(message)
     } catch (error: unknown) {
       reportError(error)
+    } finally {
+      serverBusy.value = false
     }
   }
-  /** 向 Gateway 请求一次性设备配对码。 */
-  async function startPair() {
-    try {
-      pairing.value = await api<PairingRequest>('pair/start', 'POST')
-      ElMessage.success('配对码已生成')
-    } catch (error: unknown) {
-      reportError(error)
-    }
-  }
-  /** 轮询并领取当前配对的设备凭据；成功后刷新本地状态。 */
-  async function finishPair() {
-    if (!pairing.value) return
-    try {
-      const r = await api<{ status: string }>('pair/complete', 'POST', {
-        id: pairing.value.id,
-        privateSecret: pairing.value.privateSecret,
+  async function addServer() {
+    await manageServer(async () => {
+      const server = await api<{ id: string }>('servers', 'POST', {
+        name: serverName.value,
+        gateway: serverGateway.value,
       })
-      if (r.status === 'complete') {
-        pairing.value = null
-        ElMessage.success('设备绑定成功')
-        await refresh()
-      } else ElMessage.info('请先在平台输入配对码并确认绑定')
+      await api('servers/' + server.id + '/activate', 'POST')
+      showAddServer.value = false
+      serverName.value = ''
+      serverGateway.value = ''
+    }, '服务器已保存并切换；已有绑定会自动恢复')
+  }
+  async function activateServer(server: ServerView) {
+    await manageServer(
+      () => api('servers/' + server.id + '/activate', 'POST'),
+      '已切换到 ' + server.name,
+    )
+  }
+  async function renameServer(server: ServerView) {
+    try {
+      const { value } = await ElMessageBox.prompt('服务器显示名称', '重命名服务器', {
+        inputValue: server.name,
+        inputValidator: (name) => !!name.trim(),
+      })
+      await manageServer(() => api('servers/' + server.id, 'PATCH', { name: value }), '名称已更新')
+    } catch (error: unknown) {
+      reportError(error)
+    }
+  }
+  async function removeServer(server: ServerView) {
+    try {
+      await ElMessageBox.confirm(
+        server.paired
+          ? `移除 ${server.name} 前会先向该服务器撤销设备绑定；无法连接时会保留配置。`
+          : `确认移除 ${server.name}？`,
+        '移除服务器',
+        { type: 'warning', confirmButtonText: '移除服务器' },
+      )
+      await manageServer(() => api('servers/' + server.id, 'DELETE'), '服务器配置已移除')
+    } catch (error: unknown) {
+      reportError(error)
+    }
+  }
+  async function toggleConnection() {
+    const current = status.value
+    await manageServer(
+      () => api('servers/' + current.serverId, 'PATCH', { paused: !current.paused }),
+      current.paused ? '正在恢复连接' : '连接已暂停，配对配置已保留',
+    )
+  }
+  async function startPair() {
+    const serverId = status.value.serverId
+    await manageServer(async () => {
+      const result = await api<PairingRequest>('pair/start', 'POST', { serverId })
+      if (status.value.serverId === result.serverId) pairing.value = result
+    }, '配对码已生成，请在对应服务器完成确认')
+  }
+  async function finishPair() {
+    const pending = pairing.value
+    if (!pending) return
+    await manageServer(async () => {
+      const result = await api<{ status: string }>('pair/complete', 'POST', {
+        serverId: pending.serverId,
+        id: pending.id,
+        privateSecret: pending.privateSecret,
+      })
+      if (result.status !== 'complete') throw Error('请先在对应平台确认配对码')
+      if (pairing.value?.id === pending.id) pairing.value = null
+    }, '设备绑定成功，凭据已按服务器保存')
+  }
+  async function toggleWorkspaceAuthorization(workspace: WorkspaceView) {
+    try {
+      await ElMessageBox.confirm(
+        workspace.authorized
+          ? `停止向当前服务器开放 ${workspace.name}？其他服务器的权限保持不变。`
+          : `允许当前服务器只读访问 ${workspace.name}？`,
+        workspace.authorized ? '取消工作区授权' : '授权工作区',
+        { type: 'warning' },
+      )
+      await api('workspaces/' + workspace.id, 'PATCH', {
+        serverId: workspace.serverId,
+        authorized: !workspace.authorized,
+      })
+      await refresh()
     } catch (error: unknown) {
       reportError(error)
     }
@@ -238,7 +333,11 @@ export function useRuntimeConsole() {
   /** 添加工作区授权，默认只有读权限。 */
   async function addWorkspace() {
     try {
-      await api('workspaces', 'POST', { root: folder.value, name: folderName.value })
+      await api('workspaces', 'POST', {
+        serverId: status.value.serverId,
+        root: folder.value,
+        name: folderName.value,
+      })
       showAdd.value = false
       folder.value = ''
       folderName.value = ''
@@ -257,7 +356,10 @@ export function useRuntimeConsole() {
           '开启写入权限',
           { type: 'warning' },
         )
-      await api('workspaces/' + w.id, 'PATCH', { write: !w.permissions.write })
+      await api('workspaces/' + w.id, 'PATCH', {
+        serverId: w.serverId,
+        write: !w.permissions.write,
+      })
       await refresh()
     } catch (error: unknown) {
       reportError(error)
@@ -275,7 +377,7 @@ export function useRuntimeConsole() {
           { type: 'warning', confirmButtonText: '确认自动写入', distinguishCancelAndClose: true },
         )
       }
-      await api('workspaces/' + w.id, 'PATCH', { writePolicy: policy })
+      await api('workspaces/' + w.id, 'PATCH', { serverId: w.serverId, writePolicy: policy })
       await refresh()
       ElMessage.success(policy === 'auto' ? '已开启自动写入' : '已切换为逐次审批')
     } catch (error: unknown) {
@@ -331,24 +433,28 @@ export function useRuntimeConsole() {
   /** 确认后删除本地工作区授权并同步云端。 */
   async function remove(w: WorkspaceView) {
     try {
-      await ElMessageBox.confirm('确认移除 ' + w.name + ' 的授权？', '移除工作区', {
-        type: 'warning',
-      })
+      await ElMessageBox.confirm(
+        '确认从本机目录清单及所有服务器授权中移除 ' + w.name + '？本地文件会保留。',
+        '移除工作区',
+        {
+          type: 'warning',
+        },
+      )
       await api('workspaces/' + w.id, 'DELETE')
       await refresh()
     } catch (error: unknown) {
       reportError(error)
     }
   }
-  /** 删除本地设备凭据并断开现有连接。 */
   async function unpair() {
+    const serverId = status.value.serverId
     try {
       await ElMessageBox.confirm(
-        '本地将停止连接，若想完全撤销云端设备凭据，请同时在 Web Console 解绑。',
-        '断开设备',
+        `确认解除 ${status.value.serverName} 的设备绑定？服务器中的设备将被撤销，之后需要重新配对。暂停连接或切换服务器无需解除绑定。`,
+        '解除设备绑定',
+        { type: 'warning', confirmButtonText: '解除绑定' },
       )
-      await api('unpair', 'POST')
-      await refresh()
+      await manageServer(() => api('unpair', 'POST', { serverId }), '设备绑定已在服务器撤销')
     } catch (error: unknown) {
       reportError(error)
     }
@@ -370,8 +476,16 @@ export function useRuntimeConsole() {
     status,
     workspaces,
     writeApprovals,
-    gateway,
-    setGatewayDraft,
+    showAddServer,
+    serverName,
+    serverGateway,
+    serverBusy,
+    addServer,
+    activateServer,
+    renameServer,
+    removeServer,
+    toggleConnection,
+    toggleWorkspaceAuthorization,
     folder,
     folderName,
     showAdd,
@@ -380,7 +494,6 @@ export function useRuntimeConsole() {
     code,
     refresh,
     answerWriteApproval,
-    updateGateway,
     startPair,
     finishPair,
     openBrowse,

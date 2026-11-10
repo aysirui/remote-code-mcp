@@ -11,10 +11,21 @@ const { token, status, writeApprovals, refresh } = ctx
     <header class="mast">
       <div>
         <div class="brand"><span class="mark">◈</span> Remote Code Runtime</div>
-        <div class="muted" style="margin-left: 51px">本地工作区与 AI 执行权限管理</div>
+        <div class="muted" style="margin-left: 51px">
+          本地工作区与 AI 执行权限管理
+          <span v-if="status.runtimeVersion">· v{{ status.runtimeVersion }}</span>
+        </div>
       </div>
       <el-tag :type="status.online ? 'success' : 'info'" size="large">
-        {{ !status.paired ? '设备未绑定' : status.online ? 'Gateway 已连接' : 'Gateway 未连接' }}
+        {{
+          status.paused
+            ? '连接已暂停'
+            : !status.paired
+              ? '当前服务器未绑定'
+              : status.online
+                ? '服务器已连接'
+                : '服务器未连接'
+        }}
       </el-tag>
     </header>
     <el-alert

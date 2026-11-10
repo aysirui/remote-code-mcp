@@ -9,6 +9,7 @@ export async function postGateway<T = unknown>(
   gatewayUrl: string,
   endpoint: string,
   payload: unknown,
+  deviceToken?: string,
 ): Promise<T> {
   const gateway = new URL(gatewayUrl)
   if (
@@ -16,14 +17,22 @@ export async function postGateway<T = unknown>(
     !(gateway.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(gateway.hostname))
   )
     throw Error('HTTPS gateway required')
-  if (!endpoint.startsWith('/api/device/pairing/')) throw Error('UNSUPPORTED_GATEWAY_ENDPOINT')
+  if (
+    !endpoint.startsWith('/api/device/pairing/') &&
+    !(endpoint === '/api/device/unpair' && deviceToken)
+  )
+    throw Error('UNSUPPORTED_GATEWAY_ENDPOINT')
 
   try {
     const { data } = await axios.post<T>(new URL(endpoint, gateway).toString(), payload, {
       timeout: 15000,
       maxContentLength: 512 * 1024,
       maxBodyLength: 512 * 1024,
-      headers: { 'Content-Type': 'application/json' },
+      maxRedirects: 0,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(deviceToken ? { Authorization: 'Bearer ' + deviceToken } : {}),
+      },
     })
     return data
   } catch (error: unknown) {

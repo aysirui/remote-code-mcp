@@ -3,7 +3,16 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { getWritePolicy, publicWs, save, type Config, type WritePolicy } from './state'
+import {
+  save,
+  activeServer,
+  addServer,
+  selectServer,
+  authorizeWorkspace,
+  workspaceViews,
+  type Config,
+  type ServerProfile,
+} from './state'
 import { postGateway } from './gateway-client'
 import type { WriteApprovalQueue } from './write-approvals'
 import type { LocalEvents, LocalEventName } from './local-events'
@@ -71,12 +80,7 @@ export function startLocalServer(options: LocalServerOptions) {
         name === 'status'
           ? status()
           : name === 'workspaces'
-            ? config.workspaces.map((w) => ({
-                ...publicWs(w),
-                root: w.root,
-                writePolicy: getWritePolicy(w),
-                commands: w.commands || [],
-              }))
+            ? workspaceViews(config)
             : approvals.list()
       res.write(`event: ${name}\ndata: ${JSON.stringify(payload)}\n\n`)
     }
@@ -114,70 +118,200 @@ export function startLocalServer(options: LocalServerOptions) {
     res.json({ ok: true })
   })
 
-  /** 更换 Gateway 时清除旧设备配对凭据，禁止复用上一服务器的身份。 */
+  type Pairing = {
+    id: string
+    code: string
+    privateSecret: string
+    activationUrl: string
+    expiresIn: number
+  }
+  const pairingRequests = new Map<string, { result: Pairing; expiresAt: number }>()
+  const pairingBusy = new Set<string>()
+  const requireServer = (id: unknown) => {
+    const server = config.servers.find((item) => item.id === id)
+    if (!server) throw Error('服务器不存在，请刷新页面')
+    return server
+  }
+  const requireActiveServer = (id: unknown) => {
+    const server = requireServer(id)
+    if (server.id !== config.activeServerId) throw Error('当前服务器已切换，请刷新后重试')
+    return server
+  }
+  const publishConfig = () => {
+    events.publish('status')
+    events.publish('workspaces')
+  }
+  const fail = (res: express.Response, error: unknown) =>
+    res.status(400).json({ error: error instanceof Error ? error.message : '操作失败' })
+  const switchServer = async (id: string) => {
+    const target = requireServer(id)
+    if (config.activeServerId !== id || target.paused) {
+      disconnect()
+      selectServer(config, id)
+      target.paused = false
+    }
+    await save(config)
+    connect()
+    publishConfig()
+  }
+  const revokeBinding = async (server: ServerProfile) => {
+    if (pairingBusy.has(server.id)) throw Error('正在配对，请稍后再试')
+    // 服务端确认撤销成功前保留本地凭据，离线时不会丢失恢复连接所需的信息。
+    if (server.deviceToken)
+      await postGateway(server.gateway, '/api/device/unpair', {}, server.deviceToken)
+    if (config.activeServerId === server.id) disconnect()
+    server.deviceId = undefined
+    server.deviceToken = undefined
+    pairingRequests.delete(server.id)
+  }
+
+  /** 兼容原入口：相同 origin 恢复原配置，不覆盖或清除任何已保存的配对。 */
   app.post('/local/api/config', async (req, res) => {
     try {
-      const u = new URL(String(req.body.gateway))
-      if (
-        !['https:', 'http:'].includes(u.protocol) ||
-        (u.protocol === 'http:' && !['localhost', '127.0.0.1'].includes(u.hostname))
-      )
-        throw Error('HTTPS gateway required')
-      disconnect()
-      config.gateway = u.origin
-      config.deviceId = undefined
-      config.deviceToken = undefined
-      await save(config)
-      events.publish('status')
+      const server = addServer(config, String(req.body.gateway), req.body.name)
+      await switchServer(server.id)
       res.json(status())
     } catch (error: unknown) {
-      res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid gateway' })
+      fail(res, error)
+    }
+  })
+  app.post('/local/api/servers', async (req, res) => {
+    try {
+      const server = addServer(config, String(req.body.gateway), String(req.body.name || ''))
+      await save(config)
+      publishConfig()
+      res.json({ id: server.id })
+    } catch (error: unknown) {
+      fail(res, error)
+    }
+  })
+  app.post('/local/api/servers/:id/activate', async (req, res) => {
+    try {
+      await switchServer(String(req.params.id))
+      res.json(status())
+    } catch (error: unknown) {
+      fail(res, error)
+    }
+  })
+  app.patch('/local/api/servers/:id', async (req, res) => {
+    try {
+      const server = requireServer(req.params.id)
+      if (req.body.name !== undefined) {
+        if (typeof req.body.name !== 'string' || !req.body.name.trim())
+          throw Error('请输入服务器名称')
+        server.name = req.body.name.trim().slice(0, 80)
+      }
+      if (req.body.paused !== undefined) {
+        if (typeof req.body.paused !== 'boolean') throw Error('连接状态无效')
+        server.paused = req.body.paused
+        if (config.activeServerId === server.id) {
+          disconnect()
+          if (!server.paused) connect()
+        }
+      }
+      await save(config)
+      publishConfig()
+      res.json(status())
+    } catch (error: unknown) {
+      fail(res, error)
+    }
+  })
+  app.delete('/local/api/servers/:id', async (req, res) => {
+    try {
+      if (config.servers.length <= 1) throw Error('至少保留一个服务器配置')
+      const server = requireServer(req.params.id)
+      await revokeBinding(server)
+      if (config.servers.length <= 1) throw Error('至少保留一个服务器配置')
+      config.servers = config.servers.filter((item) => item !== server)
+      if (config.activeServerId === server.id) selectServer(config, config.servers[0].id)
+      await save(config)
+      connect()
+      publishConfig()
+      res.json(status())
+    } catch (error: unknown) {
+      fail(res, error)
     }
   })
 
-  /** 仅向配置的 Gateway 请求配对码，不接受任意远程请求地址。 */
-  app.post('/local/api/pair/start', async (_req, res) => {
+  /** 配对始终绑定具体服务器；重复点击复用仍有效的配对码。 */
+  app.post('/local/api/pair/start', async (req, res) => {
+    let server: ServerProfile | undefined
+    let acquired = false
     try {
-      const result = await postGateway(config.gateway, '/api/device/pairing/start', {
+      server = requireActiveServer(req.body.serverId)
+      if (server.deviceToken) throw Error('此服务器已配对，无需重新绑定')
+      if (pairingBusy.has(server.id)) throw Error('正在配对，请稍后再试')
+      const previous = pairingRequests.get(server.id)
+      if (previous && previous.expiresAt > Date.now()) {
+        res.json({ ...previous.result, serverId: server.id })
+        return
+      }
+      pairingBusy.add(server.id)
+      acquired = true
+      const result = await postGateway<Pairing>(server.gateway, '/api/device/pairing/start', {
         name: config.name,
         platform: process.platform,
       })
-      res.json(result)
+      pairingRequests.set(server.id, { result, expiresAt: Date.now() + result.expiresIn * 1000 })
+      res.json({ ...result, serverId: server.id })
     } catch (error: unknown) {
-      res.status(400).json({ error: error instanceof Error ? error.message : 'Pairing failed' })
+      fail(res, error)
+    } finally {
+      if (server && acquired) pairingBusy.delete(server.id)
     }
   })
-
-  /** 领取一次性设备凭据，只持久化 Runtime 私有配置，响应不返回 Token。 */
   app.post('/local/api/pair/complete', async (req, res) => {
+    let server: ServerProfile | undefined
+    let acquired = false
     try {
+      server = requireServer(req.body.serverId)
+      if (server.deviceToken) {
+        await save(config)
+        res.json({ status: 'complete', deviceId: server.deviceId, serverId: server.id })
+        return
+      }
+      if (pairingBusy.has(server.id)) throw Error('正在配对，请稍后再试')
+      const pending = pairingRequests.get(server.id)
+      if (
+        !pending ||
+        pending.expiresAt < Date.now() ||
+        pending.result.id !== req.body.id ||
+        pending.result.privateSecret !== req.body.privateSecret
+      )
+        throw Error('配对申请已失效，请重新生成配对码')
+      pairingBusy.add(server.id)
+      acquired = true
       const result = await postGateway<{ status: string; deviceId?: string; token?: string }>(
-        config.gateway,
+        server.gateway,
         '/api/device/pairing/complete',
-        req.body,
+        { id: req.body.id, privateSecret: req.body.privateSecret },
       )
       if (result.status === 'complete') {
-        if (!result.deviceId || !result.token) throw Error('Invalid pairing response')
-        config.deviceId = result.deviceId
-        config.deviceToken = result.token
+        if (!result.deviceId || !result.token) throw Error('服务器配对响应无效')
+        server.deviceId = result.deviceId
+        server.deviceToken = result.token
+        pairingRequests.delete(server.id)
         await save(config)
-        events.publish('status')
-        connect()
+        if (config.activeServerId === server.id) connect()
+        publishConfig()
       }
-      res.json({ status: result.status, deviceId: result.deviceId })
+      res.json({ status: result.status, deviceId: result.deviceId, serverId: server.id })
     } catch (error: unknown) {
-      res.status(400).json({ error: error instanceof Error ? error.message : 'Pairing failed' })
+      fail(res, error)
+    } finally {
+      if (server && acquired) pairingBusy.delete(server.id)
     }
   })
-
-  /** 断开本地绑定；真正撤销云端凭据还需从 Console 解绑设备。 */
-  app.post('/local/api/unpair', async (_req, res) => {
-    disconnect()
-    config.deviceId = undefined
-    config.deviceToken = undefined
-    await save(config)
-    events.publish('status')
-    res.json(status())
+  /** 主动解除绑定时同步撤销服务端设备，暂停、切换均不走此入口。 */
+  app.post('/local/api/unpair', async (req, res) => {
+    try {
+      await revokeBinding(requireServer(req.body.serverId))
+      await save(config)
+      publishConfig()
+      res.json(status())
+    } catch (error: unknown) {
+      fail(res, error)
+    }
   })
 
   /** 仅在本地展示目录供用户选择工作区，绝对路径不发送到 Gateway。 */
@@ -196,85 +330,80 @@ export function startLocalServer(options: LocalServerOptions) {
     }
   })
 
-  /** 工作区详情仅供本地管理页面使用，包含目录绝对路径。 */
-  app.get('/local/api/workspaces', (_req, res) =>
-    res.json(
-      config.workspaces.map((w) => ({
-        ...publicWs(w),
-        root: w.root,
-        writePolicy: getWritePolicy(w),
-        commands: w.commands || [],
-      })),
-    ),
-  )
-
-  /** 授权一个本地目录，默认只读；拒绝将家目录或文件系统根目录整体授权。 */
+  /** 本地目录共用，各服务器的访问权限独立展示。 */
+  app.get('/local/api/workspaces', (_req, res) => res.json(workspaceViews(config)))
   app.post('/local/api/workspaces', async (req, res) => {
     try {
+      const server = requireActiveServer(req.body.serverId)
       const root = await fs.realpath(String(req.body.root || ''))
-      if (!(await fs.stat(root)).isDirectory()) throw Error('Folder required')
+      if (!(await fs.stat(root)).isDirectory()) throw Error('目录不存在')
       if ([os.homedir(), path.parse(root).root].includes(root))
-        throw Error('Do not authorize home or filesystem root')
-      const name = String(req.body.name || path.basename(root)).slice(0, 128)
-      const workspace = {
-        id: randomUUID(),
-        name,
-        root,
-        enabled: true,
-        permissions: { read: true, write: false },
-        writePolicy: 'approval' as WritePolicy,
+        throw Error('不能授权整个用户目录或磁盘根目录')
+      let workspace = config.workspaces.find((item) =>
+        process.platform === 'win32'
+          ? item.root.toLowerCase() === root.toLowerCase()
+          : item.root === root,
+      )
+      if (!workspace) {
+        workspace = {
+          id: randomUUID(),
+          name: String(req.body.name || path.basename(root)).slice(0, 128),
+          root,
+        }
+        config.workspaces.push(workspace)
       }
-      config.workspaces.push(workspace)
+      authorizeWorkspace(server, workspace.id)
       await save(config)
       await sync()
       events.publish('workspaces')
-      res.json(workspace)
+      events.publish('status')
+      res.json({ id: workspace.id })
     } catch (error: unknown) {
-      res.status(400).json({ error: error instanceof Error ? error.message : 'Workspace failed' })
+      fail(res, error)
     }
   })
-
-  /** 修改本地授权；撤销写入/停用工作区时取消尚未完成的写入审批。 */
   app.patch('/local/api/workspaces/:id', async (req, res) => {
-    const workspace = config.workspaces.find((w) => w.id === req.params.id)
-    if (!workspace) {
-      res.status(404).end()
-      return
+    try {
+      const server = requireActiveServer(req.body.serverId)
+      const workspace = config.workspaces.find((item) => item.id === req.params.id)
+      if (!workspace) throw Error('工作区不存在')
+      const policy = req.body.writePolicy
+      if (policy !== undefined && policy !== 'approval' && policy !== 'auto')
+        throw Error('写入策略无效')
+      if (req.body.authorized !== undefined && typeof req.body.authorized !== 'boolean')
+        throw Error('授权状态无效')
+      let grant = server.workspaces.find((item) => item.workspaceId === workspace.id)
+      if (req.body.authorized === true) grant = authorizeWorkspace(server, workspace.id)
+      if (!grant || (!grant.authorized && req.body.authorized !== false))
+        throw Error('请先授权此服务器访问工作区')
+      const next = { ...grant, permissions: { ...grant.permissions } }
+      if (req.body.authorized === false) next.authorized = false
+      if (typeof req.body.enabled === 'boolean') next.enabled = req.body.enabled
+      if (typeof req.body.write === 'boolean') next.permissions.write = req.body.write
+      if (
+        policy === 'auto' &&
+        (!next.authorized || !next.enabled || !next.permissions.read || !next.permissions.write)
+      )
+        throw Error('请先开启工作区的读写权限')
+      if (policy !== undefined) next.writePolicy = policy
+      if (!next.authorized || !next.permissions.write) {
+        next.permissions.write = false
+        next.writePolicy = 'approval'
+      }
+      server.workspaces[server.workspaces.indexOf(grant)] = next
+      approvals.rejectWorkspace(grant.id)
+      await save(config)
+      await sync()
+      publishConfig()
+      res.json({ ok: true })
+    } catch (error: unknown) {
+      fail(res, error)
     }
-    // 只接受已知策略值，禁止未知输入隐式开启自动写入。
-    const policy = req.body?.writePolicy
-    if (policy !== undefined && policy !== 'approval' && policy !== 'auto') {
-      res.status(400).json({ error: 'Invalid write policy' })
-      return
-    }
-    const enabled = typeof req.body.enabled === 'boolean' ? req.body.enabled : workspace.enabled
-    const write = typeof req.body.write === 'boolean' ? req.body.write : workspace.permissions.write
-    if (policy === 'auto' && (!enabled || !write || !workspace.permissions.read)) {
-      res.status(400).json({ error: 'Enable workspace write permission before automatic writes' })
-      return
-    }
-    const previousPolicy = getWritePolicy(workspace)
-    workspace.enabled = enabled
-    workspace.permissions.write = write
-    if (policy !== undefined) workspace.writePolicy = policy
-    // 关闭写入后恢复默认审批策略，避免下次重新开启时意外自动写入。
-    if (!workspace.permissions.write) workspace.writePolicy = 'approval'
-    // 缩小写入权限或更换策略，都必须立即拒绝已排队的旧审批。
-    if (
-      !workspace.enabled ||
-      !workspace.permissions.write ||
-      previousPolicy !== getWritePolicy(workspace)
-    )
-      approvals.rejectWorkspace(workspace.id)
-    await save(config)
-    await sync()
-    events.publish('workspaces')
-    res.json({
-      ...publicWs(workspace),
-      root: workspace.root,
-      writePolicy: getWritePolicy(workspace),
-    })
   })
+  const rejectWorkspaceApprovals = (id: string) => {
+    const grant = activeServer(config).workspaces.find((item) => item.workspaceId === id)
+    if (grant) approvals.rejectWorkspace(grant.id)
+  }
 
   /**
    * 用户只能从本机管理界面配置固定命令，不能通过远程 RPC 提交 executable 或 args。
@@ -290,7 +419,7 @@ export function startLocalServer(options: LocalServerOptions) {
         throw Error('COMMAND_ALREADY_EXISTS')
       workspace.commands = [...(workspace.commands || []), command]
       await save(config)
-      approvals.rejectWorkspace(workspace.id)
+      rejectWorkspaceApprovals(workspace.id)
       events.publish('workspaces')
       return res.json(command)
     } catch (error: unknown) {
@@ -310,7 +439,7 @@ export function startLocalServer(options: LocalServerOptions) {
         return res.status(404).json({ error: 'Command not found' })
       workspace.commands = current.filter((item) => item.id !== req.params.commandId)
       await save(config)
-      approvals.rejectWorkspace(workspace.id)
+      rejectWorkspaceApprovals(workspace.id)
       events.publish('workspaces')
       return res.json({ ok: true })
     } catch (error: unknown) {
@@ -322,7 +451,9 @@ export function startLocalServer(options: LocalServerOptions) {
 
   /** 移除工作区授权并同步云端，同时立即拒绝该工作区的待审批操作。 */
   app.delete('/local/api/workspaces/:id', async (req, res) => {
-    approvals.rejectWorkspace(String(req.params.id))
+    rejectWorkspaceApprovals(String(req.params.id))
+    for (const server of config.servers)
+      server.workspaces = server.workspaces.filter((grant) => grant.workspaceId !== req.params.id)
     config.workspaces = config.workspaces.filter((w) => w.id !== req.params.id)
     await save(config)
     await sync()

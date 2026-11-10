@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { inject } from 'vue'
 import type { RuntimeContext } from './use-runtime-console'
-const { writeApprovals, answerWriteApproval } = inject<RuntimeContext>('runtime')!
+const { status, writeApprovals, answerWriteApproval } = inject<RuntimeContext>('runtime')!
 </script>
 <template>
   <div class="card">
     <div class="title">待审批的本地操作（30 秒后自动拒绝）</div>
+    <p class="muted">
+      请求来源：{{ status.serverName }} · {{ status.gateway }}。切换服务器会取消尚未处理的审批。
+    </p>
     <el-alert
       v-if="writeApprovals.length"
       title="远程 AI 请求执行本地操作"

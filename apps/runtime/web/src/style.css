@@ -198,3 +198,24 @@ body {
     margin-left: 0;
   }
 }
+
+/* 服务器授权操作增多后，目录信息保持可读宽度，窄屏下独占一行。 */
+.workspace-info {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.runtime-main .project.row > .el-button {
+  margin-left: 0;
+}
+@media (max-width: 600px) {
+  .mast {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .brand {
+    font-size: 18px;
+  }
+  .runtime-main .project.row > .workspace-info {
+    flex-basis: 100%;
+  }
+}

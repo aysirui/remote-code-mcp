@@ -35,17 +35,17 @@
 
 ## apps/runtime（本地设备）
 
-| 文件                 | 职责                                  |
-| -------------------- | ------------------------------------- |
-| `main.ts`            | Runtime 连接生命周期及进程启动        |
-| `state.ts`           | 本地私有配置及工作区公开信息          |
-| `gateway-client.ts`  | Axios 云端配对 HTTP 客户端            |
-| `local-server.ts`    | 仅监听 loopback 的本地管理 API        |
-| `write-approvals.ts` | 本地逐次写入审批队列与取消逻辑        |
-| `executors.ts`       | 请求级权限校验和工具分发              |
-| `path-safety.ts`     | 路径遍历、敏感文件及软链接检查        |
-| `file-operations.ts` | 受控文件读取、Hash 冲突校验和原子写入 |
-| `git-operations.ts`  | 受控 Git 状态及 Diff 查询             |
+| 文件                 | 职责                                   |
+| -------------------- | -------------------------------------- |
+| `main.ts`            | Runtime 连接生命周期及进程启动         |
+| `state.ts`           | 多服务器配置迁移、独立配对与工作区授权 |
+| `gateway-client.ts`  | Axios 云端配对 HTTP 客户端             |
+| `local-server.ts`    | 仅监听 loopback 的本地管理 API         |
+| `write-approvals.ts` | 本地逐次写入审批队列与取消逻辑         |
+| `executors.ts`       | 请求级权限校验和工具分发               |
+| `path-safety.ts`     | 路径遍历、敏感文件及软链接检查         |
+| `file-operations.ts` | 受控文件读取、Hash 冲突校验和原子写入  |
+| `git-operations.ts`  | 受控 Git 状态及 Diff 查询              |
 
 ## Vue 前端
 
@@ -62,3 +62,5 @@
 6. **安全校验不得因拆文件失效**：工作区授权、CSRF、OAuth、设备认证、路径安全及文件写入审批仍在各自的边界执行。
 
 目前本地文件插件不支持新建目录，所以上述模块首先按职责独立成同级文件；未来可不改变设计地移动到 `auth/`、`device/`、`workspace/`、`http/` 等子目录。迁移时应一次性更新相对 import 并运行构建测试，不要同时维护两套实现。
+
+Runtime 的 `version.ts` 从自身 `package.json` 读取软件版本，连接握手与本地状态共用这一版本来源。

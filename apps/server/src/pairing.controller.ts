@@ -12,6 +12,7 @@ import { eq } from 'drizzle-orm'
 import { randomBytes } from 'node:crypto'
 import { Identity } from './identity'
 import { Store } from './store'
+import { DeviceHub } from './device-hub'
 import { secret, hash, uid } from './security'
 import { csrf, checkOrigin, consoleUrl } from './http-security'
 import * as S from './schema'
@@ -22,7 +23,31 @@ export class PairingController {
   constructor(
     private readonly id: Identity,
     private readonly store: Store,
+    private readonly hub: DeviceHub,
   ) {}
+  /** Runtime 用自己的设备凭据撤销绑定；重复撤销安全，无法操作其他设备。 */
+  @Post('device/unpair') async unpair(@Req() req: Request) {
+    const header = req.headers.authorization || ''
+    const raw = header.startsWith('Bearer ') ? header.slice(7) : ''
+    if (!raw) throw new UnauthorizedException()
+    const token = await this.store.one(
+      this.store.db
+        .select()
+        .from(S.deviceTokens)
+        .where(eq(S.deviceTokens.tokenHash, hash(raw)))
+        .limit(1),
+    )
+    if (!token) throw new UnauthorizedException('设备凭据无效')
+    await this.store.db.transaction(async (tx) => {
+      await tx
+        .update(S.deviceTokens)
+        .set({ revokedAt: new Date() })
+        .where(eq(S.deviceTokens.deviceId, token.deviceId))
+      await tx.update(S.devices).set({ status: 'revoked' }).where(eq(S.devices.id, token.deviceId))
+    })
+    this.hub.disconnect(token.deviceId)
+    return { ok: true }
+  }
   /** 生成短时一次性配对码和私有领取凭据。 */
   @Post('device/pairing/start') async startPair(
     @Req() req: Request,

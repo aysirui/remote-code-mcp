@@ -1,5 +1,4 @@
-import dotenv from 'dotenv'
-import path from 'node:path'
+import { env } from './env'
 import { randomBytes, randomUUID } from 'node:crypto'
 import mysql, { type RowDataPacket } from 'mysql2/promise'
 import { drizzle } from 'drizzle-orm/mysql2'
@@ -7,18 +6,15 @@ import { eq } from 'drizzle-orm'
 import * as bcrypt from 'bcryptjs'
 import * as S from './schema'
 
-dotenv.config({ path: path.resolve(process.cwd(), '../../.env') })
-
 /**
  * Initialize the administrator once. The generated password is printed only
  * on the first successful initialization, not on subsequent deploys.
  */
 async function main() {
-  const email = (process.env.ADMIN_EMAIL || '').trim().toLowerCase()
+  const email = env.adminEmail
   if (!/^\S+@\S+\.\S+$/.test(email)) throw Error('Valid ADMIN_EMAIL required')
-  if (!process.env.DATABASE_URL) throw Error('DATABASE_URL required')
 
-  const conn = await mysql.createConnection(process.env.DATABASE_URL)
+  const conn = await mysql.createConnection(env.databaseUrl)
   let locked = false
   try {
     const [rows] = await conn.execute<RowDataPacket[]>(

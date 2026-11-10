@@ -1,3 +1,4 @@
+import { env } from './env'
 import { Injectable } from '@nestjs/common'
 import { drizzle } from 'drizzle-orm/mysql2'
 import mysql from 'mysql2/promise'
@@ -10,7 +11,7 @@ import { uid } from './security'
  */
 @Injectable()
 export class Store {
-  readonly pool = mysql.createPool(process.env.DATABASE_URL!)
+  readonly pool = mysql.createPool(env.databaseUrl)
   readonly db = drizzle(this.pool)
   /** 将查询结果收敛为可选的单条记录；未命中返回 undefined。 */
   async one<T>(query: Promise<T[]>): Promise<T | undefined> {

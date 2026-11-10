@@ -1,3 +1,4 @@
+import { env } from './env'
 import type { Express, Request, Response } from 'express'
 import { operationRequiresWrite, type RpcRequest } from '@rcm/protocol'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -18,7 +19,7 @@ export function installMcp(expressApp: Express, oauth: OAuthService, hub: Device
     if (!bearer) {
       res.set(
         'WWW-Authenticate',
-        `Bearer resource_metadata="${process.env.PUBLIC_URL || 'http://localhost:3000'}/.well-known/oauth-protected-resource"`,
+        `Bearer resource_metadata="${env.publicUrl}/.well-known/oauth-protected-resource"`,
       )
       return res.status(401).json({ error: 'unauthorized' })
     }

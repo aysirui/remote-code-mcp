@@ -28,10 +28,15 @@ Node.js 22+、pnpm 10+、MySQL 8.4、Git、Docker/Compose（部署时）。当�
 ```bash
 corepack enable
 cp .env.example .env
+cp apps/server/.env.example apps/server/.env
 cp apps/console/.env.example apps/console/.env.local
-# 修改 .env 的 APP_SECRET、DATABASE_URL、ADMIN_EMAIL
+# 修改 apps/server/.env 的 APP_SECRET、DATABASE_URL、ADMIN_EMAIL
 pnpm install
 ```
+
+Server 配置统一通过 `apps/server/src/env.ts` 的 `env` 访问，优先级为：**系统环境变量 → `apps/server/.env` → 仓库根目录 `.env` → 默认值**。已有环境变量不会被 `.env` 覆盖；文件路径以模块位置解析，从仓库根目录启动或直接运行构建产物均可加载。仅使用系统环境变量时无需创建 `.env`。
+
+本地开发可在 `apps/server/.env` 中将 `DATABASE_URL` 指向测试数据库。服务启动、`db:generate`、`db:migrate` 和 `admin:init` 共用该配置；数据库操作前请确认目标库。`.env` 不会提交 Git，示例模板位于 `apps/server/.env.example`。服务启动时校验必填的 `DATABASE_URL`、至少 32 字符的 `APP_SECRET` 和端口范围；数据库命令只要求数据库配置，管理员初始化还要求有效的 `ADMIN_EMAIL`。
 
 启动 MySQL：
 
@@ -53,11 +58,13 @@ pnpm --filter @rcm/runtime build      # 构建 Node 程序和内置的 Vue 界�
 pnpm --filter @rcm/runtime start      # 打印本地 UI 地址（带一次性启动访问密钥）
 ```
 
+Server 开发和生产均使用 TypeScript 编译器（`tsc`）以及同一份 `apps/server/tsconfig.json`。`pnpm dev:server` 监听源码变更，在编译通过后运行或重启 `dist/main.js`；编译错误时不启动新的服务进程。构造函数依赖由编译生成的类型元数据自动注入。生产执行 `pnpm --filter @rcm/server build` 后，通过 `pnpm --filter @rcm/server start` 运行同一入口。`pnpm admin:init` 也会先编译，再运行管理员初始化脚本。
+
 > `runtime dev` 在首次 UI 构建前可能没有静态界面；建议先执行 `runtime build`，之后使用 `runtime start`。Runtime 默认保存设置到 `~/.remote-code-mcp/config.json`（Unix 使用权限 0600）。
 
 ### 首个管理员
 
-在 `.env` 配置 `ADMIN_EMAIL=admin@example.com`。完成 Drizzle 数据库迁移后，**在受控终端中**执行一次（上述初始化流程已包含）：
+在 `apps/server/.env` 或系统环境变量中配置 `ADMIN_EMAIL=admin@example.com`。完成 Drizzle 数据库迁移后，**在受控终端中**执行一次（上述初始化流程已包含）：
 
 ```bash
 pnpm admin:init

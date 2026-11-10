@@ -1,10 +1,8 @@
 import { defineConfig } from 'drizzle-kit'
-import dotenv from 'dotenv'
-import path from 'node:path'
-dotenv.config({ path: path.resolve(process.cwd(), '../../.env') })
+import { env } from './src/env'
 export default defineConfig({
   schema: './src/schema.ts',
   out: './drizzle',
   dialect: 'mysql',
-  dbCredentials: { url: process.env.DATABASE_URL! },
+  dbCredentials: { url: env.databaseUrl },
 })

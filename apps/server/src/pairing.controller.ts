@@ -1,3 +1,4 @@
+import { env } from './env'
 import {
   Controller,
   Post,
@@ -78,7 +79,7 @@ export class PairingController {
       if (!pairing || pairing.status !== 'pending' || pairing.expiresAt <= new Date())
         throw new BadRequestException('Invalid/expired code')
       const iv = randomBytes(12)
-      const key = createHash('sha256').update(process.env.APP_SECRET!).digest()
+      const key = createHash('sha256').update(env.appSecret).digest()
       const cipher = createCipheriv('aes-256-gcm', key, iv)
       const encrypted = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()])
       const stored = Buffer.concat([iv, cipher.getAuthTag(), encrypted]).toString('base64')
@@ -118,7 +119,7 @@ export class PairingController {
         throw new BadRequestException('Used')
       const { createDecipheriv, createHash } = await import('node:crypto')
       const bytes = Buffer.from(p.tokenCiphertext, 'base64')
-      const key = createHash('sha256').update(process.env.APP_SECRET!).digest()
+      const key = createHash('sha256').update(env.appSecret).digest()
       const dec = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12))
       dec.setAuthTag(bytes.subarray(12, 28))
       const token = Buffer.concat([dec.update(bytes.subarray(28)), dec.final()]).toString('utf8')

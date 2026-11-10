@@ -1,11 +1,12 @@
+import { env } from './env'
 import type { Request, Response } from 'express'
 import { ForbiddenException } from '@nestjs/common'
 
 /** Gateway 的公网地址，用于安全 Cookie 与 Origin 校验。 */
-export const base = () => process.env.PUBLIC_URL || 'http://localhost:3000'
+export const base = () => env.publicUrl
 
 /** 用户 Console 的公网地址；OAuth 和配对流程使用此地址。 */
-export const consoleUrl = () => process.env.CONSOLE_URL || 'http://localhost:5173'
+export const consoleUrl = () => env.consoleUrl
 
 /** 只向浏览器写入 HttpOnly Session Cookie，不暴露给 JS 读取。 */
 export function setCookie(res: Response, name: string, value: string, ttl = 604800) {

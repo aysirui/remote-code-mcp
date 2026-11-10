@@ -1,3 +1,4 @@
+import { env } from './env'
 import {
   Injectable,
   UnauthorizedException,
@@ -60,8 +61,7 @@ export class Identity {
     )
       throw new BadRequestException('Valid email and password (12–72 UTF-8 bytes) required')
     // ADMIN_EMAIL is reserved for the out-of-band administrator initializer.
-    if (email === process.env.ADMIN_EMAIL?.trim().toLowerCase())
-      throw new ForbiddenException('Reserved administrator address')
+    if (email === env.adminEmail) throw new ForbiddenException('Reserved administrator address')
     const user = {
       id: uid(),
       email,

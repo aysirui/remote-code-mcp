@@ -1,7 +1,5 @@
 import 'reflect-metadata'
-import dotenv from 'dotenv'
-import path from 'node:path'
-dotenv.config({ path: path.resolve(process.cwd(), '../../.env') })
+import { env } from './env'
 import { NestFactory } from '@nestjs/core'
 import { Module } from '@nestjs/common'
 import { Identity, Store, DeviceHub } from './core'
@@ -27,9 +25,7 @@ import { json, urlencoded, type Request, type Response, type NextFunction } from
 })
 class AppModule {}
 async function main() {
-  if (!process.env.APP_SECRET || process.env.APP_SECRET.length < 32)
-    throw new Error('APP_SECRET must contain at least 32 characters')
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL required')
+  env.validateServer()
   const app = await NestFactory.create(AppModule, { bodyParser: false })
   // Keep MCP file payloads bounded while accepting OAuth form submissions.
   app.use(json({ limit: '1mb' }))
@@ -45,10 +41,7 @@ async function main() {
   })
   app.use(cookieParser())
   app.enableCors({
-    origin: [
-      process.env.CONSOLE_URL || 'http://localhost:5173',
-      process.env.PUBLIC_URL || 'http://localhost:3000',
-    ],
+    origin: [env.consoleUrl, env.publicUrl],
     credentials: true,
     allowedHeaders: ['content-type', 'x-csrf-token', 'authorization'],
   })
@@ -80,9 +73,9 @@ async function main() {
     .getHttpAdapter()
     .getInstance()
     .get('/health', (_req: Request, res: Response) => res.json({ ok: true }))
-  await app.listen(Number(process.env.PORT || 3000), '0.0.0.0')
+  await app.listen(env.port, '0.0.0.0')
   hub.attach(app.getHttpServer())
-  console.log('Remote Code MCP listening', process.env.PUBLIC_URL || 'http://localhost:3000')
+  console.log('Remote Code MCP listening', env.publicUrl)
 }
 main().catch((e) => {
   console.error(e)

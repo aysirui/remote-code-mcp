@@ -1,6 +1,7 @@
 import { env } from './env'
 import { randomBytes, randomUUID } from 'node:crypto'
-import mysql, { type RowDataPacket } from 'mysql2/promise'
+import type { RowDataPacket } from 'mysql2/promise'
+import { createDatabaseConnection } from './database'
 import { drizzle } from 'drizzle-orm/mysql2'
 import { eq } from 'drizzle-orm'
 import * as bcrypt from 'bcryptjs'
@@ -14,7 +15,7 @@ async function main() {
   const email = env.adminEmail
   if (!/^\S+@\S+\.\S+$/.test(email)) throw Error('Valid ADMIN_EMAIL required')
 
-  const conn = await mysql.createConnection(env.databaseUrl)
+  const conn = await createDatabaseConnection(env.databaseUrl)
   let locked = false
   try {
     const [rows] = await conn.execute<RowDataPacket[]>(

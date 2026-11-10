@@ -3,14 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "tsx watch src/main.ts",
+    "dev": "node scripts/dev.mjs",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "db:generate": "drizzle-kit generate",
     "test": "jest --runInBand",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc -p test/tsconfig.json",
     "db:migrate": "drizzle-kit migrate",
-    "admin:init": "tsx src/admin-init.ts"
+    "admin:init": "pnpm build && node dist/admin-init.js"
   },
   "dependencies": {
     "@rcm/protocol": "workspace:*",
@@ -40,7 +40,6 @@
     "jest": "catalog:",
     "ts-jest": "catalog:",
     "typescript": "catalog:",
-    "tsx": "catalog:",
     "drizzle-kit": "^0.31.0"
   }
 }

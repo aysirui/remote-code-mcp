@@ -49,7 +49,7 @@ test('rejects symlink pointing outside authorized directory', async () => {
   const outside = await mkdtemp(path.join(os.tmpdir(), 'rcm-out-'))
   try {
     await writeFile(path.join(outside, 'secret.txt'), 'secret')
-    await symlink(outside, path.join(workspaceRoot, 'link'))
+    await symlink(outside, path.join(workspaceRoot, 'link'), 'junction')
     await expect(resolveSafe(ws(), 'link/secret.txt')).rejects.toThrow('SYMLINK_DENIED')
     await expect(execute(ws(), rpc('file.read', { path: 'link/secret.txt' }))).rejects.toThrow()
   } finally {

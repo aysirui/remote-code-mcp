@@ -221,3 +221,7 @@ pnpm test
 LICENSE: 代码可作为自有项目进一步开发。请自行检查依赖项许可和部署环境的法律合规要求。
 
 开发时的完整模块职责与中文注释约定详见 [CODE_STRUCTURE.md](CODE_STRUCTURE.md)。
+
+跨平台格式约定：文本统一使用 UTF-8 和 LF。`.gitattributes` 负责 Git 提交与检出的换行规则，`.editorconfig` 约束编辑器，Prettier 的 `endOfLine: 'lf'` 约束格式化输出，macOS 和 Windows 使用同一套配置。
+
+已有工作目录中的 CRLF 文件不会仅因新增 `.gitattributes` 自动重写，可运行 `pnpm format` 统一受支持文件的格式，再执行 `pnpm format:check` 检查。新检出的文本文件会遵循仓库的 LF 规则，无需修改个人的全局 Git 配置。

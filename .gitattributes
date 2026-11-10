@@ -1,0 +1,3 @@
+# 文本文件在提交和检出时统一使用 LF，与 Prettier、EditorConfig 保持一致。
+# 自动识别二进制文件，不转换其内容。
+* text=auto eol=lf

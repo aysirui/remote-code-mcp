@@ -1,7 +1,7 @@
 import axios, { AxiosError, type Method } from 'axios'
 
-/** Web Console 使用的后端 API 地址；空值表示同源请求。 */
-export const base = import.meta.env.VITE_API_URL || ''
+/** 开发环境的请求始终走 Vite 同源代理，生产环境仍使用配置的 API 地址。 */
+export const base = import.meta.env.DEV ? '' : import.meta.env.VITE_API_URL || ''
 
 /**
  * 唯一的业务 HTTP 客户端。
@@ -80,6 +80,8 @@ export type Workspace = {
   id: string
   deviceId: string
   name: string
+  /** 本地目录末级名称；不包含绝对路径。 */
+  directoryName?: string | null
   enabled: boolean
   read: boolean
   write: boolean

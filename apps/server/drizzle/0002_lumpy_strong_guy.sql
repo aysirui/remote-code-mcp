@@ -1,0 +1,1 @@
+ALTER TABLE `workspaces` ADD `directory_name` varchar(255);

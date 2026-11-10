@@ -122,6 +122,7 @@ export class DeviceHub {
                 .update(S.workspaces)
                 .set({
                   name: w.name,
+                  directoryName: w.directoryName ?? null,
                   localRead: w.permissions.read,
                   localWrite: w.permissions.write,
                   localEnabled: w.enabled,
@@ -133,6 +134,7 @@ export class DeviceHub {
                 deviceId,
                 userId: d.userId,
                 name: w.name,
+                directoryName: w.directoryName ?? null,
                 localRead: w.permissions.read,
                 localWrite: w.permissions.write,
                 localEnabled: w.enabled,

@@ -271,6 +271,7 @@ export function save(cfg: Config): Promise<void> {
 export const publicWs = (w: LocalWorkspace): WorkspacePublic => ({
   id: w.id,
   name: w.name,
+  directoryName: path.basename(w.root),
   permissions: w.permissions,
   enabled: w.enabled,
 })

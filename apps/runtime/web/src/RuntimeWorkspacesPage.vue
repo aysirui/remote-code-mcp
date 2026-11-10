@@ -1,7 +1,18 @@
 <script setup lang="ts">
 import { inject } from 'vue'
 import type { RuntimeContext } from './use-runtime-console'
-import { Plus, FolderOpened, Delete } from '@element-plus/icons-vue'
+import {
+  Plus,
+  FolderOpened,
+  MoreFilled,
+  Delete,
+  Lock,
+  Unlock,
+  Key,
+  CircleCheck,
+  Setting,
+} from '@element-plus/icons-vue'
+
 const {
   status,
   workspaces,
@@ -25,74 +36,160 @@ const {
   deleteCommand,
   remove,
 } = inject<RuntimeContext>('runtime')!
+
+type Workspace = (typeof workspaces.value)[number]
+function onWorkspaceAction(action: string, workspace: Workspace) {
+  switch (action) {
+    case 'authorization':
+      void toggleWorkspaceAuthorization(workspace)
+      break
+    case 'command':
+      showCommandForm(workspace)
+      break
+    case 'remove':
+      void remove(workspace)
+      break
+  }
+}
 </script>
+
 <template>
-  <div class="card">
-    <div class="row between">
-      <div>
-        <div class="title">本地工作区</div>
-        <div class="muted">当前服务器：{{ status.serverName }} · {{ status.gateway }}</div>
-      </div>
-      <el-button type="primary" :icon="Plus" @click="showAdd = true">添加项目</el-button>
-    </div>
-    <p class="muted">每台服务器的工作区授权和写入策略独立保存。新增服务器默认没有访问权限。</p>
-    <el-empty v-if="!workspaces.length" description="尚未添加本地工作区" />
-    <div v-for="w in workspaces" :key="w.id" class="project row">
-      <div class="badge">
-        <el-icon><FolderOpened /></el-icon>
-      </div>
-      <div class="workspace-info">
-        <strong>{{ w.name }}</strong>
-        <div class="muted" style="word-break: break-all">{{ w.root }}</div>
-      </div>
-      <el-tag :type="w.permissions.write ? 'warning' : 'info'">{{
-        !w.authorized ? '未授权' : w.permissions.write ? '读写' : '只读'
-      }}</el-tag>
-      <el-button
-        text
-        :type="w.authorized ? 'danger' : 'primary'"
-        @click="toggleWorkspaceAuthorization(w)"
-        >{{ w.authorized ? '取消授权' : '授权当前服务器' }}</el-button
-      >
-      <el-select
-        v-if="w.authorized && w.permissions.write && w.enabled"
-        :model-value="w.writePolicy || 'approval'"
-        style="width: 150px"
-        aria-label="工作区写入策略"
-        @change="(policy: 'auto' | 'approval') => changeWritePolicy(w, policy)"
-      >
-        <el-option label="逐次审批" value="approval" />
-        <el-option label="自动写入" value="auto" />
-      </el-select>
-      <el-button v-if="w.authorized" text type="primary" @click="toggleWrite(w)">{{
-        w.permissions.write ? '设为只读' : '开启写入'
-      }}</el-button>
-      <el-button
-        text
-        type="primary"
-        :disabled="!w.authorized || !w.enabled"
-        @click="showCommandForm(w)"
-        >添加命令</el-button
-      >
-      <el-button
-        text
-        type="danger"
-        :icon="Delete"
-        :aria-label="`从本机清单移除 ${w.name}`"
-        @click="remove(w)"
-      />
-      <div v-if="w.commands?.length" class="command-list">
-        <div v-for="cmd in w.commands" :key="cmd.id" class="command-item">
-          <div>
-            <strong>{{ cmd.name }}</strong>
-            <span class="muted"> · {{ cmd.id }}</span>
-            <div class="muted command-line">{{ cmd.executable }} {{ cmd.args.join(' ') }}</div>
-          </div>
-          <el-button text type="danger" @click="deleteCommand(w, cmd)">移除命令</el-button>
+  <section class="card workspace-page">
+    <header class="workspace-page-header">
+      <div class="workspace-heading">
+        <h1>本地工作区</h1>
+        <div class="workspace-server">
+          当前服务器 <strong>{{ status.serverName }}</strong> <span>·</span> {{ status.gateway }}
         </div>
       </div>
+      <el-button type="primary" :icon="Plus" @click="showAdd = true">添加项目</el-button>
+    </header>
+    <p class="workspace-description">
+      管理当前服务器对本地项目的访问权限。各服务器的授权与写入策略相互独立。
+    </p>
+
+    <el-empty v-if="!workspaces.length" description="尚未添加本地工作区" />
+
+    <div v-else class="workspace-grid">
+      <article v-for="w in workspaces" :key="w.id" class="workspace-card">
+        <div class="workspace-card-main">
+          <div class="workspace-folder-icon" aria-hidden="true">
+            <el-icon><FolderOpened /></el-icon>
+          </div>
+          <div class="workspace-identity">
+            <div class="workspace-name">{{ w.name }}</div>
+            <div class="workspace-path" :title="w.root">{{ w.root }}</div>
+          </div>
+          <div class="workspace-badges">
+            <el-tag
+              size="small"
+              effect="light"
+              :type="
+                !w.authorized
+                  ? 'info'
+                  : !w.enabled
+                    ? 'info'
+                    : w.permissions.write
+                      ? 'warning'
+                      : 'success'
+              "
+            >
+              {{
+                !w.authorized
+                  ? '未授权'
+                  : !w.enabled
+                    ? '已停用'
+                    : w.permissions.write
+                      ? '可读写'
+                      : '只读'
+              }}
+            </el-tag>
+          </div>
+          <el-dropdown
+            trigger="click"
+            placement="bottom-end"
+            @command="(action: string) => onWorkspaceAction(action, w)"
+          >
+            <el-button
+              class="workspace-more"
+              :icon="MoreFilled"
+              circle
+              text
+              :aria-label="`管理 ${w.name} 的更多操作`"
+            />
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="authorization" :icon="w.authorized ? Lock : Unlock">
+                  {{ w.authorized ? '取消当前服务器授权' : '授权当前服务器' }}
+                </el-dropdown-item>
+                <el-dropdown-item
+                  command="command"
+                  :icon="Setting"
+                  :disabled="!w.authorized || !w.enabled"
+                  >添加本地命令</el-dropdown-item
+                >
+                <el-dropdown-item command="remove" :icon="Delete" divided class="workspace-danger"
+                  >从本地移除项目</el-dropdown-item
+                >
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+        <div class="workspace-card-footer">
+          <div class="workspace-policy">
+            <span class="workspace-field-label">写入策略</span>
+            <el-select
+              v-if="w.authorized && w.enabled && w.permissions.write"
+              :model-value="w.writePolicy || 'approval'"
+              aria-label="工作区写入策略"
+              size="default"
+              class="workspace-policy-select"
+              @change="(policy: 'auto' | 'approval') => changeWritePolicy(w, policy)"
+            >
+              <el-option label="逐次审批" value="approval" />
+              <el-option label="自动写入" value="auto" />
+            </el-select>
+            <span v-else class="workspace-policy-disabled">{{
+              w.authorized && !w.enabled ? '工作区已停用' : '未开启写入'
+            }}</span>
+          </div>
+          <div class="workspace-card-actions">
+            <el-button
+              v-if="!w.authorized"
+              type="primary"
+              :icon="Unlock"
+              @click="toggleWorkspaceAuthorization(w)"
+              >授权访问</el-button
+            >
+            <el-button
+              v-else
+              :type="w.permissions.write ? '' : 'primary'"
+              :icon="w.permissions.write ? Lock : Key"
+              :disabled="!w.enabled"
+              @click="toggleWrite(w)"
+              >{{ w.permissions.write ? '设为只读' : '开启写入' }}</el-button
+            >
+          </div>
+        </div>
+        <div v-if="w.commands?.length" class="workspace-command-section">
+          <div class="workspace-command-heading">
+            <el-icon><CircleCheck /></el-icon> 已配置命令 <span>{{ w.commands.length }}</span>
+          </div>
+          <div v-for="cmd in w.commands" :key="cmd.id" class="workspace-command-row">
+            <div class="workspace-command-details">
+              <strong>{{ cmd.name }}</strong>
+              <span class="workspace-command-code"
+                >{{ cmd.executable }} {{ cmd.args.join(' ') }}</span
+              >
+            </div>
+            <el-button text type="danger" size="small" @click="deleteCommand(w, cmd)"
+              >移除</el-button
+            >
+          </div>
+        </div>
+      </article>
     </div>
-  </div>
+  </section>
   <el-dialog
     :model-value="!!commandWorkspace"
     title="添加工作区命令"
@@ -184,3 +281,241 @@ const {
     ></el-dialog
   >
 </template>
+
+<style scoped>
+.workspace-page {
+  padding: 30px;
+}
+.workspace-page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+}
+.workspace-heading {
+  min-width: 0;
+}
+.workspace-heading h1 {
+  font-size: 22px;
+  font-weight: 750;
+  margin: 0 0 10px;
+  letter-spacing: -0.02em;
+}
+.workspace-server {
+  color: #7b8798;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+.workspace-server strong {
+  color: #52647b;
+  font-weight: 600;
+}
+.workspace-server span {
+  margin: 0 5px;
+}
+.workspace-description {
+  margin: 4px 0 16px;
+  color: #8290a3;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.workspace-grid {
+  display: grid;
+  gap: 14px;
+}
+.workspace-card {
+  border: 1px solid #e7ecf3;
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+  transition:
+    border-color 0.18s,
+    box-shadow 0.18s;
+}
+.workspace-card:hover {
+  border-color: #d5e0ef;
+  box-shadow: 0 5px 20px rgba(28, 48, 84, 0.045);
+}
+.workspace-card-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 20px 20px 19px;
+}
+.workspace-folder-icon {
+  height: 44px;
+  width: 44px;
+  flex: 0 0 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: #eff5ff;
+  color: #3069df;
+  font-size: 21px;
+}
+.workspace-identity {
+  flex: 1;
+  min-width: 0;
+  padding-top: 1px;
+}
+.workspace-name {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.5;
+  color: #1c293e;
+}
+.workspace-path {
+  font-size: 12px;
+  line-height: 1.65;
+  color: #8290a3;
+  overflow-wrap: anywhere;
+  margin-top: 4px;
+}
+.workspace-badges {
+  padding-top: 5px;
+}
+.workspace-more {
+  flex: 0 0 auto;
+  color: #738297;
+  margin: 0;
+}
+.workspace-more:hover {
+  color: #2563eb;
+  background: #f1f5fb;
+}
+.workspace-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 32px;
+  padding: 12px 20px;
+  background: #fafbfe;
+  border-top: 1px solid #edf0f5;
+}
+.workspace-policy {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.workspace-field-label {
+  color: #64748b;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.workspace-policy-select {
+  width: 134px;
+}
+.workspace-policy-disabled {
+  font-size: 12px;
+  color: #99a4b4;
+}
+.workspace-card-actions {
+  flex-shrink: 0;
+}
+.workspace-card-actions .el-button {
+  margin: 0;
+}
+.workspace-command-section {
+  padding: 14px 20px 16px;
+  border-top: 1px solid #edf0f5;
+}
+.workspace-command-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.workspace-command-heading span {
+  padding: 1px 6px;
+  border-radius: 9px;
+  background: #f0f3f8;
+}
+.workspace-command-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+}
+.workspace-command-row + .workspace-command-row {
+  border-top: 1px solid #f0f2f6;
+}
+.workspace-command-details {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 3px;
+  font-size: 13px;
+}
+.workspace-command-code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  color: #8793a5;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 650px) {
+  .workspace-page {
+    padding: 18px;
+  }
+  .workspace-page-header {
+    align-items: center;
+  }
+  .workspace-page-header > .el-button {
+    flex-shrink: 0;
+  }
+  .workspace-description {
+    margin: 16px 0 20px;
+  }
+  .workspace-card-main {
+    padding: 16px;
+    gap: 11px;
+    flex-wrap: wrap;
+  }
+  .workspace-folder-icon {
+    width: 38px;
+    height: 38px;
+    flex-basis: 38px;
+    font-size: 18px;
+  }
+  .workspace-identity {
+    flex-basis: calc(100% - 100px);
+  }
+  .workspace-badges {
+    padding-left: 49px;
+    padding-top: 0;
+  }
+  .workspace-more {
+    margin-left: auto;
+  }
+  .workspace-card-footer {
+    padding: 12px 16px;
+    flex-wrap: wrap;
+  }
+  .workspace-card-actions {
+    margin-left: auto;
+  }
+  .workspace-command-section {
+    padding: 12px 16px;
+  }
+}
+@media (max-width: 400px) {
+  .workspace-page-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .workspace-card-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .workspace-card-actions,
+  .workspace-card-actions .el-button {
+    width: 100%;
+  }
+}
+</style>

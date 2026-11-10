@@ -13,8 +13,14 @@ export class Env {
     dotenv.config({ path: files, processEnv: source, override: false, quiet: true })
   }
 
+  /** Schema 生成不需要数据库连接，因此允许按需读取可选连接地址。 */
+  get optionalDatabaseUrl(): string | undefined {
+    return this.source.DATABASE_URL || undefined
+  }
+
+  /** 运行服务和执行数据库迁移时，数据库连接地址必须存在。 */
   get databaseUrl(): string {
-    const value = this.source.DATABASE_URL
+    const value = this.optionalDatabaseUrl
     if (!value) throw new Error('必须配置 DATABASE_URL')
     return value
   }

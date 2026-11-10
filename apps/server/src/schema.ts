@@ -73,6 +73,7 @@ export const workspaces = mysqlTable(
     deviceId: varchar('device_id', { length: 48 }).notNull(),
     userId: varchar('user_id', { length: 48 }).notNull(),
     name: varchar('name', { length: 128 }).notNull(),
+    directoryName: varchar('directory_name', { length: 255 }),
     localRead: boolean('local_read').notNull().default(true),
     localWrite: boolean('local_write').notNull().default(false),
     cloudRead: boolean('cloud_read').notNull().default(true),

@@ -11,7 +11,6 @@ const reportError = (error: unknown) => {
 
 import {
   request,
-  base,
   type Device,
   type Workspace,
   type User as Account,
@@ -45,8 +44,10 @@ export function useConsole() {
   const newPassword = ref('')
   const newPasswordConfirm = ref('')
   const isAdmin = computed(() => ['admin', 'super_admin'].includes(me.value?.role || ''))
-  /** 面向 UI 的 MCP 连接地址，统一使用配置的后端域名。 */
-  const mcpUrl = computed(() => (base || window.location.origin) + '/mcp')
+  /** MCP 对外连接地址与本地 API 代理不同，提供真实的服务端域名供 AI 客户端使用。 */
+  const mcpUrl = computed(
+    () => (import.meta.env.VITE_API_URL || window.location.origin).replace(/\/$/, '') + '/mcp',
+  )
   const location = window.location
   const q = new URLSearchParams(location.search),
     returnTo = q.get('returnTo')
@@ -251,7 +252,7 @@ export function useConsole() {
   }
   /** 复制 MCP Server URL 供 AI 客户端连接。 */
   function copyUrl() {
-    navigator.clipboard.writeText((import.meta.env.VITE_API_URL || location.origin) + '/mcp')
+    navigator.clipboard.writeText(mcpUrl.value)
     ElMessage.success('MCP URL 已复制')
   }
   onMounted(() => {

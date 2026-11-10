@@ -13,6 +13,8 @@ export const PermissionSchema = z.object({
 export const WorkspacePublicSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1).max(128),
+  /** 仅同步目录末级名称，不泄露本地绝对路径。 */
+  directoryName: z.string().min(1).max(255).optional(),
   permissions: PermissionSchema,
   enabled: z.boolean(),
 })

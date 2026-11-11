@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "5",
-      "when": 1794136483075,
-      "tag": "0000_oval_king_cobra",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "5",
-      "when": 1794224417723,
-      "tag": "0001_tough_sentinel",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "5",
-      "when": 1794328784280,
-      "tag": "0002_lumpy_strong_guy",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "5",
-      "when": 1794389628925,
-      "tag": "0003_classy_vargas",
+      "when": 1794390980001,
+      "tag": "0000_fair_calypso",
       "breakpoints": true
     }
   ]

@@ -17,7 +17,7 @@ import { DeviceHub } from './device-hub'
 import { csrf } from './http-security'
 import * as S from './schema'
 
-/** 当前登录用户的设备、工作区、OAuth 授权与个人审计接口，所有查询必须按用户 ID 限定。 */
+/** 当前登录用户的设备、工作区、OAuth 授权与个人操作记录接口。 */
 @Controller('api')
 export class AccountController {
   constructor(
@@ -25,6 +25,7 @@ export class AccountController {
     private readonly store: Store,
     private readonly hub: DeviceHub,
   ) {}
+
   /** 仅返回当前用户自己的设备与在线状态。 */
   @Get('me/devices') async devices(@Req() req: Request) {
     const u = await this.id.requireUser(req)
@@ -32,6 +33,7 @@ export class AccountController {
       (d) => ({ ...d, online: this.hub.isOnline(d.id) }),
     )
   }
+
   /** 仅允许用户修改自己设备的名称。 */
   @Patch('me/devices/:id') async rename(
     @Req() req: Request,
@@ -50,6 +52,7 @@ export class AccountController {
       .where(and(eq(S.devices.id, id), eq(S.devices.userId, u.id)))
     return { ok: true }
   }
+
   /** 撤销用户自己的设备和全部设备凭据，并断开连接。 */
   @Delete('me/devices/:id') async revoke(@Req() req: Request, @Param('id') id: string) {
     csrf(req)
@@ -68,16 +71,26 @@ export class AccountController {
       .set({ revokedAt: new Date() })
       .where(eq(S.deviceTokens.deviceId, id))
     this.hub.disconnect(id)
-    await this.store.audit('device.revoke', 'success', u.id, id)
+    await this.store.securityAudit({
+      actorType: 'user',
+      actorId: u.id,
+      eventType: 'device.revoke',
+      resourceType: 'device',
+      resourceId: id,
+      result: 'success',
+    })
     return { ok: true }
   }
-  /** 计算本地与云端授权交集，不返回越权工作区。 */
+
+  /** 计算本地与云端授权交集；响应只包含工作区显示名和权限，不包含目录信息。 */
   @Get('me/workspaces') async workspaces(@Req() req: Request) {
     const u = await this.id.requireUser(req)
     return (
       await this.store.db.select().from(S.workspaces).where(eq(S.workspaces.userId, u.id))
     ).map((w) => ({
-      ...w,
+      id: w.id,
+      deviceId: w.deviceId,
+      name: w.name,
       enabled: w.localEnabled && w.cloudEnabled,
       read: w.localEnabled && w.cloudEnabled && w.localRead && w.cloudRead,
       write:
@@ -87,13 +100,30 @@ export class AccountController {
         w.cloudRead &&
         w.localWrite &&
         w.cloudWrite,
+      localPolicies: {
+        file: w.localFilePolicy,
+        git: w.localGitPolicy,
+        command: w.localCommandPolicy,
+      },
+      cloudPolicies: {
+        file: w.cloudFilePolicy,
+        git: w.cloudGitPolicy,
+        command: w.cloudCommandPolicy,
+      },
     }))
   }
-  /** Console 只能缩小工作区授权，禁止越权扩大本地权限。 */
+
+  /** 用户可独立配置云端策略；云端策略不能覆盖 Runtime 本地策略或 Hard Deny。 */
   @Patch('me/workspaces/:id') async restrictWorkspace(
     @Req() req: Request,
     @Param('id') id: string,
-    @Body() b: { enabled?: unknown; write?: unknown; read?: unknown },
+    @Body()
+    b: {
+      enabled?: unknown
+      write?: unknown
+      read?: unknown
+      policies?: { file?: unknown; git?: unknown; command?: unknown }
+    },
   ) {
     csrf(req)
     const u = await this.id.requireUser(req)
@@ -105,20 +135,50 @@ export class AccountController {
         .limit(1),
     )
     if (!w) throw new NotFoundException()
-    const patch: { cloudEnabled?: boolean; cloudWrite?: boolean; cloudRead?: boolean } = {}
+    const patch: {
+      cloudEnabled?: boolean
+      cloudWrite?: boolean
+      cloudRead?: boolean
+      cloudFilePolicy?: string
+      cloudGitPolicy?: string
+      cloudCommandPolicy?: string
+    } = {}
     if (b.enabled === false) patch.cloudEnabled = false
     if (b.write === false) patch.cloudWrite = false
     if (b.read === false) patch.cloudRead = false
+    const policyUpdates = b.policies
+    const allowedPolicies = ['deny', 'approval', 'allow']
+    if (policyUpdates !== undefined) {
+      if (!policyUpdates || typeof policyUpdates !== 'object')
+        throw new BadRequestException('Invalid workspace policies')
+      for (const domain of ['file', 'git', 'command'] as const) {
+        const value = policyUpdates[domain]
+        if (value === undefined) continue
+        if (!allowedPolicies.includes(String(value)))
+          throw new BadRequestException('Invalid ' + domain + ' policy')
+        if (domain === 'file') patch.cloudFilePolicy = value as string
+        if (domain === 'git') patch.cloudGitPolicy = value as string
+        if (domain === 'command') patch.cloudCommandPolicy = value as string
+      }
+    }
     if (!Object.keys(patch).length)
-      throw new BadRequestException('Console can only reduce workspace permissions')
+      throw new BadRequestException('No valid workspace policy update')
     await this.store.db.update(S.workspaces).set(patch).where(eq(S.workspaces.id, id))
-    await this.store.audit('workspace.restrict', 'success', u.id, w.deviceId, id)
+    await this.store.securityAudit({
+      actorType: 'user',
+      actorId: u.id,
+      eventType: policyUpdates ? 'workspace.policy.update' : 'workspace.restrict',
+      resourceType: 'workspace',
+      resourceId: id,
+      result: 'success',
+    })
     return { ok: true }
   }
-  /** 持久授权关系不随一小时 Access Token 到期而消失。 */
+
+  /** 持久授权关系不随 Access Token 到期而消失。 */
   @Get('me/oauth-grants') async oauthGrants(@Req() req: Request) {
     const u = await this.id.requireUser(req)
-    const rows = await this.store.db
+    return this.store.db
       .select({
         id: S.oauthGrants.id,
         clientId: S.oauthGrants.clientId,
@@ -130,8 +190,8 @@ export class AccountController {
       .from(S.oauthGrants)
       .leftJoin(S.oauthClients, eq(S.oauthGrants.clientId, S.oauthClients.clientId))
       .where(and(eq(S.oauthGrants.userId, u.id), isNull(S.oauthGrants.revokedAt)))
-    return rows
   }
+
   /** 撤销授权、所有 Access Tokens 和所有 Refresh Token family。 */
   @Delete('me/oauth-grants/:clientId') async revokeOauth(
     @Req() req: Request,
@@ -144,12 +204,11 @@ export class AccountController {
         .select()
         .from(S.oauthGrants)
         .where(and(eq(S.oauthGrants.userId, u.id), eq(S.oauthGrants.clientId, clientId)))
-      for (const grant of grants) {
+      for (const grant of grants)
         await tx
           .update(S.oauthRefreshTokens)
           .set({ revokedAt: new Date() })
           .where(eq(S.oauthRefreshTokens.grantId, grant.id))
-      }
       await tx
         .update(S.oauthGrants)
         .set({ revokedAt: new Date() })
@@ -159,17 +218,25 @@ export class AccountController {
         .set({ revokedAt: new Date() })
         .where(and(eq(S.oauthTokens.userId, u.id), eq(S.oauthTokens.clientId, clientId)))
     })
-    await this.store.audit('oauth.revoke', 'success', u.id)
+    await this.store.securityAudit({
+      actorType: 'user',
+      actorId: u.id,
+      eventType: 'oauth.grant.revoke',
+      resourceType: 'oauth_client',
+      resourceId: clientId,
+      result: 'success',
+    })
     return { ok: true }
   }
-  /** 仅获取当前用户的最近操作记录。 */
-  @Get('me/audit-logs') async logs(@Req() req: Request) {
+
+  /** 当前用户自己的 MCP 工具执行记录；只返回最小化元数据。 */
+  @Get('me/operation-logs') async operationLogs(@Req() req: Request) {
     const u = await this.id.requireUser(req)
     return this.store.db
       .select()
-      .from(S.auditLogs)
-      .where(eq(S.auditLogs.userId, u.id))
-      .orderBy(desc(S.auditLogs.createdAt))
+      .from(S.operationLogs)
+      .where(eq(S.operationLogs.userId, u.id))
+      .orderBy(desc(S.operationLogs.createdAt))
       .limit(100)
   }
 }

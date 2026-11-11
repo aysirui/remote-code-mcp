@@ -2,14 +2,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { randomUUID } from 'node:crypto'
-import type { WorkspacePublic } from '@rcm/protocol'
-/** 本地写入策略：auto 表示免逐次确认，approval 表示每次写入前人工批准。 */
-export type WritePolicy = 'auto' | 'approval'
+import type { WorkspacePublic, WorkspacePolicies, AccessPolicy } from '@rcm/protocol'
 
-/**
- * 本地工作区模型：写入策略与绝对路径都只保存在 Runtime。
- * 旧配置不存在 writePolicy 时视为 approval，避免升级后扩大 AI 写入权限。
- */
 /** 仅由本地用户配置的固定可执行命令，不同步给云端设备元数据。 */
 export interface LocalCommand {
   id: string
@@ -18,19 +12,48 @@ export interface LocalCommand {
   args: string[]
 }
 
+/** 本机工作区模型包含 root 绝对路径；该字段仅供 Runtime 使用，禁止同步至 Gateway。 */
 export type LocalWorkspace = WorkspacePublic & {
   root: string
-  writePolicy?: WritePolicy
+  policies: WorkspacePolicies
   commands?: LocalCommand[]
 }
 
-/** 对旧配置和未知值采取保守策略，防止未授权自动写入。 */
-export const getWritePolicy = (workspace: LocalWorkspace): WritePolicy =>
-  workspace.writePolicy === 'auto' ? 'auto' : 'approval'
+/** 未知策略按 deny 处理，避免策略缺失时意外放行。 */
+export const defaultWorkspacePolicies: WorkspacePolicies = {
+  file: 'approval',
+  git: 'allow',
+  command: 'approval',
+}
+/** 归一化历史或损坏配置；未知策略按 deny 处理，避免配置缺失时意外放行。 */
+export const normalizePolicies = (value?: Partial<WorkspacePolicies>): WorkspacePolicies => ({
+  file:
+    value?.file === 'deny' || value?.file === 'approval' || value?.file === 'allow'
+      ? value.file
+      : 'deny',
+  git:
+    value?.git === 'deny' || value?.git === 'approval' || value?.git === 'allow'
+      ? value.git
+      : 'deny',
+  command:
+    value?.command === 'deny' || value?.command === 'approval' || value?.command === 'allow'
+      ? value.command
+      : 'deny',
+})
+/** 根据操作前缀选择 File/Git/Command 策略；未知操作域保守归入 Command。 */
+export const policyForOperation = (
+  workspace: Pick<LocalWorkspace, 'policies'>,
+  operation: string,
+): AccessPolicy => {
+  const domain = operation.startsWith('file.')
+    ? 'file'
+    : operation.startsWith('git.')
+      ? 'git'
+      : 'command'
+  const value = workspace.policies?.[domain]
+  return value === 'deny' || value === 'approval' || value === 'allow' ? value : 'deny'
+}
 
-/** 仅拥有读写权限的工作区才能执行写入；默认策略必须经过逐次审批。 */
-export const requiresWriteApproval = (workspace: LocalWorkspace): boolean =>
-  getWritePolicy(workspace) === 'approval'
 /** 本地目录与命令只登记一次；权限保存在各服务器的授权中。 */
 export type WorkspaceDefinition = Pick<LocalWorkspace, 'id' | 'name' | 'root' | 'commands'>
 export type WorkspaceAuthorization = {
@@ -39,7 +62,7 @@ export type WorkspaceAuthorization = {
   authorized: boolean
   enabled: boolean
   permissions: { read: boolean; write: boolean }
-  writePolicy: WritePolicy
+  policies: WorkspacePolicies
 }
 export type ServerProfile = {
   id: string
@@ -105,6 +128,7 @@ export function selectServer(config: Config, id: string): ServerProfile {
   return server
 }
 
+/** 创建或重新授权当前服务器的工作区访问；重新授权时恢复只读默认值，不自动扩大写权限。 */
 export function authorizeWorkspace(
   server: ServerProfile,
   workspaceId: string,
@@ -117,14 +141,14 @@ export function authorizeWorkspace(
       authorized: true,
       enabled: true,
       permissions: { read: true, write: false },
-      writePolicy: 'approval',
+      policies: { ...defaultWorkspacePolicies },
     }
     server.workspaces.push(grant)
   } else if (!grant.authorized) {
     grant.authorized = true
     grant.enabled = true
     grant.permissions = { read: true, write: false }
-    grant.writePolicy = 'approval'
+    grant.policies = { ...defaultWorkspacePolicies }
   }
   return grant
 }
@@ -140,7 +164,7 @@ export function serverWorkspaces(config: Config, server = activeServer(config)):
         id: grant.id,
         enabled: grant.enabled,
         permissions: { ...grant.permissions },
-        writePolicy: grant.writePolicy,
+        policies: normalizePolicies(grant.policies),
       },
     ]
   })
@@ -158,13 +182,15 @@ export function workspaceViews(config: Config) {
       authorized,
       enabled: authorized && grant.enabled,
       permissions: authorized ? { ...grant.permissions } : { read: false, write: false },
-      writePolicy: authorized ? grant.writePolicy : 'approval',
+      policies: authorized
+        ? normalizePolicies(grant.policies)
+        : { file: 'deny', git: 'deny', command: 'deny' },
       commands: workspace.commands || [],
     }
   })
 }
 
-/** 旧版单服务器配置迁移时保留设备凭据、远程工作区 ID 及原来的权限。 */
+/** 从旧版单服务器配置转换为当前多服务器配置结构。 */
 export function migrateConfig(
   value:
     | Config
@@ -206,7 +232,7 @@ export function migrateConfig(
           authorized: true,
           enabled: workspace.enabled,
           permissions: { ...workspace.permissions },
-          writePolicy: getWritePolicy(workspace),
+          policies: normalizePolicies(workspace.policies),
         })),
       },
     ],
@@ -216,6 +242,7 @@ export function migrateConfig(
 /** Runtime 配置存储位置，默认是当前用户私有目录。 */
 export const dataDir = process.env.RUNTIME_DATA_DIR || path.join(os.homedir(), '.remote-code-mcp')
 const file = path.join(dataDir, 'config.json')
+/** 读取本机配置；首次启动创建默认服务器，旧版配置升级后先备份再原子保存。 */
 export async function load(): Promise<Config> {
   let text: string
   try {
@@ -267,11 +294,12 @@ export function save(cfg: Config): Promise<void> {
   saveQueue = operation
   return operation
 }
-/** 只同步工作区公开信息到 Gateway，绝不包含 root 绝对路径。 */
+
+/** 只同步稳定 ID、用户设置的显示名和权限，不同步任何本地路径信息。 */
 export const publicWs = (w: LocalWorkspace): WorkspacePublic => ({
   id: w.id,
   name: w.name,
-  directoryName: path.basename(w.root),
   permissions: w.permissions,
+  policies: normalizePolicies(w.policies),
   enabled: w.enabled,
 })

@@ -414,6 +414,16 @@ export class OAuthController {
           resource: locked.resource,
           lastUsedAt: new Date(),
         })
+        // 将首次授权审计与授权关系、令牌放在同一事务中，避免授权成功却缺少审计记录。
+        await tx.insert(S.securityAudits).values({
+          id: uid(),
+          actorType: 'user',
+          actorId: locked.userId,
+          eventType: existing[0] ? 'oauth.grant.reauthorized' : 'oauth.grant.created',
+          resourceType: 'oauth_client',
+          resourceId: locked.clientId,
+          result: 'success',
+        })
       }
       await tx.insert(S.oauthTokens).values({
         id: uid(),
@@ -436,6 +446,7 @@ export class OAuthController {
       return true
     })
     if (!redeemed) return failure('invalid_grant', 'token.code_replayed')
+    // 重新确认已有授权不会重复记为首次授权；普通 Access Token 签发和 Refresh 不记安全审计。
     oauthLog('token.issued', { clientId: code.clientId, userId: code.userId })
     return res.json({
       access_token: access,

@@ -4,17 +4,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { LocalCommand, LocalWorkspace } from './state'
 
-/**
- * 内置命令仅保留项目任务。Git 状态与差异通过专用只读 MCP 工具执行，
- * 避免让简单 Git 查询走高权限的命令执行通道。
- */
+/** 内置命令只保留项目任务；所有 Git 操作必须通过独立 Git 工具域执行。 */
 const builtins: Record<string, LocalCommand> = {
-  'git-log': {
-    id: 'git-log',
-    name: '最近 Git 提交',
-    executable: 'git',
-    args: ['--no-pager', 'log', '-n', '8', '--oneline'],
-  },
   typecheck: { id: 'typecheck', name: '类型检查', executable: 'pnpm', args: ['run', 'typecheck'] },
   test: { id: 'test', name: '运行测试', executable: 'pnpm', args: ['run', 'test'] },
   build: { id: 'build', name: '项目构建', executable: 'pnpm', args: ['run', 'build'] },
@@ -32,6 +23,7 @@ export function validateLocalCommand(input: unknown): LocalCommand {
   if (
     typeof id !== 'string' ||
     !/^[a-z][a-z0-9_-]{1,39}$/.test(id) ||
+    id === 'git-log' ||
     id in builtins ||
     typeof name !== 'string' ||
     !name.trim() ||
@@ -45,12 +37,13 @@ export function validateLocalCommand(input: unknown): LocalCommand {
     !args.every((arg) => typeof arg === 'string' && arg.length <= 500 && !/[\r\n\0]/.test(arg))
   )
     throw Error('INVALID_COMMAND')
-  // 不允许使用 shell、脚本解释器命令行作为通用 Shell 绕过。若用户明确配置
-  // 其他执行程序，仍须在 Runtime 本地审批，不能将其视为 OS 沙箱。
+  // 禁止 Shell、脚本解释器和 Git 作为自定义入口，避免通过命令白名单绕过独立 Git 工具域。
   const base = path.basename(executable).toLowerCase()
   if (
     /\.(?:bat|cmd|ps1|sh)$/i.test(base) ||
-    /^(?:sh|bash|zsh|fish|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh(?:\.exe)?)$/.test(base)
+    /^(?:sh|bash|zsh|fish|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh(?:\.exe)?|git(?:\.exe|\.cmd)?)$/.test(
+      base,
+    )
   )
     throw Error('SHELL_EXECUTABLE_DENIED')
   return { id, name: name.trim(), executable: executable.trim(), args: [...args] }
@@ -58,9 +51,14 @@ export function validateLocalCommand(input: unknown): LocalCommand {
 
 /** 只向 AI 提供命令元数据，不返回本地工作区根路径或私有凭据。 */
 export function listCommands(w: LocalWorkspace): LocalCommand[] {
-  return [...Object.values(builtins), ...(w.commands || []).map(validateLocalCommand)]
+  // 旧版配置可能仍保存 git-log；过滤它，确保 Git 日志只能从 git.log 调用。
+  return [
+    ...Object.values(builtins),
+    ...(w.commands || []).filter((item) => item.id !== 'git-log').map(validateLocalCommand),
+  ]
 }
 
+/** 根据远程传入的命令 ID 查找本机登记项；未知 ID 一律拒绝，不接受远程 executable 或 args。 */
 export function resolveCommand(w: LocalWorkspace, id: string): LocalCommand {
   const command = listCommands(w).find((item) => item.id === id)
   if (!command) throw Error('COMMAND_NOT_ALLOWED')
@@ -72,18 +70,58 @@ export function commandFingerprint(command: LocalCommand): string {
   return createHash('sha256').update(JSON.stringify(command)).digest('hex')
 }
 
+/** 命令默认最长运行 20 秒；超时后先温和终止，再强制清理进程树。 */
+export const COMMAND_TIMEOUT_MS = 20_000
+
 /**
- * 受控命令执行：远程只能选择本机已配置的 ID；工作目录固定为授权 Workspace。
- * 项目脚本和自定义可执行程序仍可能操作工作区以外的资源：须以低权限用户运行，
- * 且每次命令必须经本地明确审批。这里不承诺提供 OS 级沙箱。
+ * 尽力终止命令及其子进程。
+ * Unix 使用独立进程组；Windows 使用 taskkill /T。两者都不是不可逃逸的 OS 级进程容器。
  */
-export async function runCheckedCommand(w: LocalWorkspace, id: string) {
+function terminateProcessTree(child: ReturnType<typeof spawn>, force = false) {
+  if (!child.pid) return
+  const signal = force ? 'SIGKILL' : 'SIGTERM'
+  if (process.platform === 'win32') {
+    // 首次只请求结束进程树；超时宽限期结束后再通过 /F 强制终止。
+    const args = ['/PID', String(child.pid), '/T', ...(force ? ['/F'] : [])]
+    const killer = spawn('taskkill.exe', args, {
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+    killer.on('error', () => child.kill(signal))
+    killer.on('close', (code) => {
+      if (code !== 0) child.kill(signal)
+    })
+    return
+  }
+  try {
+    process.kill(-child.pid, signal)
+  } catch {
+    child.kill(signal)
+  }
+}
+
+/**
+ * 执行本机预先登记的固定命令，远程调用只能提供命令 ID。
+ * 当前实现提供审批、环境变量收敛和超时进程清理，但尚未构成 OS 级沙箱；
+ * 命令仍可能访问当前 OS 用户有权访问的工作区外资源，不能将审批视为隔离措施。
+ *
+ * @param w 已授权的本地工作区，命令工作目录固定为其真实根目录
+ * @param id Runtime 本地登记的命令 ID
+ * @param timeoutMs 内部测试可缩短超时；生产默认使用 COMMAND_TIMEOUT_MS
+ */
+export async function runCheckedCommand(
+  w: LocalWorkspace,
+  id: string,
+  timeoutMs = COMMAND_TIMEOUT_MS,
+) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw Error('INVALID_COMMAND_TIMEOUT')
   const selected = resolveCommand(w, id)
   const root = await fs.realpath(w.root)
   if (!(await fs.stat(root)).isDirectory()) throw Error('WORKSPACE_NOT_DIRECTORY')
   const isBuiltinPnpm = id in builtins && selected.executable === 'pnpm'
   const executable =
     process.platform === 'win32' && isBuiltinPnpm ? 'pnpm.cmd' : selected.executable
+  // 只向命令传递必要的运行环境变量，避免继承 Runtime 的凭据及代理等敏感配置。
   const env: NodeJS.ProcessEnv = {
     PATH: process.env.PATH,
     Path: process.env.Path,
@@ -102,12 +140,13 @@ export async function runCheckedCommand(w: LocalWorkspace, id: string) {
     output: string
     truncated: boolean
   }>((resolve, reject) => {
+    // Windows 的内置 pnpm 通过系统 .cmd 启动器运行；其参数来自固定内置定义，不接受远程 Shell 文本。
     const child = spawn(executable, selected.args, {
       cwd: root,
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
-      // Windows 启动 pnpm.cmd 需要 shell；其参数全部由不可变内置预设提供。
       shell: process.platform === 'win32' && isBuiltinPnpm,
+      detached: process.platform !== 'win32',
       windowsHide: true,
     })
     let output = ''
@@ -126,16 +165,21 @@ export async function runCheckedCommand(w: LocalWorkspace, id: string) {
     child.stdout?.on('data', collect)
     child.stderr?.on('data', collect)
     let timedOut = false
+    let forceTimer: ReturnType<typeof setTimeout> | undefined
+    // 超时先发送 TERM，留出清理时间后再发送 KILL；子进程退出时清除两个计时器。
     const timer = setTimeout(() => {
       timedOut = true
-      child.kill()
-    }, 20000)
+      terminateProcessTree(child)
+      forceTimer = setTimeout(() => terminateProcessTree(child, true), 1500)
+    }, timeoutMs)
     child.on('error', (error) => {
       clearTimeout(timer)
+      if (forceTimer) clearTimeout(forceTimer)
       reject(error)
     })
     child.on('close', (code) => {
       clearTimeout(timer)
+      if (forceTimer) clearTimeout(forceTimer)
       resolve({
         command: id,
         exitCode: code,

@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { ToolInputs, operationRequiresWrite, type RpcRequest } from '@rcm/protocol'
-import type { LocalWorkspace } from './state'
-import { resolveSafe, isSensitive } from './path-safety'
+import { policyForOperation, type LocalWorkspace } from './state'
+import { resolveSafe, isSensitive, assertSafeRelativePath } from './path-safety'
 import {
   readChecked,
   writeChecked,
@@ -11,23 +11,107 @@ import {
   deleteChecked,
   sha,
 } from './file-operations'
-import { runCheckedCommand, listCommands } from './command-operations'
-import { gitStatus, gitDiff } from './git-operations'
+import { runCheckedCommand, listCommands, resolveCommand } from './command-operations'
+import { gitStatus, gitLog, gitDiff, gitAdd, gitCommit, gitApprovalContext } from './git-operations'
 
 /** 保持路径安全检查为工具执行器的公共入口，便于安全测试直接调用。 */
 export { resolveSafe } from './path-safety'
 
-/**
- * Runtime 工具调度。
+/** 在审批前执行参数与路径 Hard Deny 检查；该函数不产生文件系统副作用。 */
+export async function validateOperationSafety(w: LocalWorkspace, req: RpcRequest): Promise<void> {
+  switch (req.operation) {
+    case 'file.list': {
+      const p = ToolInputs['file.list'].parse(req.payload)
+      await resolveSafe(w, p.path)
+      return
+    }
+    case 'file.read': {
+      const p = ToolInputs['file.read'].parse(req.payload)
+      await resolveSafe(w, p.path)
+      return
+    }
+    case 'file.search': {
+      const p = ToolInputs['file.search'].parse(req.payload)
+      await resolveSafe(w, p.path)
+      return
+    }
+    case 'file.write': {
+      const p = ToolInputs['file.write'].parse(req.payload)
+      await resolveSafe(w, p.path, true)
+      return
+    }
+    case 'file.mkdir': {
+      const p = ToolInputs['file.mkdir'].parse(req.payload)
+      assertSafeRelativePath(p.path)
+      const parts = p.path.split('/')
+      if (!p.recursive) {
+        await resolveSafe(w, parts.slice(0, -1).join('/') || '.')
+      } else {
+        // 递归创建只允许从最近一个真实存在且已验证的父目录向下创建。
+        let parentFound = false
+        for (let length = parts.length - 1; length >= 0; length--) {
+          const parent = parts.slice(0, length).join('/') || '.'
+          try {
+            await resolveSafe(w, parent)
+            parentFound = true
+            break
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+          }
+        }
+        if (!parentFound) throw Error('HARD_DENY_INVALID_PARENT')
+      }
+      return
+    }
+    case 'file.move': {
+      const p = ToolInputs['file.move'].parse(req.payload)
+      await resolveSafe(w, p.from)
+      await resolveSafe(w, p.to, true)
+      return
+    }
+    case 'file.delete': {
+      const p = ToolInputs['file.delete'].parse(req.payload)
+      await resolveSafe(w, p.path)
+      return
+    }
+    case 'git.status':
+    case 'git.log':
+    case 'git.diff':
+      await resolveSafe(w, '.')
+      return
+    case 'git.add': {
+      const p = ToolInputs['git.add'].parse(req.payload)
+      await gitApprovalContext(w, req.operation, p)
+      return
+    }
+    case 'git.commit': {
+      const p = ToolInputs['git.commit'].parse(req.payload)
+      await gitApprovalContext(w, req.operation, p)
+      return
+    }
+    case 'command.list':
+      ToolInputs['command.list'].parse(req.payload)
+      return
+    case 'command.run': {
+      const p = ToolInputs['command.run'].parse(req.payload)
+      resolveCommand(w, p.command)
+      return
+    }
+  }
+}
+
+/** Runtime 工具调度。
  * 每次请求先校验工作区 ID、截止时间、读写授权及 Zod 参数，
- * 再调用文件/Git 领域执行器；只允许固定命令预设，拒绝任意 Shell。
+ * 再调用文件/Git/Command 各自的领域执行器；拒绝任意 Shell。
  */
-export async function execute(w: LocalWorkspace, req: RpcRequest) {
+export async function execute(w: LocalWorkspace, req: RpcRequest, approvalResourceHash?: string) {
   if (req.workspaceId !== w.id) throw Error('WORKSPACE_ID_MISMATCH')
   if (req.deadlineAt < Date.now()) throw Error('REQUEST_EXPIRED')
   if (!w.enabled) throw Error('WORKSPACE_DISABLED')
   if (!w.permissions.read || (operationRequiresWrite(req.operation) && !w.permissions.write))
     throw Error('PERMISSION_DENIED')
+  if (policyForOperation(w, req.operation) === 'deny') throw Error('POLICY_DENIED')
+  await validateOperationSafety(w, req)
   switch (req.operation) {
     case 'file.list': {
       const payload = ToolInputs['file.list'].parse(req.payload)
@@ -100,19 +184,32 @@ export async function execute(w: LocalWorkspace, req: RpcRequest) {
       const payload = ToolInputs['file.delete'].parse(req.payload)
       return deleteChecked(w, payload.path, payload.recursive, payload.expectedSha256)
     }
-    case 'command.list': {
-      ToolInputs['command.list'].parse(req.payload)
-      // 仅暴露命令名称和 ID；可执行程序及固定参数只在本地审批页面显示。
-      return listCommands(w).map(({ id, name }) => ({ id, name }))
+    case 'git.status':
+      ToolInputs['git.status'].parse(req.payload)
+      return gitStatus(w)
+    case 'git.log': {
+      const payload = ToolInputs['git.log'].parse(req.payload)
+      return gitLog(w, payload.limit)
     }
+    case 'git.diff':
+      ToolInputs['git.diff'].parse(req.payload)
+      return gitDiff(w)
+    case 'git.add': {
+      const payload = ToolInputs['git.add'].parse(req.payload)
+      return gitAdd(w, payload.paths, approvalResourceHash)
+    }
+    case 'git.commit': {
+      const payload = ToolInputs['git.commit'].parse(req.payload)
+      return gitCommit(w, payload.message, approvalResourceHash)
+    }
+    case 'command.list':
+      ToolInputs['command.list'].parse(req.payload)
+      // 只暴露本机登记命令的名称和 ID；可执行程序及固定参数仅在 Runtime 本地审批界面展示。
+      return listCommands(w).map(({ id, name }) => ({ id, name }))
     case 'command.run': {
       const payload = ToolInputs['command.run'].parse(req.payload)
       return runCheckedCommand(w, payload.command)
     }
-    case 'git.status':
-      return gitStatus(w)
-    case 'git.diff':
-      return gitDiff(w)
     default:
       throw Error('UNSUPPORTED_OPERATION')
   }

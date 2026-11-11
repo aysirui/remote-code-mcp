@@ -2,6 +2,16 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { pagePaths, router } from './router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  request,
+  type Device,
+  type Workspace,
+  type User as Account,
+  type OperationLog,
+  type SecurityAudit,
+  type OAuthGrant,
+  type OverviewStats,
+} from './api'
 
 /** 区分用户主动取消弹窗和真正的接口失败，避免悄悄吞掉错误。 */
 const reportError = (error: unknown) => {
@@ -9,49 +19,37 @@ const reportError = (error: unknown) => {
   ElMessage.error(error instanceof Error ? error.message : '操作失败')
 }
 
-import {
-  request,
-  type Device,
-  type Workspace,
-  type User as Account,
-  type AuditLog,
-  type OAuthGrant,
-  type OverviewStats,
-} from './api'
-
-/**
- * Console 页面业务模型（Composition API）。
- * 登录/管理员/设备/工作区行为集中在此，App.vue 只维护页面模板。
- */
+/** Console 页面业务模型（Composition API）。 */
 export function useConsole() {
-  const me = ref<Account | null>(null),
-    loading = ref(true)
+  const me = ref<Account | null>(null)
+  const loading = ref(true)
   const route = useRoute()
   const page = computed(() => String(route.name || 'overview'))
-  const email = ref(''),
-    password = ref(''),
-    registering = ref(false),
-    devices = ref<Device[]>([]),
-    workspaces = ref<Workspace[]>([]),
-    users = ref<Account[]>([]),
-    logs = ref<AuditLog[]>([]),
-    adminDevices = ref<Device[]>([]),
-    adminLogs = ref<AuditLog[]>([]),
-    stats = ref<OverviewStats>({ users: 0, devices: 0, online: 0, workspaces: 0 }),
-    grants = ref<OAuthGrant[]>([])
+  const email = ref('')
+  const password = ref('')
+  const registering = ref(false)
+  const devices = ref<Device[]>([])
+  const workspaces = ref<Workspace[]>([])
+  const users = ref<Account[]>([])
+  const logs = ref<OperationLog[]>([])
+  const adminDevices = ref<Device[]>([])
+  const adminLogs = ref<SecurityAudit[]>([])
+  const stats = ref<OverviewStats>({ users: 0, devices: 0, online: 0, workspaces: 0 })
+  const grants = ref<OAuthGrant[]>([])
   const pairingCode = ref('')
   const currentPassword = ref('')
   const newPassword = ref('')
   const newPasswordConfirm = ref('')
   const isAdmin = computed(() => ['admin', 'super_admin'].includes(me.value?.role || ''))
-  /** MCP 对外连接地址与本地 API 代理不同，提供真实的服务端域名供 AI 客户端使用。 */
+  /** MCP 对外连接地址与本地 API 代理不同，优先使用配置的服务端公开域名。 */
   const mcpUrl = computed(
     () => (import.meta.env.VITE_API_URL || window.location.origin).replace(/\/$/, '') + '/mcp',
   )
   const location = window.location
-  const q = new URLSearchParams(location.search),
-    returnTo = q.get('returnTo')
-  /** 加载当前登录用户；未登录时清空页面状态，首次改密账号不加载业务数据。 */
+  const q = new URLSearchParams(location.search)
+  const returnTo = q.get('returnTo')
+
+  /** 加载当前登录用户；未登录时清空用户状态，首次改密账号不加载业务数据。 */
   async function load() {
     try {
       me.value = await request<Account>('/api/auth/me')
@@ -62,14 +60,15 @@ export function useConsole() {
       loading.value = false
     }
   }
-  /** 并行获取当前用户的设备、工作区、审计和授权信息；管理员额外获取管理视图。 */
+
+  /** 操作记录和安全审计分别加载，避免将 MCP 工具调用混入安全审计。 */
   async function refresh() {
     if (!me.value || me.value.passwordChangeRequired) return
     try {
       ;[devices.value, workspaces.value, logs.value, grants.value] = await Promise.all([
         request<Device[]>('/api/me/devices'),
         request<Workspace[]>('/api/me/workspaces'),
-        request<AuditLog[]>('/api/me/audit-logs'),
+        request<OperationLog[]>('/api/me/operation-logs'),
         request<OAuthGrant[]>('/api/me/oauth-grants'),
       ])
       if (isAdmin.value) {
@@ -77,14 +76,15 @@ export function useConsole() {
           request<Account[]>('/api/admin/users'),
           request<OverviewStats>('/api/admin/overview'),
           request<Device[]>('/api/admin/devices'),
-          request<AuditLog[]>('/api/admin/audit-logs'),
+          request<SecurityAudit[]>('/api/admin/security-audits'),
         ])
       }
     } catch (error: unknown) {
       reportError(error)
     }
   }
-  /** 处理注册与登录；首次管理员登录只能进入修改临时密码流程。 */
+
+  /** 处理注册与登录；首次管理员登录必须先完成临时密码修改。 */
   async function signIn() {
     try {
       if (registering.value) {
@@ -120,7 +120,8 @@ export function useConsole() {
       reportError(error)
     }
   }
-  /** 校验两次输入后修改密码；后端撤销旧 Session，再引导重新登录。 */
+
+  /** 校验新密码确认值后提交修改；成功后要求用户使用新密码重新登录。 */
   async function changePassword() {
     if (!currentPassword.value || !newPassword.value) {
       ElMessage.warning('请输入旧密码和新密码')
@@ -146,13 +147,14 @@ export function useConsole() {
     }
   }
 
-  /** 注销当前 Session 并恢复访客页面。 */
+  /** 注销当前 Session 并返回 Console 入口。 */
   async function logout() {
     await request('/api/auth/logout', 'POST')
     me.value = null
     await router.push('/console')
   }
-  /** 修改设备显示名称，操作失败不改变页面状态。 */
+
+  /** 修改当前用户设备的显示名称；接口失败时保留原列表状态。 */
   async function rename(d: Device) {
     try {
       const { value } = await ElMessageBox.prompt('设备名称', '重命名设备', {
@@ -165,16 +167,14 @@ export function useConsole() {
       reportError(error)
     }
   }
-  /** 用户主动撤销自己的设备凭据。 */
+
+  /** 经用户二次确认后撤销设备凭据，并刷新设备与工作区授权状态。 */
   async function revoke(d: Device) {
     try {
       await ElMessageBox.confirm(
         `解绑后 ${d.name} 将立刻无法访问本平台，需重新配对。`,
         '确认解绑',
-        {
-          type: 'warning',
-          confirmButtonText: '解绑设备',
-        },
+        { type: 'warning', confirmButtonText: '解绑设备' },
       )
       await request(`/api/me/devices/${d.id}`, 'DELETE')
       await refresh()
@@ -182,7 +182,8 @@ export function useConsole() {
       reportError(error)
     }
   }
-  /** 确认 Runtime 设备配对码，绑定当前平台账号。 */
+
+  /** 提交一次性配对码，将 Runtime 设备绑定到当前平台账号。 */
   async function approve() {
     try {
       await request('/api/device/pairing/approve', 'POST', { code: pairingCode.value })
@@ -193,7 +194,8 @@ export function useConsole() {
       reportError(error)
     }
   }
-  /** 主动撤销 OAuth 客户端授权。 */
+
+  /** 撤销指定 OAuth 客户端的持久授权及其令牌。 */
   async function revokeGrant(g: OAuthGrant) {
     try {
       await ElMessageBox.confirm(
@@ -208,7 +210,8 @@ export function useConsole() {
       reportError(error)
     }
   }
-  /** 在云端撤销工作区启用状态；Runtime 重连不得自动恢复。 */
+
+  /** 仅缩小云端工作区授权；停用后 Runtime 重连不会自动恢复。 */
   async function disableWorkspace(w: Workspace) {
     try {
       await ElMessageBox.confirm('停用后，AI 无法继续访问该工作区。', '停用工作区', {
@@ -220,7 +223,31 @@ export function useConsole() {
       reportError(error)
     }
   }
-  /** 管理员撤销设备并要求重新配对。 */
+
+  /** 修改指定工作区的云端工具域策略；本地策略与 Hard Deny 始终独立生效。 */
+  async function setCloudPolicy(
+    w: Workspace,
+    domain: 'file' | 'git' | 'command',
+    policy: 'deny' | 'approval' | 'allow',
+  ) {
+    if (w.cloudPolicies[domain] === policy) return
+    try {
+      if (policy === 'allow') {
+        await ElMessageBox.confirm(
+          '云端将不再要求逐次审批此工具域，但 Runtime 本地策略、工作区读写权限和 Hard Deny 仍然生效。',
+          '确认云端完全允许',
+          { type: 'warning', confirmButtonText: '确认允许' },
+        )
+      }
+      await request('/api/me/workspaces/' + w.id, 'PATCH', { policies: { [domain]: policy } })
+      await refresh()
+      ElMessage.success('云端权限策略已更新')
+    } catch (error: unknown) {
+      reportError(error)
+    }
+  }
+
+  /** 管理员撤销指定设备的凭据并立即断开其连接。 */
   async function adminRevoke(d: Device) {
     try {
       await ElMessageBox.confirm('撤销后设备必须重新绑定。', '管理员撤销设备', { type: 'warning' })
@@ -230,7 +257,8 @@ export function useConsole() {
       reportError(error)
     }
   }
-  /** 管理员控制普通用户账户状态。 */
+
+  /** 管理员启用或禁用普通用户；服务端负责撤销其 Session 和 OAuth 凭据。 */
   async function setUserStatus(u: Account) {
     try {
       await ElMessageBox.confirm(
@@ -245,19 +273,23 @@ export function useConsole() {
       reportError(error)
     }
   }
-  /** 切换 Console 内部页面，并保持 URL 与当前视图一致。 */
+
+  /** 将页面标识映射到路由地址，保持侧栏导航与 URL 同步。 */
   function navigate(p: string) {
     const target = pagePaths[p]
     if (target) void router.push(target)
   }
-  /** 复制 MCP Server URL 供 AI 客户端连接。 */
+
+  /** 复制 MCP 对外服务地址，供受支持的 AI 客户端配置连接。 */
   function copyUrl() {
     navigator.clipboard.writeText(mcpUrl.value)
     ElMessage.success('MCP URL 已复制')
   }
+
   onMounted(() => {
     void load()
   })
+
   /** 页面标识到中文标题的映射，未匹配时统一使用默认标题。 */
   const pageTitles: Record<string, string> = {
     overview: '工作台概览',
@@ -273,7 +305,7 @@ export function useConsole() {
   }
   const title = computed(() => pageTitles[page.value] || '工作台')
 
-  /** 向 Vue 页面公开响应式状态和事件处理器，页面本身不承载接口逻辑。 */
+  // 各页面只消费这里公开的响应式状态与动作，接口请求集中在本组合式函数中。
   return {
     me,
     loading,
@@ -306,6 +338,7 @@ export function useConsole() {
     approve,
     revokeGrant,
     disableWorkspace,
+    setCloudPolicy,
     adminRevoke,
     setUserStatus,
     navigate,
@@ -313,5 +346,5 @@ export function useConsole() {
   }
 }
 
-/** 单例 Console 根组件向各路由页面提供的业务上下文类型。 */
+/** Console 根组件向各路由页面提供的响应式状态与业务动作。 */
 export type ConsoleContext = ReturnType<typeof useConsole>

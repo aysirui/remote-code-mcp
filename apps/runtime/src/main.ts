@@ -1,24 +1,41 @@
 import { WebSocket } from 'ws'
 import { runtimeVersion } from './version'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import {
   load,
   publicWs,
-  getWritePolicy,
-  requiresWriteApproval,
+  policyForOperation,
   activeServer,
   serverWorkspaces,
   type Config,
 } from './state'
-import { execute } from './executors'
-import { RpcRequestSchema, operationRequiresWrite, type RpcRequest } from '@rcm/protocol'
+import { execute, validateOperationSafety } from './executors'
+import {
+  RpcRequestSchema,
+  operationRequiresWrite,
+  operationRequiresLocalApproval,
+  type RpcRequest,
+} from '@rcm/protocol'
 import { WriteApprovalQueue } from './write-approvals'
 import { startLocalServer } from './local-server'
 import { LocalEvents } from './local-events'
 import { commandFingerprint, resolveCommand } from './command-operations'
+import { gitApprovalContext } from './git-operations'
 
 const port = Number(process.env.RUNTIME_PORT || 18787)
 const localKey = randomBytes(32).toString('base64url')
+/** 与 Runtime 本地审批时限保持一致，避免审批未结束时 Gateway 先行超时。 */
+const RPC_TIMEOUT_MS = 5 * 60 * 1000
+const approvalRequestHash = (req: RpcRequest) =>
+  createHash('sha256')
+    .update(
+      JSON.stringify({
+        workspaceId: req.workspaceId,
+        operation: req.operation,
+        payload: req.payload,
+      }),
+    )
+    .digest('hex')
 let config: Config
 let socket: WebSocket | undefined
 let online = false
@@ -26,9 +43,7 @@ let stopped = false
 let connectionError = ''
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined
 
-/**
- * 每个工作区独立决定自动写入或逐次审批；断线时取消全部待审批任务。
- */
+/** 审批上下文仅驻留 Runtime 内存；断线时取消全部待审批任务。 */
 const events = new LocalEvents()
 const approvals = new WriteApprovalQueue(() => events.publish('write-approvals'))
 
@@ -76,9 +91,9 @@ function connect() {
   connectionError = ''
   if (reconnectTimer) clearTimeout(reconnectTimer)
   reconnectTimer = undefined
+  // 设备 Bearer Token 只允许通过 TLS 传输；明文 HTTP 仅用于本机开发回环地址。
   const wsURL = new URL(server.gateway)
   if (!['http:', 'https:'].includes(wsURL.protocol)) return
-  // Never send the device Bearer token over an unencrypted remote connection.
   if (wsURL.protocol === 'http:' && !['127.0.0.1', 'localhost'].includes(wsURL.hostname)) {
     console.error('HTTPS gateway required for remote devices')
     return
@@ -112,53 +127,73 @@ function connect() {
       if (!workspace) throw Error('WORKSPACE_NOT_FOUND')
       const accessSnapshot = JSON.stringify(workspace)
       if (parsed.deadlineAt < Date.now()) throw Error('REQUEST_EXPIRED')
-      if (operationRequiresWrite(parsed.operation)) {
-        // 读写权限是任何写入策略的前置条件，未授权写入不进入审批队列。
-        if (!workspace.enabled || !workspace.permissions.read || !workspace.permissions.write)
-          throw Error('WORKSPACE_WRITE_NOT_ALLOWED')
+      // 工作区启用状态和读写权限是所有工具策略的前置条件，不能由 approval 或 allow 覆盖。
+      if (
+        !workspace.enabled ||
+        !workspace.permissions.read ||
+        (operationRequiresWrite(parsed.operation) && !workspace.permissions.write)
+      )
+        throw Error('PERMISSION_DENIED')
 
-        const policy = getWritePolicy(workspace)
-        // 将本次请求对应的命令定义绑定到审批前的快照，防止审批期间修改命令。
-        const approvedCommand =
-          parsed.operation === 'command.run'
-            ? commandFingerprint(
-                resolveCommand(
-                  workspace,
-                  String((parsed.payload as { command?: unknown }).command),
-                ),
-              )
-            : undefined
-        // 删除操作和项目命令永远要求本地逐次审批，不能被自动写入策略绕过。
-        const alwaysApprove =
-          parsed.operation === 'file.delete' || parsed.operation === 'command.run'
-        if (alwaysApprove || requiresWriteApproval(workspace)) {
-          // 逐次审批模式最多等待 30 秒；默认及旧版工作区保持这一安全行为。
-          const approved = await approvals.request(parsed, workspace)
-          if (!approved) throw Error('WRITE_APPROVAL_DENIED_OR_EXPIRED')
-        }
+      // 先计算本地策略；deny 直接拒绝，approval 必须等待本机用户确认。
+      const policy = policyForOperation(workspace, parsed.operation)
+      if (policy === 'deny') throw Error('POLICY_DENIED')
 
-        // 自动写入也不能绕过连接、时限、工作区和写入策略重新验证。
-        if (socket !== connection || connection.readyState !== WebSocket.OPEN)
-          throw Error('CONNECTION_REPLACED')
-        if (parsed.deadlineAt < Date.now()) throw Error('REQUEST_EXPIRED')
-        const currentWorkspace = serverWorkspaces(config, server).find(
-          (w) => w.id === parsed.workspaceId,
-        )
-        if (
-          JSON.stringify(currentWorkspace) !== accessSnapshot ||
-          !workspace.enabled ||
-          !workspace.permissions.read ||
-          !workspace.permissions.write ||
-          getWritePolicy(workspace) !== policy ||
-          (approvedCommand !== undefined &&
-            commandFingerprint(
+      // 权限检查通过后，Hard Deny 先于审批执行。
+      await validateOperationSafety(workspace, parsed)
+      // 在审批前固定命令定义的指纹，防止用户等待期间修改命令可执行程序或参数。
+      const approvedCommand =
+        parsed.operation === 'command.run'
+          ? commandFingerprint(
               resolveCommand(workspace, String((parsed.payload as { command?: unknown }).command)),
-            ) !== approvedCommand)
+            )
+          : undefined
+
+      let approvalResourceHash: string | undefined
+      // 删除、命令执行以及云端要求审批的操作都不能通过 allow 策略跳过本机确认。
+      // 审批队列最多等待五分钟；超时、拒绝或设备断线都会以拒绝结果结束请求。
+      if (
+        policy === 'approval' ||
+        parsed.approvalRequired ||
+        operationRequiresLocalApproval(parsed.operation)
+      ) {
+        const expectedApprovalHash = approvalRequestHash(parsed)
+        const decision = await approvals.request(parsed, workspace)
+        if (!decision.approved) throw Error('APPROVAL_DENIED_OR_EXPIRED')
+        approvalResourceHash = decision.resourceHash
+        if (
+          decision.requestHash !== expectedApprovalHash ||
+          approvalRequestHash(parsed) !== expectedApprovalHash
         )
-          throw Error('WORKSPACE_PERMISSION_REVOKED')
+          throw Error('APPROVAL_REQUEST_CHANGED')
+        if (decision.resourceHash !== undefined) {
+          const current = await gitApprovalContext(workspace, parsed.operation, parsed.payload)
+          if (current.fingerprint !== decision.resourceHash)
+            throw Error('GIT_STATE_CHANGED_DURING_APPROVAL')
+        }
       }
-      // 非写操作继续走 execute 内的工作区权限验证。
-      const data = await execute(workspace, parsed)
+
+      // 审批完成后重新验证连接、时限、工作区授权和策略，防止等待期间权限被撤销。
+      if (socket !== connection || connection.readyState !== WebSocket.OPEN)
+        throw Error('CONNECTION_REPLACED')
+      if (parsed.deadlineAt < Date.now()) throw Error('REQUEST_EXPIRED')
+      const currentWorkspace = serverWorkspaces(config, server).find(
+        (w) => w.id === parsed.workspaceId,
+      )
+      if (
+        JSON.stringify(currentWorkspace) !== accessSnapshot ||
+        !workspace.enabled ||
+        !workspace.permissions.read ||
+        (operationRequiresWrite(parsed.operation) && !workspace.permissions.write) ||
+        policyForOperation(workspace, parsed.operation) !== policy ||
+        (approvedCommand !== undefined &&
+          commandFingerprint(
+            resolveCommand(workspace, String((parsed.payload as { command?: unknown }).command)),
+          ) !== approvedCommand)
+      )
+        throw Error('WORKSPACE_PERMISSION_REVOKED')
+      // execute 内部再次校验工作区权限、策略、参数和路径，形成独立的执行层防线。
+      const data = await execute(workspace, parsed, approvalResourceHash)
       if (connection.readyState === WebSocket.OPEN)
         connection.send(JSON.stringify({ kind: 'response', id: parsed.id, success: true, data }))
     } catch (e: unknown) {

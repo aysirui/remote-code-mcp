@@ -4,8 +4,7 @@ import axios, { AxiosError, type Method } from 'axios'
 export const base = import.meta.env.DEV ? '' : import.meta.env.VITE_API_URL || ''
 
 /**
- * 唯一的业务 HTTP 客户端。
- * Cookie 负责 Session，CSRF Token 只放入非安全请求头；
+ * 唯一的业务 HTTP 客户端：Cookie 负责 Session，CSRF Token 只放入非安全请求头。
  * 不允许在日志或异常信息中输出账号密码及原始请求体。
  */
 const http = axios.create({
@@ -35,7 +34,7 @@ async function getCsrf(): Promise<string> {
   return csrfLoading
 }
 
-/** 将 Axios 的错误转换成 UI 可展示的信息，不暴露请求配置。 */
+/** 将 Axios 错误转换成 UI 可展示的信息，不暴露请求配置。 */
 function toError(error: unknown): Error {
   if (!axios.isAxiosError(error)) return error instanceof Error ? error : Error('请求失败')
   const response = (error as AxiosError<{ message?: string | string[]; error?: string }>).response
@@ -43,10 +42,7 @@ function toError(error: unknown): Error {
   return Error(Array.isArray(message) ? message.join('; ') : message || '网络请求失败')
 }
 
-/**
- * 统一的业务请求入口；保留原有 API 签名以避免改动页面行为。
- * 所有需要修改服务端状态的请求必须先取得 CSRF Token。
- */
+/** 统一的业务请求入口；所有会修改服务端状态的请求必须先取得 CSRF Token。 */
 export async function request<T = unknown>(
   url: string,
   method: Method = 'GET',
@@ -75,19 +71,27 @@ export type Device = {
   runtimeVersion?: string
 }
 
-/** 云端计算后的工作区有效权限，不包含本地绝对路径。 */
+/** 云端计算后的工作区有效权限；不包含本地路径或目录名。 */
 export type Workspace = {
   id: string
   deviceId: string
   name: string
-  /** 本地目录末级名称；不包含绝对路径。 */
-  directoryName?: string | null
   enabled: boolean
   read: boolean
   write: boolean
+  localPolicies: {
+    file: 'deny' | 'approval' | 'allow'
+    git: 'deny' | 'approval' | 'allow'
+    command: 'deny' | 'approval' | 'allow'
+  }
+  cloudPolicies: {
+    file: 'deny' | 'approval' | 'allow'
+    git: 'deny' | 'approval' | 'allow'
+    command: 'deny' | 'approval' | 'allow'
+  }
 }
 
-/** 登录用户资料；初始管理员首次登录必须修改临时密码。 */
+/** 登录用户资料；首次管理员登录可能要求先修改临时密码。 */
 export type User = {
   id: string
   email: string
@@ -96,13 +100,31 @@ export type User = {
   passwordChangeRequired?: boolean
 }
 
-/** 管理台审计记录，工作区与设备信息可能为空。 */
-export type AuditLog = {
+/** MCP 操作日志仅含必要元数据，不含路径、参数、内容、输出或对话信息。 */
+export type OperationLog = {
   id: string
-  operation: string
-  status: string
-  workspaceId?: string | null
+  operationId: string
+  userId: string
   deviceId?: string | null
+  workspaceId: string
+  clientId: string
+  toolName: string
+  operationType: 'file' | 'git' | 'command'
+  status: 'success' | 'failed'
+  durationMs: number
+  errorCode?: string | null
+  createdAt: string
+}
+
+/** 安全审计只记录管理动作，不记录 AI 工具调用详情。 */
+export type SecurityAudit = {
+  id: string
+  actorType: 'user' | 'admin'
+  actorId: string
+  eventType: string
+  resourceType?: string | null
+  resourceId?: string | null
+  result: 'success' | 'failed'
   createdAt: string
 }
 

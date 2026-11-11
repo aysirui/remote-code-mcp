@@ -9,7 +9,8 @@ import { canonicalResource } from './oauth-utils'
 @Injectable()
 export class OAuthService {
   constructor(private store: Store) {}
-  /** 根据 Token 查找当前允许访问 MCP 的有效用户。 */
+
+  /** 验证 MCP Token 并返回用户与当前授权客户端 ID。 */
   async token(raw: string) {
     const t = await this.store.one(
       this.store.db
@@ -25,7 +26,7 @@ export class OAuthService {
       !t.scope.split(' ').includes('mcp:tools')
     )
       throw new UnauthorizedException('Invalid MCP token')
-    // 新签发的访问令牌必须仍属于有效授权；兼容迁移前的历史 Token。
+    // 新版 Token 必须关联仍有效的持久授权；grantId 为空仅兼容历史迁移前签发的 Token。
     if (t.grantId) {
       const grant = await this.store.one(
         this.store.db
@@ -41,8 +42,9 @@ export class OAuthService {
       this.store.db.select().from(S.users).where(eq(S.users.id, t.userId)).limit(1),
     )
     if (!u || u.status !== 'active') throw new UnauthorizedException()
-    return u
+    return { ...u, clientId: t.clientId }
   }
+
   /** 查询动态注册的客户端元数据，供授权流程校验回调 URI。 */
   async client(id: string) {
     return this.store.one(

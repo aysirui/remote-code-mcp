@@ -1,12 +1,14 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { ToolInputs, type RpcRequest } from '@rcm/protocol'
 import type { LocalWorkspace } from './state'
 import { resolveCommand } from './command-operations'
+import { gitApprovalContext } from './git-operations'
 
-/** 本地管理员页面可展示的待写入任务摘要，不包含完整的文件内容。 */
+/** 本地审批页面可展示的待处理任务；详情只驻留 Runtime 内存，不上传或落库。 */
 export interface WriteApprovalInfo {
   id: string
   workspaceId: string
+  /** 审批卡片使用的工作区显示名；审批详情与该字段不上传，云端只接收独立的工作区公开名称。 */
   workspaceName: string
   path: string
   operation: string
@@ -14,25 +16,31 @@ export interface WriteApprovalInfo {
   preview: string
   truncated: boolean
   createdAt: number
+  expiresAt: number
 }
 
-/** 正在等待用户决定的请求；完整请求仍保留在 WebSocket 调用流程内。 */
+interface ApprovalDecision {
+  approved: boolean
+  requestHash: string
+  resourceHash?: string
+}
+
+/** 队列内部状态：保存一次性参数指纹和 Promise 回调，不会序列化到磁盘或发送到 Gateway。 */
 interface PendingApproval extends WriteApprovalInfo {
-  resolve: (approved: boolean) => void
+  requestHash: string
+  resourceHash?: string
+  resolve: (decision: ApprovalDecision) => void
   timeout: ReturnType<typeof setTimeout>
 }
 
-/**
- * 本地文件写入审批队列。
- * - 每个请求最多等待 30 秒；
- * - 队列满时拒绝请求，避免远程滥用造成内存积压；
- * - 断线、移除工作区时必须取消相应审批；
- * - 审批通过后，执行层仍须重新确认工作区权限和文件 Hash。
- */
+/** 单次审批最多等待五分钟；审批上下文只在本机内存短暂展示。 */
+export const WRITE_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
+
+/** 审批上下文不传到 Gateway，不写入数据库；断线、撤销或超时后立即清理。 */
 export class WriteApprovalQueue {
   private readonly pending = new Map<string, PendingApproval>()
 
-  /** 由 Runtime 注入事件通知器，审批队列变化时推送给本地管理页面。 */
+  /** 由 Runtime 注入本地事件通知器；队列变化时通知审批页面刷新。 */
   constructor(private readonly notify: () => void = () => {}) {}
 
   /** 获取本地 UI 可用的待处理任务，避免泄露 Promise 处理器。 */
@@ -48,6 +56,7 @@ export class WriteApprovalQueue {
         preview,
         truncated,
         createdAt,
+        expiresAt,
       }) => ({
         id,
         workspaceId,
@@ -58,20 +67,24 @@ export class WriteApprovalQueue {
         preview,
         truncated,
         createdAt,
+        expiresAt,
       }),
     )
   }
 
-  /** 远程写入请求进入审批队列，超时自动拒绝。 */
-  request(req: RpcRequest, workspace: LocalWorkspace): Promise<boolean> {
+  /** 远程写入请求进入本地审批队列，超时自动拒绝。 */
+  async request(req: RpcRequest, workspace: LocalWorkspace): Promise<ApprovalDecision> {
     if (this.pending.size >= 20) throw Error('TOO_MANY_PENDING_WRITE_APPROVALS')
     let pathLabel = ''
     let preview = ''
     let bytes = 0
+    let previewTruncated = false
+    let resourceHash: string | undefined
     if (req.operation === 'file.write') {
       const payload = ToolInputs['file.write'].parse(req.payload)
       pathLabel = payload.path
       preview = payload.content.slice(0, 2000)
+      previewTruncated = payload.content.length > 2000
       bytes = Buffer.byteLength(payload.content, 'utf8')
     } else if (req.operation === 'file.mkdir') {
       const payload = ToolInputs['file.mkdir'].parse(req.payload)
@@ -92,19 +105,63 @@ export class WriteApprovalQueue {
       preview =
         '程序：' +
         selected.executable +
-        '\\n参数：' +
+        '\n参数：' +
         JSON.stringify(selected.args) +
-        '\\n工作区：' +
+        '\n工作区：' +
         workspace.name +
-        '\\n执行此程序可能访问工作区外的数据，请只批准可信命令。'
+        '\n执行此程序可能访问工作区外的数据，请只批准可信命令。'
+    } else if (req.operation === 'file.list') {
+      const payload = ToolInputs['file.list'].parse(req.payload)
+      pathLabel = payload.path
+      preview = '读取目录清单'
+    } else if (req.operation === 'file.read') {
+      const payload = ToolInputs['file.read'].parse(req.payload)
+      pathLabel = payload.path
+      preview = '读取文件内容'
+    } else if (req.operation === 'file.search') {
+      const payload = ToolInputs['file.search'].parse(req.payload)
+      pathLabel = payload.path
+      preview = '在工作区内搜索文本：' + payload.query
+    } else if (req.operation === 'git.status') {
+      pathLabel = 'Git 工作区'
+      preview = '读取 Git 工作区状态'
+    } else if (req.operation === 'git.log') {
+      const payload = ToolInputs['git.log'].parse(req.payload)
+      pathLabel = 'Git 提交历史'
+      preview = '读取最近 ' + payload.limit + ' 条提交记录'
+    } else if (req.operation === 'git.diff') {
+      pathLabel = 'Git 工作区 Diff'
+      preview = '读取当前未暂存变更差异'
+    } else if (req.operation === 'git.add' || req.operation === 'git.commit') {
+      const context = await gitApprovalContext(workspace, req.operation, req.payload)
+      pathLabel = context.path
+      preview = context.preview
+      resourceHash = context.fingerprint
+    } else if (req.operation === 'command.list') {
+      ToolInputs['command.list'].parse(req.payload)
+      pathLabel = '本地命令注册表'
+      preview = '列出已登记的固定命令'
     } else throw Error('UNSUPPORTED_APPROVAL_OPERATION')
+
     const id = randomUUID()
+    // 绑定审批时的工作区、操作类型和完整参数；Hash 只保存在本机内存。
+    const requestHash = createHash('sha256')
+      .update(
+        JSON.stringify({
+          workspaceId: req.workspaceId,
+          operation: req.operation,
+          payload: req.payload,
+        }),
+      )
+      .digest('hex')
+    const createdAt = Date.now()
+    const expiresAt = createdAt + WRITE_APPROVAL_TIMEOUT_MS
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id)
         this.notify()
-        resolve(false)
-      }, 30000)
+        resolve({ approved: false, requestHash })
+      }, WRITE_APPROVAL_TIMEOUT_MS)
       this.pending.set(id, {
         id,
         workspaceId: workspace.id,
@@ -113,8 +170,11 @@ export class WriteApprovalQueue {
         operation: req.operation,
         bytes,
         preview,
-        truncated: preview.length > 2000,
-        createdAt: Date.now(),
+        truncated: previewTruncated,
+        requestHash,
+        resourceHash,
+        createdAt,
+        expiresAt,
         resolve,
         timeout,
       })
@@ -129,7 +189,11 @@ export class WriteApprovalQueue {
     this.pending.delete(id)
     clearTimeout(approval.timeout)
     this.notify()
-    approval.resolve(approved)
+    approval.resolve({
+      approved,
+      requestHash: approval.requestHash,
+      resourceHash: approval.resourceHash,
+    })
     return true
   }
 

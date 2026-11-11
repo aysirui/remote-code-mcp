@@ -25,7 +25,7 @@ const {
   pickDir,
   addWorkspace,
   toggleWrite,
-  changeWritePolicy,
+  changePolicy,
   commandWorkspace,
   commandId,
   commandName,
@@ -65,7 +65,8 @@ function onWorkspaceAction(action: string, workspace: Workspace) {
       <el-button type="primary" :icon="Plus" @click="showAdd = true">添加项目</el-button>
     </header>
     <p class="workspace-description">
-      管理当前服务器对本地项目的访问权限。各服务器的授权与写入策略相互独立。
+      管理当前服务器对本地项目的访问权限。File、Git、Command 策略分别配置，各服务器之间相互独立。Git
+      暂存和提交始终需要本机逐次确认。
     </p>
 
     <el-empty v-if="!workspaces.length" description="尚未添加本地工作区" />
@@ -136,22 +137,28 @@ function onWorkspaceAction(action: string, workspace: Workspace) {
           </el-dropdown>
         </div>
         <div class="workspace-card-footer">
-          <div class="workspace-policy">
-            <span class="workspace-field-label">写入策略</span>
-            <el-select
-              v-if="w.authorized && w.enabled && w.permissions.write"
-              :model-value="w.writePolicy || 'approval'"
-              aria-label="工作区写入策略"
-              size="default"
-              class="workspace-policy-select"
-              @change="(policy: 'auto' | 'approval') => changeWritePolicy(w, policy)"
+          <div class="workspace-policy workspace-policy-grid">
+            <div
+              v-for="domain in ['file', 'git', 'command'] as const"
+              :key="domain"
+              class="policy-item"
             >
-              <el-option label="逐次审批" value="approval" />
-              <el-option label="自动写入" value="auto" />
-            </el-select>
-            <span v-else class="workspace-policy-disabled">{{
-              w.authorized && !w.enabled ? '工作区已停用' : '未开启写入'
-            }}</span>
+              <span class="workspace-field-label">{{
+                { file: 'File', git: 'Git', command: 'Command' }[domain]
+              }}</span>
+              <el-select
+                :model-value="w.policies[domain]"
+                :disabled="!w.authorized || !w.enabled"
+                :aria-label="domain + ' 权限策略'"
+                size="small"
+                class="workspace-policy-select"
+                @change="(policy: 'deny' | 'approval' | 'allow') => changePolicy(w, domain, policy)"
+              >
+                <el-option label="禁止" value="deny" />
+                <el-option label="审批执行" value="approval" />
+                <el-option label="完全允许" value="allow" />
+              </el-select>
+            </div>
           </div>
           <div class="workspace-card-actions">
             <el-button
@@ -197,7 +204,7 @@ function onWorkspaceAction(action: string, workspace: Workspace) {
     @close="commandWorkspace = null"
   >
     <el-alert
-      title="命令定义供本机目录共用，仅已获读写授权的服务器可请求执行，每次仍需本地确认。"
+      title="命令定义供本机目录共用；是否逐次审批由 Command 权限策略决定，Hard Deny 始终生效。"
       type="warning"
       :closable="false"
       style="margin-bottom: 18px"
@@ -210,7 +217,7 @@ function onWorkspaceAction(action: string, workspace: Workspace) {
         <el-input v-model="commandName" placeholder="检查项目代码" maxlength="80" />
       </el-form-item>
       <el-form-item label="可执行程序">
-        <el-input v-model="commandExecutable" placeholder="例如 node、git 或绝对路径" />
+        <el-input v-model="commandExecutable" placeholder="例如 pnpm、tsc 或绝对路径" />
       </el-form-item>
       <el-form-item label="固定参数（JSON 字符串数组）">
         <el-input v-model="commandArgs" type="textarea" :rows="3" placeholder='["--version"]' />
@@ -393,6 +400,17 @@ function onWorkspaceAction(action: string, workspace: Workspace) {
   padding: 12px 20px;
   background: #fafbfe;
   border-top: 1px solid #edf0f5;
+}
+.workspace-policy-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.policy-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
 }
 .workspace-policy {
   display: flex;

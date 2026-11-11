@@ -367,29 +367,40 @@ export function startLocalServer(options: LocalServerOptions) {
       const server = requireActiveServer(req.body.serverId)
       const workspace = config.workspaces.find((item) => item.id === req.params.id)
       if (!workspace) throw Error('工作区不存在')
-      const policy = req.body.writePolicy
-      if (policy !== undefined && policy !== 'approval' && policy !== 'auto')
-        throw Error('写入策略无效')
+      const policyUpdates = req.body.policies
+      if (policyUpdates !== undefined) {
+        if (!policyUpdates || typeof policyUpdates !== 'object' || Array.isArray(policyUpdates))
+          throw Error('访问策略无效')
+        for (const domain of ['file', 'git', 'command'] as const) {
+          const value = policyUpdates[domain]
+          if (
+            value !== undefined &&
+            (typeof value !== 'string' || !['deny', 'approval', 'allow'].includes(value))
+          )
+            throw Error(domain + ' 策略无效')
+        }
+      }
       if (req.body.authorized !== undefined && typeof req.body.authorized !== 'boolean')
         throw Error('授权状态无效')
       let grant = server.workspaces.find((item) => item.workspaceId === workspace.id)
       if (req.body.authorized === true) grant = authorizeWorkspace(server, workspace.id)
       if (!grant || (!grant.authorized && req.body.authorized !== false))
         throw Error('请先授权此服务器访问工作区')
-      const next = { ...grant, permissions: { ...grant.permissions } }
+      const next = {
+        ...grant,
+        permissions: { ...grant.permissions },
+        policies: { ...grant.policies },
+      }
       if (req.body.authorized === false) next.authorized = false
       if (typeof req.body.enabled === 'boolean') next.enabled = req.body.enabled
       if (typeof req.body.write === 'boolean') next.permissions.write = req.body.write
-      if (
-        policy === 'auto' &&
-        (!next.authorized || !next.enabled || !next.permissions.read || !next.permissions.write)
-      )
-        throw Error('请先开启工作区的读写权限')
-      if (policy !== undefined) next.writePolicy = policy
-      if (!next.authorized || !next.permissions.write) {
-        next.permissions.write = false
-        next.writePolicy = 'approval'
+      if (policyUpdates) {
+        for (const domain of ['file', 'git', 'command'] as const) {
+          const value = policyUpdates[domain]
+          if (value !== undefined) next.policies[domain] = value
+        }
       }
+      if (!next.authorized) next.policies = { file: 'deny', git: 'deny', command: 'deny' }
       server.workspaces[server.workspaces.indexOf(grant)] = next
       approvals.rejectWorkspace(grant.id)
       await save(config)

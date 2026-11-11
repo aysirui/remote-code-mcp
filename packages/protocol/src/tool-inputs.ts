@@ -33,11 +33,18 @@ export const ToolInputs = {
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
   }),
+  'git.status': z.object({}),
+  'git.log': z.object({ limit: z.number().int().min(1).max(50).default(10) }),
+  'git.diff': z.object({}),
+  'git.add': z.object({
+    paths: z.array(z.string().min(1).max(500)).min(1).max(50),
+  }),
+  'git.commit': z.object({
+    message: z.string().trim().min(1).max(500),
+  }),
   'command.list': z.object({}),
   'command.run': z.object({
     /** AI 只能传命令 ID，不能携带任意 executable、args 或 Shell 文本。 */
     command: z.string().regex(/^[a-z][a-z0-9_-]{1,39}$/),
   }),
-  'git.status': z.object({}),
-  'git.diff': z.object({}),
 }

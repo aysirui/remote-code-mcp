@@ -1,26 +1,29 @@
 import { z } from 'zod'
 
-/** Runtime 本地可读写权限；云端再与自己的授权策略取交集。 */
+/** 每个工具域的独立访问策略。deny 永远拒绝；approval 要求本地用户确认；allow 免逐次确认。 */
+export const AccessPolicySchema = z.enum(['deny', 'approval', 'allow'])
+export const WorkspacePoliciesSchema = z.object({
+  file: AccessPolicySchema,
+  git: AccessPolicySchema,
+  command: AccessPolicySchema,
+})
+
+/** Runtime 本地可读写权限；云端策略与本地策略必须同时满足。 */
 export const PermissionSchema = z.object({
   read: z.boolean(),
   write: z.boolean(),
 })
 
-/**
- * 设备同步到 Gateway 的工作区公开信息。
- * 故意不包含本地绝对路径，避免云端存储开发者的文件系统结构。
- */
+/** 设备同步到 Gateway 的最小工作区公开信息，不包含任何本地路径或项目结构。 */
 export const WorkspacePublicSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1).max(128),
-  /** 仅同步目录末级名称，不泄露本地绝对路径。 */
-  directoryName: z.string().min(1).max(255).optional(),
   permissions: PermissionSchema,
+  policies: WorkspacePoliciesSchema,
   enabled: z.boolean(),
 })
 
-/** 工作区授权状态。 */
+export type AccessPolicy = z.infer<typeof AccessPolicySchema>
+export type WorkspacePolicies = z.infer<typeof WorkspacePoliciesSchema>
 export type Permissions = z.infer<typeof PermissionSchema>
-
-/** 允许通过 WSS 同步的工作区摘要。 */
 export type WorkspacePublic = z.infer<typeof WorkspacePublicSchema>

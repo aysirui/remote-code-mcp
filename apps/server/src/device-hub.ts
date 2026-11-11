@@ -9,16 +9,19 @@ import { WebSocketServer, WebSocket } from 'ws'
 import type { Server as HttpServer, IncomingMessage } from 'node:http'
 import { URL } from 'node:url'
 import type { RpcRequest } from '@rcm/protocol'
-import { RpcResponseSchema, HelloSchema, operationRequiresWrite } from '@rcm/protocol'
+import {
+  RpcResponseSchema,
+  HelloSchema,
+  operationRequiresWrite,
+  operationRequiresLocalApproval,
+} from '@rcm/protocol'
 import * as S from './schema'
 import { Store } from './store'
 import { uid, hash } from './security'
 
-/**
- * 设备通道与 RPC 路由服务。
- * 云端先验证用户、设备、工作区及有效权限，Runtime 再执行本地授权检查。
- * Pending RPC 绑定具体 WebSocket，旧连接不得影响新连接。
- */
+const RPC_TIMEOUT_MS = 5 * 60 * 1000
+
+/** 设备通道与 RPC 路由服务；不持久化任何工具参数或执行结果正文。 */
 @Injectable()
 export class DeviceHub {
   private sockets = new Map<string, WebSocket>()
@@ -32,11 +35,14 @@ export class DeviceHub {
       connection: WebSocket
     }
   >()
+
   constructor(public store: Store) {}
+
   /** 检查指定设备是否保持有效 WebSocket 连接。 */
   isOnline(id: string) {
     return this.sockets.get(id)?.readyState === WebSocket.OPEN
   }
+
   /** 为 HTTP Server 挂载设备 WSS 握手认证，验证设备凭据和账号状态。 */
   attach(http: HttpServer) {
     const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 })
@@ -54,7 +60,7 @@ export class DeviceHub {
           this.store.db
             .select()
             .from(S.deviceTokens)
-            .where(and(eq(S.deviceTokens.tokenHash, hash(token))))
+            .where(eq(S.deviceTokens.tokenHash, hash(token)))
             .limit(1),
         )
         if (!t || t.revokedAt) throw Error('Credential revoked')
@@ -73,6 +79,7 @@ export class DeviceHub {
       }
     })
   }
+
   /** 接受设备连接并管理心跳、工作区同步及 RPC 响应关联。 */
   private accept(ws: WebSocket, deviceId: string) {
     this.sockets.get(deviceId)?.close(4001, 'Replaced')
@@ -90,7 +97,7 @@ export class DeviceHub {
       ws.ping()
     }, 25000)
     ws.on('message', async (raw) => {
-      // Ignore messages from superseded connections, including stale "hello" updates.
+      // 旧 WebSocket 即使迟到消息，也不得覆盖当前设备连接的状态或 RPC 结果。
       if (this.sockets.get(deviceId) !== ws) return
       try {
         const m = JSON.parse(raw.toString())
@@ -117,28 +124,33 @@ export class DeviceHub {
           }
           for (const w of h.workspaces) {
             const old = existing.find((x) => x.id === w.id)
-            if (old)
+            if (old) {
               await this.store.db
                 .update(S.workspaces)
                 .set({
                   name: w.name,
-                  directoryName: w.directoryName ?? null,
                   localRead: w.permissions.read,
                   localWrite: w.permissions.write,
                   localEnabled: w.enabled,
+                  localFilePolicy: w.policies.file,
+                  localGitPolicy: w.policies.git,
+                  localCommandPolicy: w.policies.command,
                 })
                 .where(and(eq(S.workspaces.id, w.id), eq(S.workspaces.deviceId, deviceId)))
-            else
+            } else {
               await this.store.db.insert(S.workspaces).values({
                 id: w.id,
                 deviceId,
                 userId: d.userId,
                 name: w.name,
-                directoryName: w.directoryName ?? null,
                 localRead: w.permissions.read,
                 localWrite: w.permissions.write,
                 localEnabled: w.enabled,
+                localFilePolicy: w.policies.file,
+                localGitPolicy: w.policies.git,
+                localCommandPolicy: w.policies.command,
               })
+            }
           }
           return
         }
@@ -148,14 +160,12 @@ export class DeviceHub {
           if (!p || p.deviceId !== deviceId || p.connection !== ws) return
           clearTimeout(p.timer)
           this.pending.delete(r.id)
-          if (r.success) {
-            p.resolve(r.data)
-          } else {
-            p.reject(new Error(r.error?.code + ': ' + r.error?.message))
-          }
+          if (r.success) p.resolve(r.data)
+          else p.reject(new Error(r.error?.code || 'EXECUTION_FAILED'))
         }
       } catch (e) {
-        console.warn('Invalid agent message', String(e))
+        // 不输出 Runtime 异常正文，避免路径或参数进入服务端日志。
+        console.warn('Invalid agent message', e instanceof Error ? e.name : 'UnknownError')
       }
     })
     ws.on('close', () => {
@@ -170,17 +180,28 @@ export class DeviceHub {
       }
     })
   }
+
   /** 由管理员或用户主动撤销设备连接。 */
   disconnect(deviceId: string) {
     this.sockets.get(deviceId)?.close(4003, 'Device revoked')
   }
-  /** 执行远程 RPC 前检查用户/设备/工作区的权限交集，并记录审计日志。 */
+
+  /**
+   * 执行远程 RPC，并只写入操作元数据。
+   * payload 只用于转发到 Runtime，绝不传给持久化日志方法。
+   */
   async execute(
     userId: string,
+    clientId: string,
     workspaceId: string,
     operation: RpcRequest['operation'],
     payload: unknown,
   ) {
+    const operationId = uid()
+    const startedAt = Date.now()
+    let deviceId: string | undefined
+    let status: 'success' | 'failed' = 'failed'
+    let errorCode: string | undefined
     try {
       const ws = await this.store.one(
         this.store.db
@@ -203,6 +224,13 @@ export class DeviceHub {
         (operationRequiresWrite(operation) && (!ws.localWrite || !ws.cloudWrite))
       )
         throw new ForbiddenException('PERMISSION_DENIED')
+      const cloudPolicy = operation.startsWith('file.')
+        ? ws.cloudFilePolicy
+        : operation.startsWith('git.')
+          ? ws.cloudGitPolicy
+          : ws.cloudCommandPolicy
+      if (cloudPolicy !== 'allow' && cloudPolicy !== 'approval')
+        throw new ForbiddenException('POLICY_DENIED')
       const device = await this.store.one(
         this.store.db
           .select()
@@ -211,42 +239,69 @@ export class DeviceHub {
           .limit(1),
       )
       if (!device || device.status !== 'active') throw new ForbiddenException('DEVICE_REVOKED')
+      deviceId = device.id
       const socket = this.sockets.get(device.id)
       if (!socket || socket.readyState !== WebSocket.OPEN)
         throw new BadRequestException('DEVICE_OFFLINE')
-      const id = uid()
       const request: RpcRequest = {
         kind: 'request',
         version: 1,
-        id,
+        id: operationId,
         workspaceId,
         operation,
         payload,
-        deadlineAt: Date.now() + 60000,
+        approvalRequired: cloudPolicy === 'approval' || operationRequiresLocalApproval(operation),
+        deadlineAt: Date.now() + RPC_TIMEOUT_MS,
       }
       const result = await new Promise<unknown>((resolve, reject) => {
         const timer = setTimeout(() => {
-          this.pending.delete(id)
+          this.pending.delete(operationId)
           reject(new Error('EXECUTION_TIMEOUT'))
-        }, 60000)
-        this.pending.set(id, { resolve, reject, timer, deviceId: device.id, connection: socket })
+        }, RPC_TIMEOUT_MS)
+        this.pending.set(operationId, {
+          resolve,
+          reject,
+          timer,
+          deviceId: device.id,
+          connection: socket,
+        })
         socket.send(JSON.stringify(request), (error) => {
           if (error) {
             clearTimeout(timer)
-            this.pending.delete(id)
-            reject(error)
+            this.pending.delete(operationId)
+            reject(new Error('DEVICE_SEND_FAILED'))
           }
         })
       })
-      void this.store
-        .audit(operation, 'success', userId, device.id, workspaceId)
-        .catch(console.error)
+      status = 'success'
       return result
     } catch (error) {
-      void this.store
-        .audit(operation, 'failed', userId, undefined, workspaceId)
-        .catch(console.error)
+      const candidate = error instanceof Error ? error.message : ''
+      errorCode = /^[A-Z][A-Z0-9_]{1,63}$/.test(candidate) ? candidate : 'EXECUTION_FAILED'
       throw error
+    } finally {
+      const prefix = operation.split('.')[0]
+      const operationType = prefix === 'file' || prefix === 'git' ? prefix : 'command'
+      // 在响应返回前等待一次元数据写入尝试；日志故障只记录异常类型，不改变工具执行结果。
+      try {
+        await this.store.logOperation({
+          operationId,
+          userId,
+          deviceId,
+          workspaceId,
+          clientId,
+          toolName: operation.replace('.', '_'),
+          operationType,
+          status,
+          durationMs: Date.now() - startedAt,
+          errorCode,
+        })
+      } catch (logError: unknown) {
+        console.error(
+          'Operation metadata write failed',
+          logError instanceof Error ? logError.name : 'UnknownError',
+        )
+      }
     }
   }
 }

@@ -4,6 +4,7 @@ import {
   text,
   timestamp,
   boolean,
+  int,
   index,
   uniqueIndex,
 } from 'drizzle-orm/mysql-core'
@@ -65,7 +66,10 @@ export const deviceTokens = mysqlTable(
   },
   (t) => [index('device_token_idx').on(t.deviceId)],
 )
-/** 工作区本地授权与云端授权独立保存，执行权限取二者交集。 */
+/**
+ * 工作区云端授权元数据。
+ * 仅保存用户自定义名称和稳定 ID，不保存本地路径、目录名或项目结构。
+ */
 export const workspaces = mysqlTable(
   'workspaces',
   {
@@ -73,11 +77,20 @@ export const workspaces = mysqlTable(
     deviceId: varchar('device_id', { length: 48 }).notNull(),
     userId: varchar('user_id', { length: 48 }).notNull(),
     name: varchar('name', { length: 128 }).notNull(),
-    directoryName: varchar('directory_name', { length: 255 }),
     localRead: boolean('local_read').notNull().default(true),
     localWrite: boolean('local_write').notNull().default(false),
     cloudRead: boolean('cloud_read').notNull().default(true),
     cloudWrite: boolean('cloud_write').notNull().default(true),
+    localFilePolicy: varchar('local_file_policy', { length: 16 }).notNull().default('approval'),
+    localGitPolicy: varchar('local_git_policy', { length: 16 }).notNull().default('allow'),
+    localCommandPolicy: varchar('local_command_policy', { length: 16 })
+      .notNull()
+      .default('approval'),
+    cloudFilePolicy: varchar('cloud_file_policy', { length: 16 }).notNull().default('approval'),
+    cloudGitPolicy: varchar('cloud_git_policy', { length: 16 }).notNull().default('allow'),
+    cloudCommandPolicy: varchar('cloud_command_policy', { length: 16 })
+      .notNull()
+      .default('approval'),
     localEnabled: boolean('local_enabled').notNull().default(true),
     cloudEnabled: boolean('cloud_enabled').notNull().default(true),
   },
@@ -115,17 +128,50 @@ export const oauthTokens = mysqlTable('oauth_tokens', {
   expiresAt: timestamp('expires_at').notNull(),
   revokedAt: timestamp('revoked_at'),
 })
-/** 记录用户、设备及工作区相关操作和结果。 */
-export const auditLogs = mysqlTable('audit_logs', {
-  id: id(),
-  userId: varchar('user_id', { length: 48 }),
-  deviceId: varchar('device_id', { length: 48 }),
-  workspaceId: varchar('workspace_id', { length: 48 }),
-  operation: varchar('operation', { length: 128 }).notNull(),
-  status: varchar('status', { length: 32 }).notNull(),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-})
-
+/**
+ * MCP 工具执行元数据。
+ * 严禁增加路径、工具参数、文件内容、Diff、命令行、输出或对话标识/正文等字段。
+ */
+export const operationLogs = mysqlTable(
+  'operation_logs',
+  {
+    id: id(),
+    operationId: varchar('operation_id', { length: 48 }).notNull().unique(),
+    userId: varchar('user_id', { length: 48 }).notNull(),
+    deviceId: varchar('device_id', { length: 48 }),
+    workspaceId: varchar('workspace_id', { length: 48 }).notNull(),
+    clientId: varchar('client_id', { length: 255 }).notNull(),
+    toolName: varchar('tool_name', { length: 128 }).notNull(),
+    operationType: varchar('operation_type', { length: 32 }).notNull(),
+    status: varchar('status', { length: 20 }).notNull(),
+    durationMs: int('duration_ms').notNull(),
+    errorCode: varchar('error_code', { length: 64 }),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => [
+    index('op_user_created_idx').on(t.userId, t.createdAt),
+    index('op_workspace_created_idx').on(t.workspaceId, t.createdAt),
+    index('op_client_created_idx').on(t.clientId, t.createdAt),
+  ],
+)
+/** 平台安全审计：仅记录谁在何时对哪类资源执行了什么管理动作及结果。 */
+export const securityAudits = mysqlTable(
+  'security_audits',
+  {
+    id: id(),
+    actorType: varchar('actor_type', { length: 20 }).notNull(),
+    actorId: varchar('actor_id', { length: 48 }).notNull(),
+    eventType: varchar('event_type', { length: 100 }).notNull(),
+    resourceType: varchar('resource_type', { length: 32 }),
+    resourceId: varchar('resource_id', { length: 255 }),
+    result: varchar('result', { length: 20 }).notNull(),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => [
+    index('sec_actor_created_idx').on(t.actorId, t.createdAt),
+    index('sec_resource_created_idx').on(t.resourceType, t.resourceId, t.createdAt),
+  ],
+)
 /** 长期客户端授权，与短期 Access Token 分离。 */
 export const oauthGrants = mysqlTable(
   'oauth_grants',

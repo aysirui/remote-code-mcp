@@ -4,13 +4,13 @@
 
 ## packages/protocol（跨进程共享契约）
 
-| 文件             | 职责                                             |
-| ---------------- | ------------------------------------------------ |
-| `operations.ts`  | 工具名称白名单、写操作判定                       |
-| `workspace.ts`   | 工作区授权公开模型（不包含本地目录）             |
-| `rpc.ts`         | Gateway 与 Runtime 之间的请求、响应及 Hello 协议 |
-| `tool-inputs.ts` | 各工具 Zod 入参校验                              |
-| `index.ts`       | 包对外统一导出                                   |
+| 文件             | 职责                                                               |
+| ---------------- | ------------------------------------------------------------------ |
+| `operations.ts`  | 工具名称白名单、写操作判定                                         |
+| `workspace.ts`   | 工作区授权公开模型（包含用户自定义名称，不含本地目录名或绝对路径） |
+| `rpc.ts`         | Gateway 与 Runtime 之间的请求、响应及 Hello 协议                   |
+| `tool-inputs.ts` | 各工具 Zod 入参校验                                                |
+| `index.ts`       | 包对外统一导出                                                     |
 
 ## apps/server（云端 Gateway）
 
@@ -35,17 +35,18 @@
 
 ## apps/runtime（本地设备）
 
-| 文件                 | 职责                                   |
-| -------------------- | -------------------------------------- |
-| `main.ts`            | Runtime 连接生命周期及进程启动         |
-| `state.ts`           | 多服务器配置迁移、独立配对与工作区授权 |
-| `gateway-client.ts`  | Axios 云端配对 HTTP 客户端             |
-| `local-server.ts`    | 仅监听 loopback 的本地管理 API         |
-| `write-approvals.ts` | 本地逐次写入审批队列与取消逻辑         |
-| `executors.ts`       | 请求级权限校验和工具分发               |
-| `path-safety.ts`     | 路径遍历、敏感文件及软链接检查         |
-| `file-operations.ts` | 受控文件读取、Hash 冲突校验和原子写入  |
-| `git-operations.ts`  | 受控 Git 状态及 Diff 查询              |
+| 文件                 | 职责                                     |
+| -------------------- | ---------------------------------------- |
+| `main.ts`            | Runtime 连接生命周期及进程启动           |
+| `state.ts`           | 多服务器配置迁移、独立配对与工作区授权   |
+| `gateway-client.ts`  | Axios 云端配对 HTTP 客户端               |
+| `local-server.ts`    | 仅监听 loopback 的本地管理 API           |
+| `write-approvals.ts` | 本地逐次审批队列、短暂展示详情与取消逻辑 |
+| `executors.ts`       | 请求级权限校验和工具分发                 |
+| `path-safety.ts`     | 路径遍历、敏感文件及软链接检查           |
+| `file-operations.ts` | 受控文件读取、Hash 冲突校验和原子写入    |
+| `git-operations.ts`  | 受控 Git 状态、Diff、暂存与提交操作      |
+| `command-operations.ts` | 本地固定命令注册、审批指纹、超时与进程树清理 |
 
 ## Vue 前端
 
@@ -54,12 +55,13 @@
 
 ## 编码原则
 
-1. **关键方法需说明意图**：中文 JSDoc 描述输入、授权边界、副作用以及失败后的行为，不重复每一行的语法。
+1. **关键方法需说明意图**：尽量为每个公开方法、关键内部方法和安全敏感流程保留中文 JSDoc，描述输入、授权边界、副作用以及失败后的行为；实现变化时更新注释，不因重构而直接删除。
 2. **类型需说明语义**：特别是是否含敏感字段、是否允许远程传输以及字段代表的权限来源。
 3. **单一职责**：Controller 负责 HTTP 入参/响应，Service 负责业务规则；Runtime 路由只负责本地 API，文件/Git 工具各自校验输入。
 4. **共享协议不依赖具体业务实现**：`@rcm/protocol` 只能包含契约，不引用 NestJS、Vue、Node 文件系统。
 5. **Axios 管理 HTTP**：浏览器统一通过 Console/Runtime 的 HTTP 模块请求；WSS 保持原生 WebSocket 协议。
 6. **安全校验不得因拆文件失效**：工作区授权、CSRF、OAuth、设备认证、路径安全及文件写入审批仍在各自的边界执行。
+7. **Command 审批不等于沙箱**：命令只能引用 Runtime 本地登记的固定 ID；当前超时和进程树清理只管理进程生命周期，不构成 OS 级隔离。命令仍继承 Runtime 进程用户的文件与网络权限。未完成平台级隔离前，不得在文档或 UI 中宣称 Command 已被沙箱保护；平台方案与失败关闭要求见 `COMMAND_SANDBOX_DESIGN.md`。
 
 目前本地文件插件不支持新建目录，所以上述模块首先按职责独立成同级文件；未来可不改变设计地移动到 `auth/`、`device/`、`workspace/`、`http/` 等子目录。迁移时应一次性更新相对 import 并运行构建测试，不要同时维护两套实现。
 

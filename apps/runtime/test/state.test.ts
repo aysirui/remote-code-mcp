@@ -24,7 +24,7 @@ beforeEach(() => {
         root: '/projects/demo',
         enabled: true,
         permissions: { read: true, write: true },
-        writePolicy: 'auto',
+        policies: { file: 'allow', git: 'approval', command: 'deny' },
         commands: [{ id: 'check', name: '检查', executable: 'node', args: ['--version'] }],
       },
     ],
@@ -39,7 +39,7 @@ test('旧配置迁移保留设备凭据、工作区 ID 和原授权，重复读�
     expect.objectContaining({
       id: 'existing-workspace',
       root: '/projects/demo',
-      writePolicy: 'auto',
+      policies: { file: 'allow', git: 'approval', command: 'deny' },
       permissions: { read: true, write: true },
     }),
   ])
@@ -59,7 +59,11 @@ test('切换本地与远程服务器并重载配置后恢复各自的设备身�
   const reloaded = migrateConfig(JSON.parse(JSON.stringify(config)))
   selectServer(reloaded, remote.id)
   expect(activeServer(reloaded).deviceToken).toBe('remote-token')
-  expect(serverWorkspaces(reloaded)[0].writePolicy).toBe('auto')
+  expect(serverWorkspaces(reloaded)[0].policies).toEqual({
+    file: 'allow',
+    git: 'approval',
+    command: 'deny',
+  })
   selectServer(reloaded, local.id)
   expect(serverWorkspaces(reloaded)[0].permissions.write).toBe(false)
 })
@@ -82,7 +86,7 @@ test('同一目录在不同服务器使用独立权限和远程 ID，重复授�
   expect(grant.id).not.toBe(remote.workspaces[0].id)
   expect(authorizeWorkspace(local, config.workspaces[0].id)).toBe(grant)
   grant.permissions.write = true
-  grant.writePolicy = 'approval'
+  grant.policies.file = 'approval'
   remote.workspaces[0].permissions.write = false
   expect(grant.permissions.write).toBe(true)
   expect(serverWorkspaces(config, remote)[0].permissions.write).toBe(false)
@@ -96,7 +100,7 @@ test('取消授权立即停止暴露工作区，重新授权保留 ID 但恢复�
   const restored = authorizeWorkspace(server, config.workspaces[0].id)
   expect(restored.id).toBe('existing-workspace')
   expect(restored.permissions).toEqual({ read: true, write: false })
-  expect(restored.writePolicy).toBe('approval')
+  expect(restored.policies).toEqual({ file: 'approval', git: 'allow', command: 'approval' })
 })
 
 test('重复添加规范化后相同的地址复用原配置，不覆盖名称和配对凭据', () => {

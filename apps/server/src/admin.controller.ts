@@ -18,7 +18,7 @@ import { DeviceHub } from './device-hub'
 import { csrf } from './http-security'
 import * as S from './schema'
 
-/** 管理员用户、设备和审计接口；业务处理前必须验证管理员角色与目标权限。 */
+/** 管理员用户、设备和安全审计接口；业务处理前必须验证管理员角色。 */
 @Controller('api')
 export class AdminController {
   constructor(
@@ -26,6 +26,7 @@ export class AdminController {
     private readonly store: Store,
     private readonly hub: DeviceHub,
   ) {}
+
   /** 列出管理员允许查看的用户摘要。 */
   @Get('admin/users') async users(@Req() req: Request) {
     await this.id.requireAdmin(req)
@@ -40,6 +41,7 @@ export class AdminController {
       .from(S.users)
       .limit(500)
   }
+
   /** 修改目标用户状态，阻止自禁用和低权限管理员操作高权限角色。 */
   @Patch('admin/users/:id/status') async userStatus(
     @Req() req: Request,
@@ -78,9 +80,17 @@ export class AdminController {
           .where(eq(S.oauthTokens.userId, target))
       })
     }
-    await this.store.audit('admin.user_status', 'success', u.id)
+    await this.store.securityAudit({
+      actorType: 'admin',
+      actorId: u.id,
+      eventType: 'user.status.change',
+      resourceType: 'user',
+      resourceId: target,
+      result: 'success',
+    })
     return { ok: true }
   }
+
   /** 列出设备与在线状态，不授予跨用户文件访问能力。 */
   @Get('admin/devices') async adminDevices(@Req() req: Request) {
     await this.id.requireAdmin(req)
@@ -89,6 +99,7 @@ export class AdminController {
       online: this.hub.isOnline(d.id),
     }))
   }
+
   /** 管理员撤销指定设备凭据和连接。 */
   @Post('admin/devices/:id/revoke') async adminRevokeDevice(
     @Req() req: Request,
@@ -109,14 +120,27 @@ export class AdminController {
       .set({ revokedAt: new Date() })
       .where(eq(S.deviceTokens.deviceId, deviceId))
     this.hub.disconnect(deviceId)
-    await this.store.audit('admin.device_revoke', 'success', u.id, deviceId)
+    await this.store.securityAudit({
+      actorType: 'admin',
+      actorId: u.id,
+      eventType: 'device.revoke',
+      resourceType: 'device',
+      resourceId: deviceId,
+      result: 'success',
+    })
     return { ok: true }
   }
-  /** 查询平台操作审计记录。 */
-  @Get('admin/audit-logs') async adminLogs(@Req() req: Request) {
+
+  /** 仅管理员可查询平台安全审计，不包含 MCP 对话或工具参数。 */
+  @Get('admin/security-audits') async securityAudits(@Req() req: Request) {
     await this.id.requireAdmin(req)
-    return this.store.db.select().from(S.auditLogs).orderBy(desc(S.auditLogs.createdAt)).limit(200)
+    return this.store.db
+      .select()
+      .from(S.securityAudits)
+      .orderBy(desc(S.securityAudits.createdAt))
+      .limit(200)
   }
+
   /** 聚合平台用户、设备和工作区数量。 */
   @Get('admin/overview') async overview(@Req() req: Request) {
     await this.id.requireAdmin(req)

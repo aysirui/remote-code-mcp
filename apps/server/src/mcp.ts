@@ -30,6 +30,7 @@ export function installMcp(expressApp: Express, oauth: OAuthService, hub: Device
       return res.status(401).json({ error: 'invalid_token' })
     }
     const userId = user.id
+    const clientId = user.clientId
     const server = new McpServer({ name: 'remote-code-mcp', version: '0.1.0' })
     const simple = (
       name: string,
@@ -111,9 +112,9 @@ export function installMcp(expressApp: Express, oauth: OAuthService, hub: Device
         { workspaceId: z.string(), ...fields },
         async (args) => {
           const { workspaceId, ...payload } = args
-          return hub.execute(userId, String(workspaceId), op, payload)
+          return hub.execute(userId, clientId, String(workspaceId), op, payload)
         },
-        !operationRequiresWrite(op),
+        !operationRequiresWrite(op) && op !== 'command.run',
       )
     exec('file.list', { path: z.string().default('.') })
     exec('file.read', { path: z.string() })
@@ -123,14 +124,8 @@ export function installMcp(expressApp: Express, oauth: OAuthService, hub: Device
       content: z.string().max(524288),
       expectedSha256: z.string().optional(),
     })
-    exec('file.mkdir', {
-      path: z.string().min(1).max(500),
-      recursive: z.boolean().default(false),
-    })
-    exec('file.move', {
-      from: z.string().min(1).max(500),
-      to: z.string().min(1).max(500),
-    })
+    exec('file.mkdir', { path: z.string().min(1).max(500), recursive: z.boolean().default(false) })
+    exec('file.move', { from: z.string().min(1).max(500), to: z.string().min(1).max(500) })
     exec('file.delete', {
       path: z.string().min(1).max(500),
       recursive: z.boolean().default(false),
@@ -139,18 +134,19 @@ export function installMcp(expressApp: Express, oauth: OAuthService, hub: Device
         .regex(/^[a-f0-9]{64}$/)
         .optional(),
     })
-    exec('command.list', {})
-    exec('command.run', {
-      command: z.string().regex(/^[a-z][a-z0-9_-]{1,39}$/),
-    })
     exec('git.status', {})
+    exec('git.log', { limit: z.number().int().min(1).max(50).default(10) })
     exec('git.diff', {})
+    exec('git.add', { paths: z.array(z.string().min(1).max(500)).min(1).max(50) })
+    exec('git.commit', { message: z.string().trim().min(1).max(500) })
+    exec('command.list', {})
+    exec('command.run', { command: z.string().regex(/^[a-z][a-z0-9_-]{1,39}$/) })
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
     try {
       await server.connect(transport)
       await transport.handleRequest(req, res, req.body)
     } catch (e) {
-      console.error('MCP handler', e)
+      console.error('MCP handler', e instanceof Error ? e.name : 'UnknownError')
       if (!res.headersSent)
         res.status(500).json({
           jsonrpc: '2.0',

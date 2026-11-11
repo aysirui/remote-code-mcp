@@ -8,6 +8,7 @@ const ws = () => ({
   name: 'test',
   root: dir,
   permissions: { read: true, write: false },
+  policies: { file: 'allow', git: 'allow', command: 'approval' } as const,
   enabled: true,
 })
 beforeEach(async () => {
@@ -18,7 +19,7 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true })
 })
 test('blocks path traversal', async () => {
-  await expect(resolveSafe(ws(), '../outside')).rejects.toThrow('INVALID_PATH')
+  await expect(resolveSafe(ws(), '../outside')).rejects.toThrow('HARD_DENY_PATH_SEGMENT')
 })
 test('reads and hashes file', async () => {
   const r = await execute(ws(), {
@@ -28,6 +29,7 @@ test('reads and hashes file', async () => {
     version: 1,
     operation: 'file.read',
     payload: { path: 'README.md' },
+    approvalRequired: false,
     deadlineAt: Date.now() + 1000,
   })
   expect(r).toHaveProperty('content', 'hello')
@@ -42,6 +44,7 @@ test('denies write in read-only workspace', async () => {
       version: 1,
       operation: 'file.write',
       payload: { path: 'README.md', content: 'hacked' },
+      approvalRequired: false,
       deadlineAt: Date.now() + 1000,
     }),
   ).rejects.toThrow('PERMISSION_DENIED')

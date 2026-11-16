@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { WebSocketServer, type WebSocket } from 'ws'
 import type { RpcResponse } from '@rcm/protocol'
-import type { WriteApprovalInfo } from '../src/write-approvals'
+import type { WriteApprovalInfo } from '../src/requests/write-approvals'
 
 /** 启动真正的 Runtime，用临时 Gateway 与本机审批 API 验证完整执行路径。 */
 test('远程临时命令必须经本机审批；拒绝、过期和权限撤销均不执行', async () => {

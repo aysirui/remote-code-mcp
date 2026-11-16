@@ -1,7 +1,11 @@
-import { defaultWorkspacePolicies, policyForOperation, type LocalWorkspace } from '../src/state'
-import { WriteApprovalQueue, WRITE_APPROVAL_TIMEOUT_MS } from '../src/write-approvals'
-import { listCommands, validateLocalCommand } from '../src/command-operations'
-import { assertSafeRelativePath } from '../src/path-safety'
+import {
+  defaultWorkspacePolicies,
+  policyForOperation,
+  type LocalWorkspace,
+} from '../src/workspace/state'
+import { WriteApprovalQueue, WRITE_APPROVAL_TIMEOUT_MS } from '../src/requests/write-approvals'
+import { validateLocalCommand } from '../src/operations/command/command-operations'
+import { assertSafeRelativePath } from '../src/operations/file/path-safety'
 import {
   operationRequiresWrite,
   operationRequiresLocalApproval,
@@ -77,17 +81,14 @@ test('切换写入策略时可立即取消旧的人工审批请求', async () =>
   expect(queue.list()).toHaveLength(0)
 })
 
-test('旧版 git-log 命令不再出现在 Command Registry', () => {
-  const legacy = {
-    id: 'git-log',
+test('Git 可执行程序不能通过 Command Registry 登记', () => {
+  const gitLog = {
+    id: 'recent-commits',
     name: '最近 Git 提交',
     executable: 'git',
     args: ['log'],
   }
-  expect(listCommands({ ...workspace(), commands: [legacy] }).map((item) => item.id)).not.toContain(
-    'git-log',
-  )
-  expect(() => validateLocalCommand(legacy)).toThrow('INVALID_COMMAND')
+  expect(() => validateLocalCommand(gitLog)).toThrow('SHELL_EXECUTABLE_DENIED')
 })
 
 test('Hard Deny 在审批前拒绝路径穿越、绝对路径、ADS 和敏感目录', () => {
@@ -142,4 +143,57 @@ test('Command Registry 不允许直接调用 Git 可执行程序', () => {
       args: ['status'],
     }),
   ).toThrow('SHELL_EXECUTABLE_DENIED')
+})
+
+/** 网络断开时清空审批队列；旧审批 ID 不能再次批准。 */
+test('取消所有审批后旧请求立即失效且不能重复批准', async () => {
+  const queue = new WriteApprovalQueue()
+  const first = queue.request(request, workspace())
+  const second = queue.request({ ...request, id: 'second' }, workspace())
+  const ids = queue.list().map((item) => item.id)
+  expect(ids).toHaveLength(2)
+  queue.cancelAll()
+  expect(queue.list()).toHaveLength(0)
+  for (const id of ids) expect(queue.answer(id, true)).toBe(false)
+  await expect(first).resolves.toMatchObject({ approved: false })
+  await expect(second).resolves.toMatchObject({ approved: false })
+})
+
+/** 登记命令的审批风险与提示不应和未登记的临时命令混淆。 */
+test('命令审批区分已登记与临时执行', async () => {
+  const queue = new WriteApprovalQueue()
+  const w = workspace({ file: 'allow', git: 'allow', command: 'approval' })
+  const registered = queue.request(
+    {
+      ...request,
+      operation: 'command.run',
+      payload: { command: 'typecheck' },
+    },
+    w,
+  )
+  try {
+    const [item] = queue.list()
+    expect(item.riskLevel).toBe('normal')
+    expect(item.preview).toContain('已登记命令')
+  } finally {
+    queue.cancelAll()
+    await registered
+  }
+
+  const temporary = queue.request(
+    {
+      ...request,
+      operation: 'command.run',
+      payload: { executable: 'pnpm', args: ['run', 'typecheck'] },
+    },
+    w,
+  )
+  try {
+    const [item] = queue.list()
+    expect(item.riskLevel).toBe('high')
+    expect(item.preview).toContain('仅本次执行')
+  } finally {
+    queue.cancelAll()
+    await temporary
+  }
 })

@@ -6,10 +6,12 @@ import { WebSocket } from 'ws'
 import type { Request } from 'express'
 import type { RpcRequest } from '@rcm/protocol'
 import { NestFactory } from '@nestjs/core'
-import { AccountController } from '../src/account.controller'
-import { DeviceHub } from '../src/device-hub'
-import { Identity } from '../src/identity'
-import { Store } from '../src/store'
+import { AccountController } from '../src/modules/account/account.controller'
+import { AccountService } from '../src/modules/account/account.service'
+import { AccountRepository } from '../src/modules/account/account.repository'
+import { DeviceHub } from '../src/modules/device/device-hub'
+import { Identity } from '../src/modules/core/identity'
+import { Store } from '../src/infrastructure/database/store'
 
 const workspace = {
   id: '7ea14392-437e-40db-a10d-9261d7814f87',
@@ -49,8 +51,11 @@ test.each([
     }
     const controller = new AccountController(
       identity as unknown as Identity,
-      store as unknown as Store,
-      {} as DeviceHub,
+      new AccountService(
+        store as unknown as Store,
+        {} as DeviceHub,
+        new AccountRepository(store as unknown as Store),
+      ),
     )
     const request = {} as Request
     await expect(controller.workspaces(request)).resolves.toEqual([
@@ -80,6 +85,8 @@ test('云端工作区接口只读，修改策略或停用的请求返回 404', a
         },
         { provide: Store, useValue: { db: database() } },
         { provide: DeviceHub, useValue: {} },
+        AccountRepository,
+        AccountService,
       ],
     },
     { logger: false },

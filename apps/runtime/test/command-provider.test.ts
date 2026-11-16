@@ -1,5 +1,8 @@
-import { SpawnCommandExecutionProvider, commandExecutionProvider } from '../src/command-provider'
-import type { CommandExecutionRequest } from '../src/command-provider'
+import {
+  SpawnCommandExecutionProvider,
+  commandExecutionProvider,
+} from '../src/operations/command/command-provider'
+import type { CommandExecutionRequest } from '../src/operations/command/command-provider'
 import { execPath } from 'node:process'
 
 const provider = new SpawnCommandExecutionProvider()

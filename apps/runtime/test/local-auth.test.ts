@@ -1,6 +1,6 @@
-import { subscribeLocalEvents } from '../web/src/local-events'
+import { subscribeLocalEvents } from '../web/src/api/local-events'
 import { LocalAuthorizationError, LOCAL_AUTH_RECOVERY } from '../web/src/local-auth'
-import { requestLocal } from '../web/src/http'
+import { requestLocal } from '../web/src/api/http'
 
 const mockRequest = jest.fn()
 jest.mock('axios', () => ({

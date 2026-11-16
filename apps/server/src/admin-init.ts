@@ -1,11 +1,11 @@
-import { env } from './env'
+import { env } from './config/env'
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { RowDataPacket } from 'mysql2/promise'
-import { createDatabaseConnection } from './database'
+import { createDatabaseConnection } from './infrastructure/database/database'
 import { drizzle } from 'drizzle-orm/mysql2'
 import { eq } from 'drizzle-orm'
 import * as bcrypt from 'bcryptjs'
-import * as S from './schema'
+import * as S from './infrastructure/database/schema'
 
 /**
  * Initialize the administrator once. The generated password is printed only

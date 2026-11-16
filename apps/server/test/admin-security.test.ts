@@ -1,5 +1,6 @@
 import { ForbiddenException } from '@nestjs/common'
-import { Identity, type Store } from '../src/core'
+import { Identity } from '../src/modules/core/identity'
+import type { Store } from '../src/infrastructure/database/store'
 
 describe('administrator initialization boundary', () => {
   const originalAdminEmail = process.env.ADMIN_EMAIL

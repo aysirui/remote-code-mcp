@@ -12,10 +12,10 @@ import {
   Lock,
   SwitchButton,
 } from '@element-plus/icons-vue'
-import { useConsole } from './use-console'
+import { useConsole } from './composables/use-console'
 import { pagePaths } from './router'
-import AuthPage from './AuthPage.vue'
-import PasswordPage from './PasswordPage.vue'
+import AuthPage from './views/auth/index.vue'
+import PasswordPage from './views/password/index.vue'
 const ctx = useConsole()
 provide('console', ctx)
 const { me, loading, page, isAdmin, title, refresh, refreshing, logout } = ctx
@@ -58,7 +58,10 @@ const pageDescription = computed(() => descriptions[page.value] || '管理设备
     <aside class="sidebar">
       <div class="brand">
         <img class="brand-mark" src="/remote-code-logo.png" alt="" width="32" height="32" />
-        <span class="brand-text">Remote Code<span class="brand-caption">控制中心</span></span>
+        <span class="brand-text">
+          Remote Code
+          <span class="brand-caption">控制中心</span>
+        </span>
       </div>
       <nav class="nav" aria-label="控制台导航">
         <div class="nav-group-label">工作空间</div>
@@ -74,10 +77,10 @@ const pageDescription = computed(() => descriptions[page.value] || '管理设备
           :to="pagePaths[item.id]"
           :title="item.name"
           :aria-current="page === item.id ? 'page' : undefined"
-          :class="{ active: page === item.id }"
-          ><el-icon><component :is="item.icon" /></el-icon
-          ><span class="label">{{ item.name }}</span></router-link
-        >
+          :class="{ active: page === item.id }">
+          <el-icon><component :is="item.icon" /></el-icon>
+          <span class="label">{{ item.name }}</span>
+        </router-link>
         <div v-if="isAdmin" class="nav-group-label">平台管理</div>
         <router-link
           v-for="item in isAdmin
@@ -92,23 +95,29 @@ const pageDescription = computed(() => descriptions[page.value] || '管理设备
           :to="pagePaths[item.id]"
           :title="item.name"
           :aria-current="page === item.id ? 'page' : undefined"
-          :class="{ active: page === item.id }"
-          ><el-icon><component :is="item.icon" /></el-icon
-          ><span class="label">{{ item.name }}</span></router-link
-        >
+          :class="{ active: page === item.id }">
+          <el-icon><component :is="item.icon" /></el-icon>
+          <span class="label">{{ item.name }}</span>
+        </router-link>
       </nav>
-      <div class="sidebar-footer"><span class="security-dot"></span> 授权访问 · 安全连接</div>
+      <div class="sidebar-footer">
+        <span class="security-dot"></span>
+        授权访问 · 安全连接
+      </div>
     </aside>
     <div class="content">
       <header class="topbar">
         <div class="breadcrumbs">
-          <span>控制中心</span><span>/</span><strong>{{ title }}</strong>
+          <span>控制中心</span>
+          <span>/</span>
+          <strong>{{ title }}</strong>
         </div>
         <div class="account-actions">
-          <span class="account-email" :title="me.email">{{ me.email }}</span
-          ><el-button text @click="logout"
-            ><el-icon><SwitchButton /></el-icon> 退出</el-button
-          >
+          <span class="account-email" :title="me.email">{{ me.email }}</span>
+          <el-button text @click="logout">
+            <el-icon><SwitchButton /></el-icon>
+            退出
+          </el-button>
         </div>
       </header>
 

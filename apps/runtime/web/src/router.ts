@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import RuntimeConnectionPage from './RuntimeConnectionPage.vue'
-import RuntimeWorkspacesPage from './RuntimeWorkspacesPage.vue'
-import RuntimeApprovalsPage from './RuntimeApprovalsPage.vue'
+import RuntimeConnectionPage from './views/connection/index.vue'
+import RuntimeWorkspacesPage from './views/workspaces/index.vue'
+import RuntimeApprovalsPage from './views/approvals/index.vue'
 
 /** 本地管理路由共用一个 Runtime/SSE 会话，切换页面不会重复订阅事件。 */
 export const router = createRouter({

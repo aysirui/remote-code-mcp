@@ -1,5 +1,5 @@
 import { commandAuditSummary, sanitizeCommandAudit } from '@rcm/protocol'
-import { Store } from '../src/store'
+import { Store } from '../src/infrastructure/database/store'
 
 test('常见任务保留具体程序和参数，程序绝对路径不会进入摘要', () => {
   expect(

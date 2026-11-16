@@ -27,6 +27,12 @@ export default {
   // Vue 模板属性不强制单独换行
   singleAttributePerLine: false,
 
-  // Vue 模板中的空白处理
-  htmlWhitespaceSensitivity: 'css',
+  // HTML / Vue 模板忽略空白敏感度
+  htmlWhitespaceSensitivity: 'ignore',
+
+  // 多行 HTML / Vue 标签的结束尖括号与最后一个属性同行
+  bracketSameLine: true,
+
+  // Vue 文件中的 script 和 style 标签内容不额外缩进
+  vueIndentScriptAndStyle: false,
 }

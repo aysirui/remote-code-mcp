@@ -3,13 +3,18 @@ import os from 'node:os'
 import path from 'node:path'
 import http from 'node:http'
 import { execFileSync } from 'node:child_process'
-import { execute } from '../src/executors'
-import { readChecked, inspectDeleteTarget, moveChecked, mkdirChecked } from '../src/file-operations'
-import { gitAdd, gitDiff, gitStatus } from '../src/git-operations'
-import { startLocalServer } from '../src/local-server'
-import { LocalEvents } from '../src/local-events'
-import { WriteApprovalQueue } from '../src/write-approvals'
-import type { LocalWorkspace } from '../src/state'
+import { execute } from '../src/operations/executors'
+import {
+  readChecked,
+  inspectDeleteTarget,
+  moveChecked,
+  mkdirChecked,
+} from '../src/operations/file/file-operations'
+import { gitAdd, gitDiff, gitStatus } from '../src/operations/git/git-operations'
+import { startLocalServer } from '../src/local/local-server'
+import { LocalEvents } from '../src/local/local-events'
+import { WriteApprovalQueue } from '../src/requests/write-approvals'
+import type { LocalWorkspace } from '../src/workspace/state'
 import type { RpcRequest } from '@rcm/protocol'
 
 let base: string
@@ -225,11 +230,11 @@ test('自定义 Runtime 数据目录按真实路径保护，不能通过重命�
   await fs.mkdir(custom)
   await fs.writeFile(path.join(custom, 'config.json'), 'FAKE_TOKEN')
   const previous = process.env.RUNTIME_DATA_DIR
-  let safety!: typeof import('../src/path-safety')
+  let safety!: typeof import('../src/operations/file/path-safety')
   try {
     process.env.RUNTIME_DATA_DIR = custom
     jest.isolateModules(() => {
-      safety = jest.requireActual('../src/path-safety')
+      safety = jest.requireActual('../src/operations/file/path-safety')
     })
   } finally {
     if (previous === undefined) delete process.env.RUNTIME_DATA_DIR

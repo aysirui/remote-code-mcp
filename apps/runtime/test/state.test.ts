@@ -8,7 +8,7 @@ import {
   serverWorkspaces,
   workspaceViews,
   type Config,
-} from '../src/state'
+} from '../src/workspace/state'
 
 let config: Config
 beforeEach(() => {

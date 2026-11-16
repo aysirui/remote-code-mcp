@@ -1,10 +1,14 @@
 import type { Request } from 'express'
-import type { Identity } from '../src/identity'
-import type { Store } from '../src/store'
-import type { DeviceHub } from '../src/device-hub'
-import { parsePagination } from '../src/pagination'
-import { AccountController } from '../src/account.controller'
-import { AdminController } from '../src/admin.controller'
+import type { Identity } from '../src/modules/core/identity'
+import type { Store } from '../src/infrastructure/database/store'
+import type { DeviceHub } from '../src/modules/device/device-hub'
+import { parsePagination } from '../src/common/pagination'
+import { AccountController } from '../src/modules/account/account.controller'
+import { AccountService } from '../src/modules/account/account.service'
+import { AccountRepository } from '../src/modules/account/account.repository'
+import { AdminController } from '../src/modules/admin/admin.controller'
+import { AdminService } from '../src/modules/admin/admin.service'
+import { AdminRepository } from '../src/modules/admin/admin.repository'
 
 test('分页参数保持旧客户端兼容并限制查询大小', () => {
   expect(parsePagination({})).toBeUndefined()
@@ -56,8 +60,11 @@ test('个人记录分页的数据和总数查询都必须限制为当前用户',
   const identity = { requireUser: jest.fn().mockResolvedValue({ id: 'owner' }) }
   const controller = new AccountController(
     identity as unknown as Identity,
-    store as unknown as Store,
-    {} as DeviceHub,
+    new AccountService(
+      store as unknown as Store,
+      {} as DeviceHub,
+      new AccountRepository(store as unknown as Store),
+    ),
   )
   const result = await controller.operationLogs({
     query: { page: '3', pageSize: '20' },
@@ -76,8 +83,11 @@ test('管理用户和审计分页保留管理员鉴权及稳定排序', async ()
     const identity = { requireAdmin: jest.fn().mockResolvedValue({ id: 'admin' }) }
     const controller = new AdminController(
       identity as unknown as Identity,
-      store as unknown as Store,
-      {} as DeviceHub,
+      new AdminService(
+        store as unknown as Store,
+        {} as DeviceHub,
+        new AdminRepository(store as unknown as Store),
+      ),
     )
     await expect(
       controller[method]({ query: { page: '2' } } as unknown as Request),
@@ -97,8 +107,11 @@ test('平台设备分页附带在线状态，旧请求仍返回数组', async ()
   const hub = { isOnline: jest.fn().mockReturnValue(true) }
   const controller = new AdminController(
     identity as unknown as Identity,
-    store as unknown as Store,
-    hub as unknown as DeviceHub,
+    new AdminService(
+      store as unknown as Store,
+      hub as unknown as DeviceHub,
+      new AdminRepository(store as unknown as Store),
+    ),
   )
   await expect(
     controller.adminDevices({ query: { page: '1', pageSize: '10' } } as unknown as Request),
@@ -113,8 +126,11 @@ test('分页接口鉴权失败时不会读取数据库', async () => {
   const identity = { requireAdmin: jest.fn().mockRejectedValue(Error('FORBIDDEN')) }
   const controller = new AdminController(
     identity as unknown as Identity,
-    store as unknown as Store,
-    {} as DeviceHub,
+    new AdminService(
+      store as unknown as Store,
+      {} as DeviceHub,
+      new AdminRepository(store as unknown as Store),
+    ),
   )
   await expect(controller.users({ query: { page: '1' } } as unknown as Request)).rejects.toThrow(
     'FORBIDDEN',

@@ -1,4 +1,4 @@
-import { resolveSafe, execute } from '../src/executors'
+import { resolveSafe, execute } from '../src/operations/executors'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'

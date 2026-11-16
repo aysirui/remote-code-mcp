@@ -2,10 +2,15 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { CommandRunInputSchema, type RpcRequest } from '@rcm/protocol'
-import { commandRequiresApproval, resolveCommandRequest } from '../src/command-operations'
-import { execute } from '../src/executors'
-import type { LocalWorkspace } from '../src/state'
-import { WriteApprovalQueue, WRITE_APPROVAL_TIMEOUT_MS } from '../src/write-approvals'
+import {
+  commandRequiresApproval,
+  resolveCommandRequest,
+  validateLocalCommand,
+  runCheckedCommand,
+} from '../src/operations/command/command-operations'
+import { execute } from '../src/operations/executors'
+import type { LocalWorkspace } from '../src/workspace/state'
+import { WriteApprovalQueue, WRITE_APPROVAL_TIMEOUT_MS } from '../src/requests/write-approvals'
 
 let root: string
 const registered = {
@@ -201,5 +206,34 @@ test('内置 pnpm 命令可以启动项目脚本，包括 Windows 命令启动�
   await expect(execute(workspace(), rpc({ command: 'build' }))).resolves.toMatchObject({
     exitCode: 0,
     output: expect.stringContaining('builtin-build-ok'),
+  })
+})
+
+/** 长任务使用本地登记的超时，远程 command.run 不允许任意指定超时。 */
+test('内置构建和测试具有独立超时，自定义命令限制在四分钟以内', () => {
+  expect(resolveCommandRequest(workspace(), { command: 'build' }).command.timeoutMs).toBe(180_000)
+  expect(resolveCommandRequest(workspace(), { command: 'test' }).command.timeoutMs).toBe(180_000)
+  expect(
+    resolveCommandRequest(workspace(), { command: registered.id }).command.timeoutMs,
+  ).toBeUndefined()
+  expect(validateLocalCommand({ ...registered, timeoutMs: 90_000 }).timeoutMs).toBe(90_000)
+  for (const timeoutMs of [0, 999, 240_001, -1, 1.5, '90000']) {
+    expect(() => validateLocalCommand({ ...registered, timeoutMs })).toThrow('INVALID_COMMAND')
+  }
+  expect(() => CommandRunInputSchema.parse({ command: 'build', timeoutMs: 900_000 })).toThrow()
+})
+
+test('执行器实际使用登记超时，而不是强制 20 秒', async () => {
+  const w = workspace()
+  w.commands = [
+    {
+      ...registered,
+      timeoutMs: 1200,
+      args: ['-e', 'setTimeout(() => process.stdout.write("slow-ok"), 100)'],
+    },
+  ]
+  await expect(runCheckedCommand(w, { command: registered.id })).resolves.toMatchObject({
+    exitCode: 0,
+    output: 'slow-ok',
   })
 })

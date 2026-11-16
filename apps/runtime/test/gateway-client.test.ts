@@ -1,4 +1,4 @@
-import { isStaleDeviceCredentialResponse } from '../src/gateway-client'
+import { isStaleDeviceCredentialResponse } from '../src/connection/gateway-client'
 
 test('只将设备解绑接口明确的失效凭据 401 视为已解绑', () => {
   expect(isStaleDeviceCredentialResponse('/api/device/unpair', 401, '设备凭据无效')).toBe(true)

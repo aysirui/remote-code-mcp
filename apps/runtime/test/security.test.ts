@@ -1,15 +1,20 @@
-import { execute, resolveSafe } from '../src/executors'
+import { execute, resolveSafe } from '../src/operations/executors'
 import { mkdtemp, rm, symlink, writeFile, mkdir, stat, utimes } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { gitAdd, gitCommit, gitApprovalContext, gitStatus } from '../src/git-operations'
-import { runCheckedCommand } from '../src/command-operations'
+import {
+  gitAdd,
+  gitCommit,
+  gitApprovalContext,
+  gitStatus,
+} from '../src/operations/git/git-operations'
+import { runCheckedCommand } from '../src/operations/command/command-operations'
 import {
   inspectDeleteTarget,
   deleteChecked,
   HIGH_RISK_DELETE_THRESHOLD,
-} from '../src/file-operations'
+} from '../src/operations/file/file-operations'
 import { createHash } from 'node:crypto'
 import type { RpcRequest } from '@rcm/protocol'
 

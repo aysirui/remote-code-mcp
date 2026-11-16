@@ -81,7 +81,7 @@ pnpm admin:init
 4. 打开 `http://localhost:5173/activate`，用平台账号登录，输入配对码并确认。
 5. 返回本地 UI 点击“我已确认，完成绑定”。
 6. 点击 **添加项目**，使用目录浏览器选择一个临时测试项目。默认只读；开启写入权限后，每个工作区可独立选择 **逐次审批**（默认，每次文件写入需在本地 30 秒内确认）或 **自动写入**（明确确认后无需逐次审批）。
-   可在对应工作区点击 **添加命令**，登记命令 ID、显示名称、可执行程序和固定参数。AI 使用 `command_list` 查询已登记 ID。`command_run` 支持两种互斥参数：`{ command: "build" }` 选择内置或登记命令；`{ executable: "pnpm", args: ["run", "lint"] }` 请求临时命令。登记命令遵循本地 Command 策略（deny 拒绝、approval 单次审批、allow 直接执行）；临时命令在 approval/allow 下始终需要本机单次审批，deny 下直接拒绝。审批展示完整程序、参数、工作目录与风险，不会自动登记命令。命令以 Runtime 账号权限执行，没有文件、网络及 CPU/内存隔离；默认 20 秒超时、输出最多 48 KiB，进程树尽力清理。`git_status` / `git_diff` 保持独立只读工具；配置外部 filter 的仓库会被拒绝。
+   可在对应工作区点击 **添加命令**，登记命令 ID、显示名称、可执行程序和固定参数。AI 使用 `command_list` 查询已登记 ID。`command_run` 支持两种互斥参数：`{ command: "build" }` 选择内置或登记命令；`{ executable: "pnpm", args: ["run", "lint"] }` 请求临时命令。登记命令遵循本地 Command 策略（deny 拒绝、approval 单次审批、allow 直接执行）；临时命令在 approval/allow 下始终需要本机单次审批，deny 下直接拒绝。审批展示完整程序、参数、工作目录与风险，不会自动登记命令。命令以 Runtime 账号权限执行，没有文件、网络及 CPU/内存隔离；普通命令默认 20 秒超时；内置 `typecheck`、`format` 为 120 秒，`test`、`build` 为 180 秒；本地登记命令可配置 `timeoutMs`（1～240 秒），远程请求不能覆盖。输出最多 48 KiB，进程树尽力清理。`git_status` / `git_diff` 保持独立只读工具；配置外部 filter 的仓库会被拒绝。
 7. Web Console 会显示绑定设备和同步工作区。
 
 ### Runtime 0.2.0 多服务器配置
@@ -138,7 +138,7 @@ CONSOLE_URL=https://console.example.com
 
 首次部署时，Server 会在 Dokploy 的容器部署日志中**输出一次**超级管理员邮箱与随机临时密码。请在首次部署后及时记录并登录 Console 修改密码。后续重部署检测到管理员存在时仅跳过初始化，**不会重新生成、打印或重置密码**。日志中的初始密码不会因为改密而自动消失，建议限制 Dokploy 日志查看权限和保留期限，避免将部署日志发送到公共日志平台。
 
-**迁移开发规范**：在本地修改 `apps/server/src/schema.ts` 后执行 `pnpm db:generate`，检查生成的 `apps/server/drizzle/` 下 SQL、`meta/_journal.json` 与快照，将其与 Schema 一起提交 Git。Dokploy 只执行 `db:migrate`，绝不在容器中生成或改写迁移历史。部署前务必确认迁移文件已提交。单实例应用适用当前启动流程；未来多副本部署应改为独立的一次性迁移 Job。
+**迁移开发规范**：在本地修改 `apps/server/src/infrastructure/database/schema.ts` 后执行 `pnpm db:generate`，检查生成的 `apps/server/drizzle/` 下 SQL、`meta/_journal.json` 与快照，将其与 Schema 一起提交 Git。Dokploy 只执行 `db:migrate`，绝不在容器中生成或改写迁移历史。部署前务必确认迁移文件已提交。单实例应用适用当前启动流程；未来多副本部署应改为独立的一次性迁移 Job。
 
 Dokploy 对 Compose 环境变量的处理是：Environment 面板的变量会供 Compose 插值，但不会自动注入所有容器；这里需要的变量已经在 `docker-compose.yml` 的 `environment` 显式声明。改变环境变量后重新部署即可。
 
@@ -221,7 +221,7 @@ pnpm test
 
 ## 8. 源码与配置
 
-- `apps/server/src/schema.ts`：Drizzle 数据库模型。
+- `apps/server/src/infrastructure/database/schema.ts`：Drizzle 数据库模型。
 - `apps/server/src/identity.ts` / `store.ts` / `device-hub.ts`：身份、持久化与设备 RPC 分层（`core.ts` 仅统一导出）。
 - `apps/server/src/auth.controller.ts` / `account.controller.ts` / `admin.controller.ts` / `pairing.controller.ts`：按身份、用户、管理员、配对拆分的 API。
 - `apps/server/src/oauth.ts`：MVP OAuth 授权服务。
@@ -238,3 +238,12 @@ LICENSE: 代码可作为自有项目进一步开发。请自行检查依赖项�
 跨平台格式约定：文本统一使用 UTF-8 和 LF。`.gitattributes` 负责 Git 提交与检出的换行规则，`.editorconfig` 约束编辑器，Prettier 的 `endOfLine: 'lf'` 约束格式化输出，macOS 和 Windows 使用同一套配置。
 
 已有工作目录中的 CRLF 文件不会仅因新增 `.gitattributes` 自动重写，可运行 `pnpm format` 统一受支持文件的格式，再执行 `pnpm format:check` 检查。新检出的文本文件会遵循仓库的 LF 规则，无需修改个人的全局 Git 配置。
+
+## 设备与工作区同步：验收结论与后续 TODO
+
+设备撤销、工作区授权撤销、Runtime 失效授权清理、WebSocket `hello` 串行同步及旧连接替换的代码路径已经完成，并通过现有自动化回归测试。Server 与 Runtime 的权限边界分别校验；云端不保存工作区绝对路径。
+
+**当前阶段验收：完成（代码与自动化测试范围）。** 真实 MySQL 锁竞争验证属于独立的部署前验证事项，不阻塞当前功能模块的开发验收，也不代表已完成生产环境并发认证。
+
+- [ ] **TODO（部署前）：真实 MySQL 8.4 并发集成验证。** 使用独立临时测试数据库及测试账号，禁止复用生产库；先通过正式 Drizzle 迁移创建测试表，再并发执行用户禁用、设备撤销、工作区撤销与连续 `hello`，检查锁等待、死锁、事务回滚、墓碑持久性及最终一致性。验证完成后销毁测试数据库。此项需要明确可用的隔离测试数据库和受控执行入口。
+- [ ] **TODO（上线前）：真实 Runtime ↔ Gateway WebSocket 端到端验证。** 在独立测试环境中覆盖断线重连、设备解绑、撤销反馈、连接替换与权限拒绝；确认不记录本地绝对路径、工具正文或审批详情。

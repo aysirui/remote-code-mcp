@@ -13,7 +13,7 @@
 
 ## Dokploy deployments and migration discipline
 
-- Drizzle migration SQL, snapshots and `meta/_journal.json` are generated **locally**, reviewed and committed to Git together with `apps/server/src/schema.ts`.
+- Drizzle migration SQL, snapshots and `meta/_journal.json` are generated **locally**, reviewed and committed to Git together with `apps/server/src/infrastructure/database/schema.ts`.
 - The Server image includes committed `apps/server/drizzle/` files. On deployment, the entrypoint fails closed if the migration journal is absent, then runs `drizzle-kit migrate`, initializes the first administrator if necessary, and starts NestJS only after those steps succeed.
 - **Never run `drizzle-kit generate` inside the deployment container.** There is no `drizzle_history` persistent volume; only MySQL data is persisted. Drizzle records applied migrations in the database.
 - Run one migration executor at a time. This entrypoint is intended for a single Server instance; scale-out deployments need a dedicated migration job before starting application replicas.

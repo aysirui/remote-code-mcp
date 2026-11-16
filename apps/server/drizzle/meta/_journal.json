@@ -15,6 +15,20 @@
       "when": 1794809986230,
       "tag": "0001_nostalgic_guardian",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1794815675079,
+      "tag": "0002_material_scarlet_spider",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1794816880363,
+      "tag": "0003_smooth_domino",
+      "breakpoints": true
     }
   ]
 }

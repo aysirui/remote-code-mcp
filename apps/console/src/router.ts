@@ -1,28 +1,16 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import OverviewPage from './OverviewPage.vue'
-import DevicesPage from './DevicesPage.vue'
-import ActivatePage from './ActivatePage.vue'
-import WorkspacesPage from './WorkspacesPage.vue'
-import ConnectionsPage from './ConnectionsPage.vue'
-import HistoryPage from './HistoryPage.vue'
-import AdminOverviewPage from './AdminOverviewPage.vue'
-import AdminUsersPage from './AdminUsersPage.vue'
-import AdminDevicesPage from './AdminDevicesPage.vue'
-import AdminAuditPage from './AdminAuditPage.vue'
+const OverviewPage = () => import('./views/overview/index.vue')
+const DevicesPage = () => import('./views/devices/index.vue')
+const ActivatePage = () => import('./views/activate/index.vue')
+const WorkspacesPage = () => import('./views/workspaces/index.vue')
+const ConnectionsPage = () => import('./views/connections/index.vue')
+const HistoryPage = () => import('./views/history/index.vue')
+const AdminOverviewPage = () => import('./views/admin/overview/index.vue')
+const AdminUsersPage = () => import('./views/admin/users/index.vue')
+const AdminDevicesPage = () => import('./views/admin/devices/index.vue')
+const AdminAuditPage = () => import('./views/admin/audit/index.vue')
 
-/** 路由与真实 URL 一一对应，支持页面刷新、浏览器前进后退与直接访问。 */
-export const pagePaths: Record<string, string> = {
-  overview: '/console',
-  devices: '/console/devices',
-  activate: '/activate',
-  workspaces: '/console/workspaces',
-  connections: '/console/connections',
-  history: '/console/history',
-  'admin-overview': '/admin',
-  'admin-users': '/admin/users',
-  'admin-devices': '/admin/devices',
-  'admin-audit': '/admin/audit',
-}
+export { pagePaths } from './page-paths'
 export const router = createRouter({
   history: createWebHistory(),
   routes: [

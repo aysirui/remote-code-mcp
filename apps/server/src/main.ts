@@ -1,80 +1,18 @@
 import 'reflect-metadata'
-import { env } from './env'
+import { env } from './config/env'
 import { NestFactory } from '@nestjs/core'
-import { Module } from '@nestjs/common'
-import { Identity, Store, DeviceHub } from './core'
-import {
-  AuthController,
-  AccountController,
-  AdminController,
-  PairingController,
-} from './controllers'
-import { OAuthController, OAuthService } from './oauth'
-import { installMcp } from './mcp'
-import cookieParser from 'cookie-parser'
-import { json, urlencoded, type Request, type Response, type NextFunction } from 'express'
-@Module({
-  controllers: [
-    AuthController,
-    AccountController,
-    AdminController,
-    PairingController,
-    OAuthController,
-  ],
-  providers: [Store, Identity, DeviceHub, OAuthService],
-})
-class AppModule {}
+import { AppModule } from './app.module'
+import type { Request, Response } from 'express'
+import { configureHttp } from './http-bootstrap'
 async function main() {
   env.validateServer()
   const app = await NestFactory.create(AppModule, { bodyParser: false })
-  // Keep MCP file payloads bounded while accepting OAuth form submissions.
-  app.use(json({ limit: '1mb' }))
-  app.use(urlencoded({ extended: false, limit: '16kb' }))
-  const express = app.getHttpAdapter().getInstance()
-  app.use((req: Request, res: Response, next: NextFunction) => {
-    res.setHeader('X-Content-Type-Options', 'nosniff')
-    res.setHeader('Referrer-Policy', 'no-referrer')
-    res.setHeader('X-Frame-Options', 'DENY')
-    // OAuth 授权页的 CSP 由 OAuthController 在校验已注册 redirect_uri 后设置。
-    // 静态 form-action 'self' 会使 Chromium 阻止 POST 后跨域回调的 303/302。
-    next()
-  })
-  app.use(cookieParser())
-  app.enableCors({
-    origin: [env.consoleUrl, env.publicUrl],
-    credentials: true,
-    allowedHeaders: ['content-type', 'x-csrf-token', 'authorization'],
-  })
-  // Small in-process rate limiter: production deployments should use a shared WAF/rate limit store.
-  const hits = new Map<string, { n: number; until: number }>()
-  app.use((req: Request, res: Response, next: NextFunction) => {
-    if (!/\/api\/(auth\/(login|register)|device\/pairing)|\/oauth\/(register|token)/.test(req.path))
-      return next()
-    if (hits.size >= 10000) {
-      const now = Date.now()
-      for (const [key, value] of hits) if (value.until <= now) hits.delete(key)
-      // Fail closed rather than allow unbounded per-process memory growth.
-      if (hits.size >= 10000) return res.status(429).json({ error: 'rate_limited' })
-    }
-    const key = (req.ip || '') + req.path
-    let h = hits.get(key)
-    if (!h || h.until < Date.now()) {
-      h = { n: 0, until: Date.now() + 60000 }
-      hits.set(key, h)
-    }
-    if (++h.n > 20) return res.status(429).json({ error: 'rate_limited' })
-    next()
-  })
-  const hub = app.get(DeviceHub),
-    oauth = app.get(OAuthService),
-    store = app.get(Store)
-  installMcp(express, oauth, hub, store)
+  configureHttp(app)
   app
     .getHttpAdapter()
     .getInstance()
     .get('/health', (_req: Request, res: Response) => res.json({ ok: true }))
   await app.listen(env.port, '0.0.0.0')
-  hub.attach(app.getHttpServer())
   console.log('Remote Code MCP listening', env.publicUrl)
 }
 main().catch((e) => {

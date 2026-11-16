@@ -1,12 +1,12 @@
 import http from 'node:http'
 import axios from 'axios'
-import { startLocalServer } from '../src/local-server'
-import { LocalEvents } from '../src/local-events'
-import { WriteApprovalQueue } from '../src/write-approvals'
-import { save, type Config } from '../src/state'
+import { startLocalServer } from '../src/local/local-server'
+import { LocalEvents } from '../src/local/local-events'
+import { WriteApprovalQueue } from '../src/requests/write-approvals'
+import { save, type Config } from '../src/workspace/state'
 
-jest.mock('../src/state', () => ({
-  ...jest.requireActual('../src/state'),
+jest.mock('../src/workspace/state', () => ({
+  ...jest.requireActual('../src/workspace/state'),
   save: jest.fn().mockResolvedValue(undefined),
 }))
 

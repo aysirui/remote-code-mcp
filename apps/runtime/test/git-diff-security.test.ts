@@ -2,8 +2,8 @@ import { execFileSync } from 'node:child_process'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { gitDiff } from '../src/git-operations'
-import { isSensitive } from '../src/path-safety'
+import { gitDiff } from '../src/operations/git/git-operations'
+import { isSensitive } from '../src/operations/file/path-safety'
 
 let workspaceRoot: string
 const workspace = () => ({

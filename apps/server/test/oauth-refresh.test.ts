@@ -1,7 +1,7 @@
-import { OAuthController } from '../src/oauth'
+import { OAuthController } from '../src/modules/oauth/oauth.controller'
 import { getTableConfig } from 'drizzle-orm/mysql-core'
-import * as S from '../src/schema'
-import { oauthError } from '../src/oauth-telemetry'
+import * as S from '../src/infrastructure/database/schema'
+import { oauthError } from '../src/modules/oauth/oauth-telemetry'
 
 describe('OAuth refresh token contracts', () => {
   test('refresh tokens are persisted as hashes with family/revocation metadata', () => {
@@ -26,7 +26,7 @@ describe('OAuth refresh token contracts', () => {
   })
 
   test('unsupported grant type returns OAuth error without leaking request parameters', async () => {
-    const controller = new OAuthController({} as never, {} as never, {} as never)
+    const controller = new OAuthController({} as never, {} as never)
     const response = {
       set: jest.fn().mockReturnThis(),
       status: jest.fn().mockReturnThis(),

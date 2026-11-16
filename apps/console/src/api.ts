@@ -71,7 +71,7 @@ export type Device = {
   runtimeVersion?: string
 }
 
-/** 云端计算后的工作区有效权限；不包含本地路径或目录名。 */
+/** Runtime 同步的工作区有效权限与策略；不包含本地路径或目录名。 */
 export type Workspace = {
   id: string
   deviceId: string
@@ -79,12 +79,7 @@ export type Workspace = {
   enabled: boolean
   read: boolean
   write: boolean
-  localPolicies: {
-    file: 'deny' | 'approval' | 'allow'
-    git: 'deny' | 'approval' | 'allow'
-    command: 'deny' | 'approval' | 'allow'
-  }
-  cloudPolicies: {
+  policies: {
     file: 'deny' | 'approval' | 'allow'
     git: 'deny' | 'approval' | 'allow'
     command: 'deny' | 'approval' | 'allow'

@@ -9,12 +9,7 @@ import { WebSocketServer, WebSocket } from 'ws'
 import type { Server as HttpServer, IncomingMessage } from 'node:http'
 import { URL } from 'node:url'
 import type { RpcRequest } from '@rcm/protocol'
-import {
-  RpcResponseSchema,
-  HelloSchema,
-  operationRequiresWrite,
-  operationRequiresLocalApproval,
-} from '@rcm/protocol'
+import { RpcResponseSchema, HelloSchema, operationRequiresWrite } from '@rcm/protocol'
 import * as S from './schema'
 import { Store } from './store'
 import { uid, hash } from './security'
@@ -212,25 +207,13 @@ export class DeviceHub {
               eq(S.workspaces.id, workspaceId),
               eq(S.workspaces.userId, userId),
               eq(S.workspaces.localEnabled, true),
-              eq(S.workspaces.cloudEnabled, true),
             ),
           )
           .limit(1),
       )
       if (!ws) throw new NotFoundException('WORKSPACE_NOT_FOUND')
-      if (
-        !ws.localRead ||
-        !ws.cloudRead ||
-        (operationRequiresWrite(operation) && (!ws.localWrite || !ws.cloudWrite))
-      )
+      if (!ws.localRead || (operationRequiresWrite(operation) && !ws.localWrite))
         throw new ForbiddenException('PERMISSION_DENIED')
-      const cloudPolicy = operation.startsWith('file.')
-        ? ws.cloudFilePolicy
-        : operation.startsWith('git.')
-          ? ws.cloudGitPolicy
-          : ws.cloudCommandPolicy
-      if (cloudPolicy !== 'allow' && cloudPolicy !== 'approval')
-        throw new ForbiddenException('POLICY_DENIED')
       const device = await this.store.one(
         this.store.db
           .select()
@@ -250,8 +233,6 @@ export class DeviceHub {
         workspaceId,
         operation,
         payload,
-        // Server 只负责传递策略审批；本地文件删除的高危程度必须由 Runtime 检查真实目录内容。
-        approvalRequired: cloudPolicy === 'approval' || operationRequiresLocalApproval(operation),
         deadlineAt: Date.now() + RPC_TIMEOUT_MS,
       }
       const result = await new Promise<unknown>((resolve, reject) => {

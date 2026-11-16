@@ -83,7 +83,7 @@ export class AccountController {
     return { ok: true }
   }
 
-  /** 计算本地与云端授权交集；响应只包含工作区显示名和权限，不包含目录信息。 */
+  /** 展示 Runtime 同步的工作区权限与策略，不包含本地目录信息。 */
   @Get('me/workspaces') async workspaces(@Req() req: Request) {
     const u = await this.id.requireUser(req)
     return (
@@ -92,88 +92,15 @@ export class AccountController {
       id: w.id,
       deviceId: w.deviceId,
       name: w.name,
-      enabled: w.localEnabled && w.cloudEnabled,
-      read: w.localEnabled && w.cloudEnabled && w.localRead && w.cloudRead,
-      write:
-        w.localEnabled &&
-        w.cloudEnabled &&
-        w.localRead &&
-        w.cloudRead &&
-        w.localWrite &&
-        w.cloudWrite,
-      localPolicies: {
+      enabled: w.localEnabled,
+      read: w.localEnabled && w.localRead,
+      write: w.localEnabled && w.localRead && w.localWrite,
+      policies: {
         file: w.localFilePolicy,
         git: w.localGitPolicy,
         command: w.localCommandPolicy,
       },
-      cloudPolicies: {
-        file: w.cloudFilePolicy,
-        git: w.cloudGitPolicy,
-        command: w.cloudCommandPolicy,
-      },
     }))
-  }
-
-  /** 用户可独立配置云端策略；云端策略不能覆盖 Runtime 本地策略或 Hard Deny。 */
-  @Patch('me/workspaces/:id') async restrictWorkspace(
-    @Req() req: Request,
-    @Param('id') id: string,
-    @Body()
-    b: {
-      enabled?: unknown
-      write?: unknown
-      read?: unknown
-      policies?: { file?: unknown; git?: unknown; command?: unknown }
-    },
-  ) {
-    csrf(req)
-    const u = await this.id.requireUser(req)
-    const w = await this.store.one(
-      this.store.db
-        .select()
-        .from(S.workspaces)
-        .where(and(eq(S.workspaces.id, id), eq(S.workspaces.userId, u.id)))
-        .limit(1),
-    )
-    if (!w) throw new NotFoundException()
-    const patch: {
-      cloudEnabled?: boolean
-      cloudWrite?: boolean
-      cloudRead?: boolean
-      cloudFilePolicy?: string
-      cloudGitPolicy?: string
-      cloudCommandPolicy?: string
-    } = {}
-    if (b.enabled === false) patch.cloudEnabled = false
-    if (b.write === false) patch.cloudWrite = false
-    if (b.read === false) patch.cloudRead = false
-    const policyUpdates = b.policies
-    const allowedPolicies = ['deny', 'approval', 'allow']
-    if (policyUpdates !== undefined) {
-      if (!policyUpdates || typeof policyUpdates !== 'object')
-        throw new BadRequestException('Invalid workspace policies')
-      for (const domain of ['file', 'git', 'command'] as const) {
-        const value = policyUpdates[domain]
-        if (value === undefined) continue
-        if (!allowedPolicies.includes(String(value)))
-          throw new BadRequestException('Invalid ' + domain + ' policy')
-        if (domain === 'file') patch.cloudFilePolicy = value as string
-        if (domain === 'git') patch.cloudGitPolicy = value as string
-        if (domain === 'command') patch.cloudCommandPolicy = value as string
-      }
-    }
-    if (!Object.keys(patch).length)
-      throw new BadRequestException('No valid workspace policy update')
-    await this.store.db.update(S.workspaces).set(patch).where(eq(S.workspaces.id, id))
-    await this.store.securityAudit({
-      actorType: 'user',
-      actorId: u.id,
-      eventType: policyUpdates ? 'workspace.policy.update' : 'workspace.restrict',
-      resourceType: 'workspace',
-      resourceId: id,
-      result: 'success',
-    })
-    return { ok: true }
   }
 
   /** 持久授权关系不随 Access Token 到期而消失。 */

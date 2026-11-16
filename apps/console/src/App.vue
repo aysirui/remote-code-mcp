@@ -38,7 +38,7 @@ watch(
 const descriptions: Record<string, string> = {
   overview: '查看设备连接与工作区授权概况',
   devices: '管理已绑定设备及其连接状态',
-  workspaces: '独立控制每个工作区的云端访问策略',
+  workspaces: '查看 Runtime 同步的工作区权限与工具策略',
   connections: '连接 AI 客户端，管理持久授权',
   history: '追踪工具执行结果与耗时',
   'admin-users': '管理平台账户及访问状态',

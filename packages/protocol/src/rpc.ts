@@ -13,8 +13,6 @@ export const RpcRequestSchema = z.object({
   workspaceId: z.string().uuid(),
   operation: z.enum(Operations),
   payload: z.unknown(),
-  /** Gateway 根据云端策略要求 Runtime 展示一次性审批；不是客户端可控参数。 */
-  approvalRequired: z.boolean().default(false),
   deadlineAt: z.number(),
 })
 

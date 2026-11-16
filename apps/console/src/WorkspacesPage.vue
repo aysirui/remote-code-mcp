@@ -4,16 +4,20 @@ import type { ConsoleContext } from './use-console'
 import { useLocalPage } from './use-local-page'
 import ListFooter from './ListFooter.vue'
 
-const { workspaces, devices, disableWorkspace, setCloudPolicy } = inject<ConsoleContext>('console')!
+const { workspaces, devices } = inject<ConsoleContext>('console')!
 const deviceNames = computed(() => new Map(devices.value.map((device) => [device.id, device.name])))
 const deviceName = (deviceId: string) => deviceNames.value.get(deviceId) || '未知设备'
+const policyLabels: Record<string, string> = {
+  deny: '禁止',
+  approval: '审批执行',
+  allow: '完全允许',
+}
 const { rows, page, pageSize, total, resize } = useLocalPage(workspaces)
 </script>
 
 <template>
   <div class="notice">
-    工作区只能通过对应设备上的 Runtime 本地界面添加。云端仅保存用户设置的显示名称、稳定 ID
-    和授权元数据，不接收本地目录名、绝对路径或项目结构。
+    工作区的启用状态、读写权限和工具策略统一在对应设备的 Runtime 中设置，此处仅展示最近同步的状态。
   </div>
   <div class="card table-wrap">
     <el-table :data="rows" style="width: 100%">
@@ -37,7 +41,7 @@ const { rows, page, pageSize, total, resize } = useLocalPage(workspaces)
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="云端工具策略" min-width="360">
+      <el-table-column label="本地工具策略" min-width="220">
         <template #default="{ row }">
           <div class="policy-stack">
             <div
@@ -46,20 +50,14 @@ const { rows, page, pageSize, total, resize } = useLocalPage(workspaces)
               class="policy-row"
             >
               <span>{{ { file: 'File', git: 'Git', command: 'Command' }[domain] }}</span>
-              <el-select
-                :model-value="row.cloudPolicies[domain]"
-                size="small"
-                :aria-label="domain + ' 云端策略'"
-                @change="
-                  (policy: 'deny' | 'approval' | 'allow') => setCloudPolicy(row, domain, policy)
-                "
-              >
-                <el-option label="禁止" value="deny" />
-                <el-option label="审批执行" value="approval" />
-                <el-option label="完全允许" value="allow" />
-              </el-select>
+              <span>{{ policyLabels[row.policies[domain]] || '未知策略' }}</span>
             </div>
           </div>
+        </template>
+      </el-table-column>
+      <el-table-column label="读写权限" width="120">
+        <template #default="{ row }">
+          {{ row.read ? (row.write ? '可读写' : '只读') : '无访问权限' }}
         </template>
       </el-table-column>
       <el-table-column label="状态" width="100">
@@ -67,13 +65,6 @@ const { rows, page, pageSize, total, resize } = useLocalPage(workspaces)
           <el-tag :type="row.enabled ? 'success' : 'info'">{{
             row.enabled ? '启用' : '停用'
           }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="120">
-        <template #default="{ row }">
-          <el-button text type="danger" :disabled="!row.enabled" @click="disableWorkspace(row)">
-            停用
-          </el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -97,7 +88,7 @@ const { rows, page, pageSize, total, resize } = useLocalPage(workspaces)
 }
 .policy-row {
   display: grid;
-  grid-template-columns: 78px minmax(130px, 1fr);
+  grid-template-columns: 78px 1fr;
   align-items: center;
   gap: 8px;
 }

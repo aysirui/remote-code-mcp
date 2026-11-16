@@ -29,7 +29,6 @@ test('reads and hashes file', async () => {
     version: 1,
     operation: 'file.read',
     payload: { path: 'README.md' },
-    approvalRequired: false,
     deadlineAt: Date.now() + 1000,
   })
   expect(r).toHaveProperty('content', 'hello')
@@ -44,7 +43,6 @@ test('denies write in read-only workspace', async () => {
       version: 1,
       operation: 'file.write',
       payload: { path: 'README.md', content: 'hacked' },
-      approvalRequired: false,
       deadlineAt: Date.now() + 1000,
     }),
   ).rejects.toThrow('PERMISSION_DENIED')

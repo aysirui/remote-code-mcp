@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "4bfd3b5a-d676-4262-b6bb-48354ddf909e",
+  "id": "a82f4ee6-a848-4dd8-b1a9-7f44f8110035",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "device_tokens": {
@@ -1035,22 +1035,6 @@
           "autoincrement": false,
           "default": false
         },
-        "cloud_read": {
-          "name": "cloud_read",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": true
-        },
-        "cloud_write": {
-          "name": "cloud_write",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": true
-        },
         "local_file_policy": {
           "name": "local_file_policy",
           "type": "varchar(16)",
@@ -1075,40 +1059,8 @@
           "autoincrement": false,
           "default": "'approval'"
         },
-        "cloud_file_policy": {
-          "name": "cloud_file_policy",
-          "type": "varchar(16)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'approval'"
-        },
-        "cloud_git_policy": {
-          "name": "cloud_git_policy",
-          "type": "varchar(16)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'allow'"
-        },
-        "cloud_command_policy": {
-          "name": "cloud_command_policy",
-          "type": "varchar(16)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'approval'"
-        },
         "local_enabled": {
           "name": "local_enabled",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": true
-        },
-        "cloud_enabled": {
-          "name": "cloud_enabled",
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,

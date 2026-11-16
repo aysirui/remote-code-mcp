@@ -151,16 +151,10 @@ CREATE TABLE `workspaces` (
 	`name` varchar(128) NOT NULL,
 	`local_read` boolean NOT NULL DEFAULT true,
 	`local_write` boolean NOT NULL DEFAULT false,
-	`cloud_read` boolean NOT NULL DEFAULT true,
-	`cloud_write` boolean NOT NULL DEFAULT true,
 	`local_file_policy` varchar(16) NOT NULL DEFAULT 'approval',
 	`local_git_policy` varchar(16) NOT NULL DEFAULT 'allow',
 	`local_command_policy` varchar(16) NOT NULL DEFAULT 'approval',
-	`cloud_file_policy` varchar(16) NOT NULL DEFAULT 'approval',
-	`cloud_git_policy` varchar(16) NOT NULL DEFAULT 'allow',
-	`cloud_command_policy` varchar(16) NOT NULL DEFAULT 'approval',
 	`local_enabled` boolean NOT NULL DEFAULT true,
-	`cloud_enabled` boolean NOT NULL DEFAULT true,
 	CONSTRAINT `workspaces_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint

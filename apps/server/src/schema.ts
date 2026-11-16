@@ -67,7 +67,7 @@ export const deviceTokens = mysqlTable(
   (t) => [index('device_token_idx').on(t.deviceId)],
 )
 /**
- * 工作区云端授权元数据。
+ * Runtime 同步的工作区授权快照；云端不维护独立策略。
  * 仅保存用户自定义名称和稳定 ID，不保存本地路径、目录名或项目结构。
  */
 export const workspaces = mysqlTable(
@@ -79,20 +79,12 @@ export const workspaces = mysqlTable(
     name: varchar('name', { length: 128 }).notNull(),
     localRead: boolean('local_read').notNull().default(true),
     localWrite: boolean('local_write').notNull().default(false),
-    cloudRead: boolean('cloud_read').notNull().default(true),
-    cloudWrite: boolean('cloud_write').notNull().default(true),
     localFilePolicy: varchar('local_file_policy', { length: 16 }).notNull().default('approval'),
     localGitPolicy: varchar('local_git_policy', { length: 16 }).notNull().default('allow'),
     localCommandPolicy: varchar('local_command_policy', { length: 16 })
       .notNull()
       .default('approval'),
-    cloudFilePolicy: varchar('cloud_file_policy', { length: 16 }).notNull().default('approval'),
-    cloudGitPolicy: varchar('cloud_git_policy', { length: 16 }).notNull().default('allow'),
-    cloudCommandPolicy: varchar('cloud_command_policy', { length: 16 })
-      .notNull()
-      .default('approval'),
     localEnabled: boolean('local_enabled').notNull().default(true),
-    cloudEnabled: boolean('cloud_enabled').notNull().default(true),
   },
   (t) => [index('ws_owner_idx').on(t.userId, t.deviceId)],
 )

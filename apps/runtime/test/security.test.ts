@@ -30,7 +30,6 @@ const rpc = (operation: RpcRequest['operation'], payload: unknown): RpcRequest =
   workspaceId: 'workspace-test',
   operation,
   payload,
-  approvalRequired: false,
   deadlineAt: Date.now() + 15000,
 })
 

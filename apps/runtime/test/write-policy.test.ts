@@ -27,7 +27,6 @@ const request: RpcRequest = {
   workspaceId: 'workspace-test',
   operation: 'file.write',
   payload: { path: 'README.md', content: 'updated' },
-  approvalRequired: false,
   deadlineAt: Date.now() + 60000,
 }
 

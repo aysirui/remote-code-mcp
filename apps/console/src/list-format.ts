@@ -32,8 +32,6 @@ export const eventLabel = (value: string) =>
       'device.revoke': '撤销设备授权',
       'oauth.grant.revoke': '撤销 AI 授权',
       'user.status.change': '变更用户状态',
-      'workspace.policy.update': '更新工作区策略',
-      'workspace.restrict': '收紧工作区权限',
     }) as Record<string, string>
   )[value] || value
 export const operationLabel = (value: string) =>

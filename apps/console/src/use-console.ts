@@ -205,42 +205,6 @@ export function useConsole() {
     }
   }
 
-  /** 仅缩小云端工作区授权；停用后 Runtime 重连不会自动恢复。 */
-  async function disableWorkspace(w: Workspace) {
-    try {
-      await ElMessageBox.confirm('停用后，AI 无法继续访问该工作区。', '停用工作区', {
-        type: 'warning',
-      })
-      await request('/api/me/workspaces/' + w.id, 'PATCH', { enabled: false })
-      await refresh()
-    } catch (error: unknown) {
-      reportError(error)
-    }
-  }
-
-  /** 修改指定工作区的云端工具域策略；本地策略与 Hard Deny 始终独立生效。 */
-  async function setCloudPolicy(
-    w: Workspace,
-    domain: 'file' | 'git' | 'command',
-    policy: 'deny' | 'approval' | 'allow',
-  ) {
-    if (w.cloudPolicies[domain] === policy) return
-    try {
-      if (policy === 'allow') {
-        await ElMessageBox.confirm(
-          '云端将不再要求逐次审批此工具域，但 Runtime 本地策略、工作区读写权限和 Hard Deny 仍然生效。',
-          '确认云端完全允许',
-          { type: 'warning', confirmButtonText: '确认允许' },
-        )
-      }
-      await request('/api/me/workspaces/' + w.id, 'PATCH', { policies: { [domain]: policy } })
-      await refresh()
-      ElMessage.success('云端权限策略已更新')
-    } catch (error: unknown) {
-      reportError(error)
-    }
-  }
-
   /** 管理员撤销指定设备的凭据并立即断开其连接。 */
   async function adminRevoke(d: Device) {
     try {
@@ -329,8 +293,6 @@ export function useConsole() {
     revoke,
     approve,
     revokeGrant,
-    disableWorkspace,
-    setCloudPolicy,
     adminRevoke,
     setUserStatus,
     navigate,

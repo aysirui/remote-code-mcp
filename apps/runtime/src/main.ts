@@ -158,11 +158,10 @@ function connect() {
         const snapshot = await inspectDeleteTarget(target)
         highRiskDelete = payload.recursive && snapshot.entryCount > HIGH_RISK_DELETE_THRESHOLD
       }
-      // 策略要求审批、云端要求审批、Git 高风险写操作或本机识别的高危删除均需确认。
+      // 本地策略要求审批、Git 高风险写操作或本机识别的高危删除均需确认。
       // 普通文件删除在 allow 下直接执行；审批队列最多等待五分钟。
       if (
         policy === 'approval' ||
-        parsed.approvalRequired ||
         operationRequiresLocalApproval(parsed.operation) ||
         highRiskDelete
       ) {

@@ -92,15 +92,14 @@ export function installMcp(expressApp: Express, oauth: OAuthService, hub: Device
           workspaceId: w.id,
           name: w.name,
           deviceId: w.deviceId,
-          read: w.localEnabled && w.cloudEnabled && w.localRead && w.cloudRead,
-          write:
-            w.localEnabled &&
-            w.cloudEnabled &&
-            w.localRead &&
-            w.cloudRead &&
-            w.localWrite &&
-            w.cloudWrite,
-          enabled: w.localEnabled && w.cloudEnabled,
+          read: w.localEnabled && w.localRead,
+          write: w.localEnabled && w.localRead && w.localWrite,
+          enabled: w.localEnabled,
+          policies: {
+            file: w.localFilePolicy,
+            git: w.localGitPolicy,
+            command: w.localCommandPolicy,
+          },
           online: hub.isOnline(w.deviceId),
         }))
       },

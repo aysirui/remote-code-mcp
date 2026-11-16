@@ -63,7 +63,7 @@ docker compose build
 Additionally verify:
 
 1. User A cannot operate User B's workspace ID or device ID.
-2. Disabled local/cloud workspaces remain disabled after reconnect.
+2. 本地停用的工作区在重连后仍保持停用，云端只展示 Runtime 同步的权限与策略。
 3. A revoked device's old WebSocket cannot send a valid response for a new connection.
 4. Simultaneous OAuth code redemption succeeds only once.
 5. Simultaneous pairing approvals and completion each succeed only once.
@@ -75,7 +75,7 @@ Additionally verify:
 ## Known remaining work
 
 - Cross-platform adversarial filesystem race testing and OS-level sandboxing.
-- File operations follow the local/cloud policy intersection. Approval requests expire after five minutes; high-risk recursive deletes and Git writes retain mandatory local approval.
+- 工作区权限和工具策略由 Runtime 本地统一管理，云端只保存同步快照。审批请求五分钟后过期；高危递归删除和 Git 写操作仍需本机强制审批。
 - Verified email ownership, account recovery, multi-factor authentication, durable distributed rate limiting and abuse monitoring.
 - Dedicated OAuth conformance testing, key rotation, and token/authorization-record retention cleanup.
 - End-to-end test run and production deployment review: these cannot be established by source inspection alone.

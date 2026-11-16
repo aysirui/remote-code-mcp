@@ -8,7 +8,7 @@ export const WorkspacePoliciesSchema = z.object({
   command: AccessPolicySchema,
 })
 
-/** Runtime 本地可读写权限；云端策略与本地策略必须同时满足。 */
+/** Runtime 本地可读写权限；云端仅同步展示。 */
 export const PermissionSchema = z.object({
   read: z.boolean(),
   write: z.boolean(),

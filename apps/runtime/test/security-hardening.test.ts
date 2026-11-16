@@ -29,7 +29,6 @@ const rpc = (operation: RpcRequest['operation'], payload: unknown): RpcRequest =
   workspaceId: 'security-test',
   operation,
   payload,
-  approvalRequired: false,
   deadlineAt: Date.now() + 10000,
 })
 const git = (...args: string[]) =>

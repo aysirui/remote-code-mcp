@@ -22,7 +22,7 @@ export const Operations = [
 /** 平台和本地 Runtime 之间共享的操作名称。 */
 export type Operation = (typeof Operations)[number]
 
-/** 会修改工作区或执行本地程序的操作必须同时通过云端和 Runtime 写权限校验。 */
+/** 会修改工作区或执行本地程序的操作必须具有 Runtime 授予的写权限。 */
 export const operationRequiresWrite = (operation: Operation): boolean =>
   [
     'file.write',
@@ -37,7 +37,7 @@ export const operationRequiresWrite = (operation: Operation): boolean =>
 /**
  * Git 暂存和提交始终需要 Runtime 本机逐次确认；
  * 文件删除是否需要审批由 Runtime 根据本地真实目录项数量进行风险评估。
- * Command 是否需要审批完全由云端与本地 Command 策略决定。
+ * Command 是否需要审批由 Runtime 本地 Command 策略决定。
  */
 export const operationRequiresLocalApproval = (operation: Operation): boolean =>
   ['git.add', 'git.commit'].includes(operation)

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { ToolInputs, type RpcRequest } from '@rcm/protocol'
 import type { LocalWorkspace } from './state'
-import { resolveCommand } from './command-operations'
+import { resolveCommandRequest, commandFingerprint } from './command-operations'
 import { gitApprovalContext } from './git-operations'
 import { inspectDeleteTarget, HIGH_RISK_DELETE_THRESHOLD } from './file-operations'
 import { resolveSafe, assertSafeRelativePath } from './path-safety'
@@ -119,9 +119,10 @@ export class WriteApprovalQueue {
         ? `递归删除目录（影响 ${itemCount} 个目录项，不可撤销）`
         : '删除文件或空目录（不可撤销）'
     } else if (req.operation === 'command.run') {
-      const payload = ToolInputs['command.run'].parse(req.payload)
-      const selected = resolveCommand(workspace, payload.command)
-      pathLabel = selected.name + ' (' + selected.id + ')'
+      const { command: selected, registered } = resolveCommandRequest(workspace, req.payload)
+      resourceHash = commandFingerprint(selected)
+      riskLevel = 'high'
+      pathLabel = registered ? selected.name + ' (' + selected.id + ')' : selected.name
       preview =
         '程序：' +
         selected.executable +
@@ -129,7 +130,10 @@ export class WriteApprovalQueue {
         JSON.stringify(selected.args) +
         '\n工作区：' +
         workspace.name +
-        '\n执行此程序可能访问工作区外的数据，请只批准可信命令。'
+        '\n工作目录：' +
+        workspace.root +
+        '\n授权范围：仅本次执行，不会自动登记命令。' +
+        '\n风险：程序将以 Runtime 当前账号权限运行，无文件、网络及 CPU/内存隔离；可能读写项目外文件、访问凭据、连接外网或内网、启动其他程序并消耗系统资源。审批仅确认程序与参数，不保证项目脚本及依赖的实际行为。'
     } else if (req.operation === 'file.list') {
       const payload = ToolInputs['file.list'].parse(req.payload)
       pathLabel = payload.path
@@ -214,7 +218,7 @@ export class WriteApprovalQueue {
     approval.resolve({
       approved,
       requestHash: approval.requestHash,
-      resourceHash: approval.resourceHash,
+      resourceHash: approved ? approval.resourceHash : undefined,
     })
     return true
   }

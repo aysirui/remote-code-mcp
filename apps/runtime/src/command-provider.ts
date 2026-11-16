@@ -1,4 +1,8 @@
 import { spawn } from 'node:child_process'
+import { createRequire } from 'node:module'
+
+/** 保留参数数组语义，并处理 Windows 的 pnpm.cmd 等命令启动器。 */
+const spawnCommand = createRequire(__filename)('cross-spawn') as typeof spawn
 
 /** Command 执行请求仅由 Runtime 内部构造，不直接接收远程 MCP 入参。 */
 export interface CommandExecutionRequest {
@@ -8,7 +12,6 @@ export interface CommandExecutionRequest {
   env: NodeJS.ProcessEnv
   timeoutMs: number
   outputLimitBytes: number
-  shell?: boolean
 }
 
 /** 执行结果只返回有限长度的合并输出，不暴露子进程对象或本地运行环境。 */
@@ -62,7 +65,7 @@ function terminateProcessTree(child: ReturnType<typeof spawn>, force = false) {
 
 /**
  * 当前普通 spawn 后端：负责进程启动、输出限额和超时清理，不提供文件或网络隔离。
- * 后续 OS 沙箱接入时替换该 Provider，不应改变上层命令登记、审批和授权流程。
+ * 命令使用 Runtime 账号权限；是否执行由本地策略及单次审批决定。
  */
 export class SpawnCommandExecutionProvider implements CommandExecutionProvider {
   readonly capabilities: CommandExecutionCapabilities = {
@@ -74,12 +77,11 @@ export class SpawnCommandExecutionProvider implements CommandExecutionProvider {
 
   run(request: CommandExecutionRequest): Promise<CommandExecutionResult> {
     return new Promise((resolve, reject) => {
-      // shell 仅允许 Runtime 内部为 Windows 固定 pnpm.cmd 启动器显式开启。
-      const child = spawn(request.executable, request.args, {
+      const child = spawnCommand(request.executable, request.args, {
         cwd: request.cwd,
         env: request.env,
         stdio: ['ignore', 'pipe', 'pipe'],
-        shell: request.shell ?? false,
+        shell: false,
         detached: process.platform !== 'win32',
         windowsHide: true,
       })
@@ -121,19 +123,6 @@ export class SpawnCommandExecutionProvider implements CommandExecutionProvider {
   }
 }
 
-/** 默认后端失败关闭，避免未来新增调用入口意外绕过上层能力检查。 */
-class UnavailableCommandExecutionProvider implements CommandExecutionProvider {
-  readonly capabilities: CommandExecutionCapabilities = {
-    processTreeTermination: 'best-effort',
-    filesystemIsolation: false,
-    networkIsolation: false,
-    resourceLimits: false,
-  }
-
-  run(_request: CommandExecutionRequest): Promise<CommandExecutionResult> {
-    return Promise.reject(Error('COMMAND_ISOLATION_REQUIRED'))
-  }
-}
-
+/** 默认在本机运行；此能力不承诺文件、网络或资源隔离。 */
 export const commandExecutionProvider: CommandExecutionProvider =
-  new UnavailableCommandExecutionProvider()
+  new SpawnCommandExecutionProvider()

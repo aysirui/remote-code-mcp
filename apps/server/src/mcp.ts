@@ -139,7 +139,25 @@ export function installMcp(expressApp: Express, oauth: OAuthService, hub: Device
     exec('git.add', { paths: z.array(z.string().min(1).max(500)).min(1).max(50) })
     exec('git.commit', { message: z.string().trim().min(1).max(500) })
     exec('command.list', {})
-    exec('command.run', { command: z.string().regex(/^[a-z][a-z0-9_-]{1,39}$/) })
+    exec('command.run', {
+      command: z
+        .string()
+        .regex(/^[a-z][a-z0-9_-]{1,39}$/)
+        .optional()
+        .describe('本地登记的命令 ID；与 executable、args 互斥'),
+      executable: z
+        .string()
+        .trim()
+        .min(1)
+        .max(260)
+        .optional()
+        .describe('未登记命令的可执行程序；此形式始终需要本机单次审批'),
+      args: z
+        .array(z.string().max(500))
+        .max(20)
+        .optional()
+        .describe('临时命令的完整参数数组；仅与 executable 一起使用'),
+    })
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
     try {
       await server.connect(transport)

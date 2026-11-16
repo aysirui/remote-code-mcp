@@ -251,7 +251,7 @@ test('底层目录创建和移动也拒绝 Windows ADS 与尾随点', async () =
   }
 })
 
-test('Command allow 策略也不能绕过隔离要求，且不会启动程序', async () => {
+test('Command allow 策略允许已登记程序执行', async () => {
   const marker = path.join(root, 'command-marker.txt')
   const w = {
     ...workspace(),
@@ -264,8 +264,8 @@ test('Command allow 策略也不能绕过隔离要求，且不会启动程序', 
       },
     ],
   }
-  await expect(execute(w, rpc('command.run', { command: 'unsafe' }))).rejects.toThrow(
-    'COMMAND_ISOLATION_REQUIRED',
-  )
-  await expect(fs.stat(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+  await expect(execute(w, rpc('command.run', { command: 'unsafe' }))).resolves.toMatchObject({
+    exitCode: 0,
+  })
+  expect(await fs.readFile(marker, 'utf8')).toBe('executed')
 })

@@ -19,7 +19,11 @@ import {
 import { WriteApprovalQueue } from './write-approvals'
 import { startLocalServer } from './local-server'
 import { LocalEvents } from './local-events'
-import { commandFingerprint, resolveCommand } from './command-operations'
+import {
+  commandFingerprint,
+  resolveCommandRequest,
+  commandRequiresApproval,
+} from './command-operations'
 import { gitApprovalContext } from './git-operations'
 import { inspectDeleteTarget, HIGH_RISK_DELETE_THRESHOLD } from './file-operations'
 import { resolveSafe } from './path-safety'
@@ -144,9 +148,7 @@ function connect() {
       // 在审批前固定命令定义的指纹，防止用户等待期间修改命令可执行程序或参数。
       const approvedCommand =
         parsed.operation === 'command.run'
-          ? commandFingerprint(
-              resolveCommand(workspace, String((parsed.payload as { command?: unknown }).command)),
-            )
+          ? commandFingerprint(resolveCommandRequest(workspace, parsed.payload).command)
           : undefined
 
       let approvalResourceHash: string | undefined
@@ -162,6 +164,8 @@ function connect() {
       // 普通文件删除在 allow 下直接执行；审批队列最多等待五分钟。
       if (
         policy === 'approval' ||
+        (parsed.operation === 'command.run' &&
+          commandRequiresApproval(workspace, parsed.payload)) ||
         operationRequiresLocalApproval(parsed.operation) ||
         highRiskDelete
       ) {
@@ -181,6 +185,12 @@ function connect() {
             const current = await inspectDeleteTarget(target)
             if (current.fingerprint !== decision.resourceHash)
               throw Error('DELETE_TARGET_CHANGED_DURING_APPROVAL')
+          } else if (parsed.operation === 'command.run') {
+            if (
+              commandFingerprint(resolveCommandRequest(workspace, parsed.payload).command) !==
+              decision.resourceHash
+            )
+              throw Error('COMMAND_CHANGED_DURING_APPROVAL')
           } else {
             const current = await gitApprovalContext(workspace, parsed.operation, parsed.payload)
             if (current.fingerprint !== decision.resourceHash)
@@ -203,9 +213,8 @@ function connect() {
         (operationRequiresWrite(parsed.operation) && !workspace.permissions.write) ||
         policyForOperation(workspace, parsed.operation) !== policy ||
         (approvedCommand !== undefined &&
-          commandFingerprint(
-            resolveCommand(workspace, String((parsed.payload as { command?: unknown }).command)),
-          ) !== approvedCommand)
+          commandFingerprint(resolveCommandRequest(workspace, parsed.payload).command) !==
+            approvedCommand)
       )
         throw Error('WORKSPACE_PERMISSION_REVOKED')
       // execute 内部再次校验工作区权限、策略、参数和路径，形成独立的执行层防线。

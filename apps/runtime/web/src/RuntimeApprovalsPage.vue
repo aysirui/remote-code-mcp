@@ -45,7 +45,7 @@ function operationTitle(operation: string) {
     'git.status': '读取 Git 状态',
     'git.log': '读取 Git 提交历史',
     'git.diff': '读取 Git 差异',
-    'command.run': '执行本地登记命令',
+    'command.run': '执行本机命令',
     'command.list': '读取本地命令清单',
   }
   return labels[operation] || '本地操作'
@@ -71,7 +71,7 @@ function formatBytes(bytes: number) {
       <div class="approval-heading">
         <div class="approval-eyebrow">RUNTIME SECURITY CENTER</div>
         <h1>本地操作审批</h1>
-        <p>需要人工确认的请求集中在这里；普通操作遵循双端授权策略。</p>
+        <p>需要人工确认的请求集中在这里；操作遵循本地授权策略。</p>
       </div>
       <div class="approval-counter" :class="{ 'has-pending': writeApprovals.length }">
         <span class="counter-number">{{ writeApprovals.length }}</span>
@@ -158,8 +158,14 @@ function formatBytes(bytes: number) {
           <strong>{{ formatBytes(approval.bytes) }}</strong>
         </div>
 
-        <details v-if="approval.preview" class="detail-panel">
-          <summary>查看操作详情</summary>
+        <details
+          v-if="approval.preview"
+          class="detail-panel"
+          :open="approval.operation === 'command.run'"
+        >
+          <summary>
+            {{ approval.operation === 'command.run' ? '执行命令与风险' : '查看操作详情' }}
+          </summary>
           <pre>{{ approval.preview }}</pre>
           <span v-if="approval.truncated" class="truncated-note"
             >内容较长，仅展示前 2000 个字符。</span
@@ -167,7 +173,11 @@ function formatBytes(bytes: number) {
         </details>
 
         <div v-if="approval.riskLevel === 'high'" class="high-risk-note">
-          该请求影响超过 20 个目录项。批准前请确认目标路径及影响范围。
+          {{
+            approval.operation === 'command.run'
+              ? '命令以本机账号权限运行，可访问项目外文件和网络。请核对完整程序、参数和工作目录后，仅批准可信请求。'
+              : '该请求影响超过 20 个目录项。批准前请确认目标路径及影响范围。'
+          }}
         </div>
 
         <footer class="approval-actions">

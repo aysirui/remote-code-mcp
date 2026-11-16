@@ -11,12 +11,7 @@ import {
   deleteChecked,
   sha,
 } from './file-operations'
-import {
-  runCheckedCommand,
-  listCommands,
-  resolveCommand,
-  assertCommandIsolation,
-} from './command-operations'
+import { runCheckedCommand, listCommands, resolveCommandRequest } from './command-operations'
 import { gitStatus, gitLog, gitDiff, gitAdd, gitCommit, gitApprovalContext } from './git-operations'
 
 /** 保持路径安全检查为工具执行器的公共入口，便于安全测试直接调用。 */
@@ -99,9 +94,7 @@ export async function validateOperationSafety(w: LocalWorkspace, req: RpcRequest
       ToolInputs['command.list'].parse(req.payload)
       return
     case 'command.run': {
-      assertCommandIsolation()
-      const p = ToolInputs['command.run'].parse(req.payload)
-      resolveCommand(w, p.command)
+      resolveCommandRequest(w, req.payload)
       return
     }
   }
@@ -221,7 +214,7 @@ export async function execute(w: LocalWorkspace, req: RpcRequest, approvalResour
       return listCommands(w).map(({ id, name }) => ({ id, name }))
     case 'command.run': {
       const payload = ToolInputs['command.run'].parse(req.payload)
-      return runCheckedCommand(w, payload.command)
+      return runCheckedCommand(w, payload, approvalResourceHash)
     }
     default:
       throw Error('UNSUPPORTED_OPERATION')

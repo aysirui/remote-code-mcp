@@ -150,26 +150,24 @@ test('Git add rejects repositories with configured external filters', async () =
   await expect(gitAdd(ws(true), ['README.md'])).rejects.toThrow('GIT_FILTERS_NOT_ALLOWED')
 })
 
-test('缺少隔离后端时不能通过登记命令执行任意程序', async () => {
+test('已登记命令在 allow 下可以运行，并保留超时终止', async () => {
   const command = {
     id: 'long-running',
-    name: 'Long running test',
+    name: '超时测试',
     executable: process.execPath,
-    args: [
-      '-e',
-      "require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); setInterval(() => {}, 1000)",
-    ],
+    args: ['-e', 'setInterval(() => {}, 1000)'],
   }
-  await expect(
-    runCheckedCommand(
-      {
-        ...ws(true),
-        commands: [command],
-      },
-      'long-running',
-      150,
-    ),
-  ).rejects.toThrow('COMMAND_ISOLATION_REQUIRED')
+  const result = await runCheckedCommand(
+    {
+      ...ws(true),
+      policies: { file: 'allow', git: 'allow', command: 'allow' },
+      commands: [command],
+    },
+    { command: 'long-running' },
+    undefined,
+    150,
+  )
+  expect(result.output).toContain('COMMAND_TIMEOUT')
 })
 
 test('普通文件和小目录删除不达到高危阈值，批量目录删除超过 20 项触发高危判定', async () => {

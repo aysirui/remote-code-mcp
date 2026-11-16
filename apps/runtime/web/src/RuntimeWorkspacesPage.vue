@@ -66,7 +66,8 @@ function onWorkspaceAction(action: string, workspace: Workspace) {
     </header>
     <p class="workspace-description">
       管理当前服务器对本地项目的访问权限。File、Git、Command 策略分别配置，各服务器之间相互独立。Git
-      暂存和提交始终需要本机逐次确认。
+      暂存和提交始终需要本机逐次确认。未登记命令即使在 Command
+      完全允许时也需单次审批；禁止策略会拒绝所有命令。
     </p>
 
     <el-empty v-if="!workspaces.length" description="尚未添加本地工作区" />
@@ -204,7 +205,7 @@ function onWorkspaceAction(action: string, workspace: Workspace) {
     @close="commandWorkspace = null"
   >
     <el-alert
-      title="命令定义供本机目录共用；是否逐次审批由 Command 权限策略决定，Hard Deny 始终生效。"
+      title="登记命令遵循 Command 策略；未登记命令需单次审批。命令以本机账号权限运行，可访问项目外文件与网络。"
       type="warning"
       :closable="false"
       style="margin-bottom: 18px"

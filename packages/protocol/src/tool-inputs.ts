@@ -1,5 +1,30 @@
 import { z } from 'zod'
 
+/** 登记命令使用 ID；临时命令使用程序和完整参数，必须单次审批。两种形式不能混用。 */
+export const CommandRunInputSchema = z.union([
+  z.object({ command: z.string().regex(/^[a-z][a-z0-9_-]{1,39}$/) }).strict(),
+  z
+    .object({
+      executable: z
+        .string()
+        .trim()
+        .min(1)
+        .max(260)
+        .regex(/^[^\r\n\0]+$/),
+      args: z
+        .array(
+          z
+            .string()
+            .max(500)
+            .regex(/^[^\r\n\0]*$/),
+        )
+        .max(20)
+        .default([]),
+    })
+    .strict(),
+])
+export type CommandRunInput = z.infer<typeof CommandRunInputSchema>
+
 /**
  * 所有工具的参数校验 Schema。
  * 外部输入必须先经过 Zod 检验，再由 Runtime 进行路径和权限安全校验。
@@ -43,8 +68,5 @@ export const ToolInputs = {
     message: z.string().trim().min(1).max(500),
   }),
   'command.list': z.object({}),
-  'command.run': z.object({
-    /** AI 只能传命令 ID，不能携带任意 executable、args 或 Shell 文本。 */
-    command: z.string().regex(/^[a-z][a-z0-9_-]{1,39}$/),
-  }),
+  'command.run': CommandRunInputSchema,
 }

@@ -16,10 +16,10 @@ const request = (
   ...overrides,
 })
 
-test('默认后端本身拒绝执行，不能绕过上层能力检查', async () => {
-  await expect(commandExecutionProvider.run(request(['-e', 'process.exit(0)']))).rejects.toThrow(
-    'COMMAND_ISOLATION_REQUIRED',
-  )
+test('默认后端可运行本机命令', async () => {
+  await expect(
+    commandExecutionProvider.run(request(['-e', 'process.stdout.write("local-ok")'])),
+  ).resolves.toMatchObject({ exitCode: 0, output: 'local-ok' })
 })
 
 test('明确声明普通 spawn 不提供 OS 级隔离', () => {

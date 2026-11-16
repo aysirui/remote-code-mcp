@@ -204,7 +204,7 @@ export function useRuntimeConsole() {
           ['command.run', 'git.add', 'git.commit'].includes(operation || '')
         const message =
           operation === 'command.run'
-            ? '将执行本地预先登记的命令，可能修改项目或访问本机资源。请确认命令和工作区后再批准。'
+            ? `${item?.preview || ''}\n\n批准仅对本次请求有效，是否执行？`
             : operation === 'file.delete'
               ? item?.riskLevel === 'high'
                 ? `这将递归删除 ${item.itemCount} 个目录项，且无法保证撤销。请再次核对目标路径和影响范围。`
@@ -414,7 +414,7 @@ export function useRuntimeConsole() {
       if (policy === 'allow') {
         const description =
           domain === 'command'
-            ? '已登记命令将在不逐次确认的情况下执行。命令仍受本地固定命令注册表及 Hard Deny 限制。'
+            ? '内置及已登记命令将免逐次审批，以本机账号权限执行，可访问项目外文件和网络。未登记命令仍需单次审批。'
             : domain === 'file'
               ? '文件工具将在不逐次确认的情况下执行；工作区读写开关及路径 Hard Deny 仍然生效。'
               : 'Git 工具将在不逐次确认的情况下执行；Git 固定子命令及环境隔离仍然生效。'
@@ -443,7 +443,7 @@ export function useRuntimeConsole() {
     commandArgs.value = '[]'
   }
 
-  /** 保存本地固定命令定义；入参由 Runtime 校验，远程只能引用命令 ID。 */
+  /** 保存本地固定命令定义；临时命令通过单次审批执行，不会自动登记。 */
   async function addCommand() {
     const workspace = commandWorkspace.value
     if (!workspace) return

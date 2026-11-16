@@ -66,7 +66,11 @@ export function startLocalServer(options: LocalServerOptions) {
   app.use(/^\/local\/api(?=\/|$)/i, api)
   api.use((req, res, next) => {
     if (req.headers.authorization !== 'Bearer ' + localKey) {
-      res.status(401).json({ error: 'unauthorized' })
+      res.status(401).json({
+        code: 'LOCAL_AUTH_REQUIRED',
+        error:
+          '本地管理凭据无效，请打开当前 Runtime 启动终端中的完整链接；找不到链接时，请重启 Runtime 后使用新链接。',
+      })
       return
     }
     next()
@@ -359,6 +363,7 @@ export function startLocalServer(options: LocalServerOptions) {
           id: randomUUID(),
           name: String(req.body.name || path.basename(root)).slice(0, 128),
           root,
+          commands: [],
         }
         config.workspaces.push(workspace)
       }

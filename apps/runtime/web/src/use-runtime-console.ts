@@ -1,9 +1,11 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { LocalAuthorizationError } from './local-auth'
 
 /** 取消弹窗属于正常交互；其他错误向用户显示，避免默默失败。 */
 const reportError = (error: unknown) => {
   if (error === 'cancel' || error === 'close') return
+  if (error instanceof LocalAuthorizationError) return
   ElMessage.error(error instanceof Error ? error.message : '操作失败')
 }
 
@@ -92,6 +94,7 @@ interface WriteApprovalView {
 export function useRuntimeConsole() {
   const browserWindow = window
   const token = ref(sessionStorage.getItem('rcm_key') || '')
+  const authorizationExpired = ref(false)
   const status = ref<RuntimeStatus>({
     runtimeVersion: '',
     online: false,
@@ -134,20 +137,51 @@ export function useRuntimeConsole() {
     status.value = next
   }
 
-  if (location.hash.includes('token=')) {
+  /** 新启动链接可以在同一标签页恢复会话，不必再重启进程。 */
+  function readTokenFromUrl() {
     const t = new URLSearchParams(location.hash.slice(1)).get('token')
     if (t) {
       token.value = t
+      authorizationExpired.value = false
       sessionStorage.setItem('rcm_key', t)
-      history.replaceState(null, '', location.pathname)
+      history.replaceState(null, '', location.pathname + location.search)
+      return true
     }
+    return false
+  }
+  readTokenFromUrl()
+
+  /** 凭据失效后清除旧会话与过期数据，停止继续使用无效凭据请求。 */
+  function invalidateLocalSession() {
+    authorizationExpired.value = true
+    token.value = ''
+    sessionStorage.removeItem('rcm_key')
+    unsubscribeEvents?.()
+    unsubscribeEvents = undefined
+    status.value = { ...status.value, online: false }
+    workspaces.value = []
+    writeApprovals.value = []
+    pairing.value = null
+    commandWorkspace.value = null
+    showAdd.value = false
+    showAddServer.value = false
   }
 
-  const api = <T = unknown>(
+  const api = async <T = unknown>(
     path: string,
     method: 'GET' | 'POST' | 'PATCH' | 'DELETE' = 'GET',
     data?: unknown,
-  ) => requestLocal<T>(path, token.value, method, data)
+  ) => {
+    const requestToken = token.value
+    try {
+      return await requestLocal<T>(path, requestToken, method, data)
+    } catch (error) {
+      // 丢弃旧会话迟到的 401，避免覆盖刚从新链接恢复的会话。
+      if (error instanceof LocalAuthorizationError && token.value === requestToken)
+        invalidateLocalSession()
+      throw error
+    }
+  }
 
   /** 读取轻量连接状态；离线时立即清空已失效的审批展示。 */
   async function refreshStatus() {
@@ -287,7 +321,7 @@ export function useRuntimeConsole() {
           ? `移除 ${server.name} 前会先向该服务器撤销设备绑定；无法连接时会保留配置。`
           : `确认移除 ${server.name}？`,
         '移除服务器',
-        { type: 'warning', confirmButtonText: '移除服务器' },
+        { type: 'warning', confirmButtonText: '移除服务器', confirmButtonType: 'danger' },
       )
       await manageServer(() => api('servers/' + server.id, 'DELETE'), '服务器配置已移除')
     } catch (error: unknown) {
@@ -471,7 +505,7 @@ export function useRuntimeConsole() {
       await ElMessageBox.confirm(
         '确认移除 ' + command.name + '？这会使尚未完成的审批请求失效。',
         '移除本地命令',
-        { type: 'warning' },
+        { type: 'warning', confirmButtonText: '移除命令', confirmButtonType: 'danger' },
       )
       await api('workspaces/' + w.id + '/commands/' + encodeURIComponent(command.id), 'DELETE')
       await refresh()
@@ -487,7 +521,7 @@ export function useRuntimeConsole() {
       await ElMessageBox.confirm(
         '确认从本机目录清单及所有服务器授权中移除 ' + w.name + '？本地文件会保留。',
         '移除工作区',
-        { type: 'warning' },
+        { type: 'warning', confirmButtonText: '移除工作区', confirmButtonType: 'danger' },
       )
       await api('workspaces/' + w.id, 'DELETE')
       await refresh()
@@ -503,7 +537,7 @@ export function useRuntimeConsole() {
       await ElMessageBox.confirm(
         `确认解除 ${status.value.serverName} 的设备绑定？服务器中的设备将被撤销，之后需要重新配对。暂停连接或切换服务器无需解除绑定。`,
         '解除设备绑定',
-        { type: 'warning', confirmButtonText: '解除绑定' },
+        { type: 'warning', confirmButtonText: '解除绑定', confirmButtonType: 'danger' },
       )
       await manageServer(() => api('unpair', 'POST', { serverId }), '设备绑定已在服务器撤销')
     } catch (error: unknown) {
@@ -511,20 +545,39 @@ export function useRuntimeConsole() {
     }
   }
 
-  // SSE 首次连接会推送状态、工作区和审批快照；不再额外启动重复轮询。
-  onMounted(() => {
+  /** SSE 首次连接推送完整快照；凭据错误需要新链接，网络中断仍自动重连。 */
+  function connectEvents() {
+    unsubscribeEvents?.()
     if (!token.value) return
-    unsubscribeEvents = subscribeLocalEvents(token.value, applyEvent, (error) =>
-      console.warn('Runtime 本地事件流中断，正在重连', error),
+    const eventToken = token.value
+    unsubscribeEvents = subscribeLocalEvents(
+      eventToken,
+      (name, data) => {
+        if (token.value === eventToken) applyEvent(name, data)
+      },
+      (error) => {
+        if (token.value !== eventToken) return
+        if (error instanceof LocalAuthorizationError) invalidateLocalSession()
+        else console.warn('Runtime 本地事件流中断，正在重连', error)
+      },
     )
+  }
+  function restoreFromUrl() {
+    if (readTokenFromUrl()) connectEvents()
+  }
+  onMounted(() => {
+    connectEvents()
+    browserWindow.addEventListener('hashchange', restoreFromUrl)
   })
   onUnmounted(() => {
     unsubscribeEvents?.()
+    browserWindow.removeEventListener('hashchange', restoreFromUrl)
   })
 
   return {
     browserWindow,
     token,
+    authorizationExpired,
     status,
     workspaces,
     writeApprovals,

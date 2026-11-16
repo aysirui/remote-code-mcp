@@ -168,7 +168,7 @@ export function useConsole() {
       await ElMessageBox.confirm(
         `解绑后 ${d.name} 将立刻无法访问本平台，需重新配对。`,
         '确认解绑',
-        { type: 'warning', confirmButtonText: '解绑设备' },
+        { type: 'warning', confirmButtonText: '解绑设备', confirmButtonType: 'danger' },
       )
       await request(`/api/me/devices/${d.id}`, 'DELETE')
       await refresh()
@@ -195,7 +195,7 @@ export function useConsole() {
       await ElMessageBox.confirm(
         '撤销后，相关 AI 客户端需要重新授权才能调用 MCP 工具。',
         '撤销 AI 连接',
-        { type: 'warning' },
+        { type: 'warning', confirmButtonText: '撤销连接', confirmButtonType: 'danger' },
       )
       await request('/api/me/oauth-grants/' + encodeURIComponent(g.clientId), 'DELETE')
       await refresh()
@@ -208,7 +208,11 @@ export function useConsole() {
   /** 管理员撤销指定设备的凭据并立即断开其连接。 */
   async function adminRevoke(d: Device) {
     try {
-      await ElMessageBox.confirm('撤销后设备必须重新绑定。', '管理员撤销设备', { type: 'warning' })
+      await ElMessageBox.confirm('撤销后设备必须重新绑定。', '管理员撤销设备', {
+        type: 'warning',
+        confirmButtonText: '撤销设备',
+        confirmButtonType: 'danger',
+      })
       await request('/api/admin/devices/' + d.id + '/revoke', 'POST')
       await refresh()
     } catch (error: unknown) {

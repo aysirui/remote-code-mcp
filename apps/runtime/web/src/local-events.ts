@@ -1,3 +1,5 @@
+import { LocalAuthorizationError } from './local-auth'
+
 /** 本地 SSE 事件名，只订阅页面展示需要的数据。 */
 export type LocalEventName = 'status' | 'workspaces' | 'write-approvals'
 
@@ -38,6 +40,11 @@ export function subscribeLocalEvents(
         cache: 'no-store',
         signal: controller.signal,
       })
+      if (response.status === 401) {
+        stopped = true
+        onError(new LocalAuthorizationError())
+        return
+      }
       if (!response.ok || !response.body)
         throw new Error(`本地事件连接失败：HTTP ${response.status}`)
       const reader = response.body.getReader()

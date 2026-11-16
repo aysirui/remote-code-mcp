@@ -55,7 +55,12 @@ export const policyForOperation = (
 }
 
 /** 本地目录与命令只登记一次；权限保存在各服务器的授权中。 */
-export type WorkspaceDefinition = Pick<LocalWorkspace, 'id' | 'name' | 'root' | 'commands'>
+export interface WorkspaceDefinition {
+  id: string
+  name: string
+  root: string
+  commands?: LocalCommand[]
+}
 export type WorkspaceAuthorization = {
   workspaceId: string
   id: string

@@ -2,9 +2,10 @@
 import { provide } from 'vue'
 import { FolderOpened, Connection, Refresh, DocumentChecked } from '@element-plus/icons-vue'
 import { useRuntimeConsole } from './use-runtime-console'
+import { LOCAL_AUTH_RECOVERY } from './local-auth'
 const ctx = useRuntimeConsole()
 provide('runtime', ctx)
-const { token, status, writeApprovals, refresh } = ctx
+const { token, authorizationExpired, status, writeApprovals, refresh } = ctx
 </script>
 <template>
   <div class="runtime-shell">
@@ -44,7 +45,7 @@ const { token, status, writeApprovals, refresh } = ctx
           }}</strong>
         </div>
         <div class="runtime-header-actions">
-          <el-tag :type="status.online ? 'success' : 'info'" effect="plain">{{
+          <el-tag v-if="token" :type="status.online ? 'success' : 'info'" effect="plain">{{
             status.paused
               ? '连接已暂停'
               : !status.paired
@@ -62,8 +63,12 @@ const { token, status, writeApprovals, refresh } = ctx
         <el-alert
           v-if="!token"
           type="error"
-          title="未授权访问"
-          description="请使用 Runtime 启动终端中显示的本地管理 URL 打开本界面。"
+          :title="authorizationExpired ? '本地管理凭据已失效' : '请使用本地管理链接打开'"
+          :description="
+            authorizationExpired
+              ? LOCAL_AUTH_RECOVERY
+              : '请使用当前 Runtime 启动终端打印的完整链接（包含 #token=）。如果找不到该链接，请重启 Runtime，再使用新打印的链接打开页面。'
+          "
           :closable="false"
         />
         <router-view v-else />

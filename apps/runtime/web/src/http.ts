@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { LocalAuthorizationError } from './local-auth'
 
 /** Runtime 本地管理 API 的响应结构，错误消息由本地服务返回。 */
 interface LocalApiError {
@@ -26,7 +27,7 @@ export async function requestLocal<T = unknown>(
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE' = 'GET',
   data?: unknown,
 ): Promise<T> {
-  if (!token) throw Error('未授权的本地管理请求')
+  if (!token) throw new LocalAuthorizationError()
   try {
     const response = await client.request<T>({
       url: path,
@@ -36,6 +37,8 @@ export async function requestLocal<T = unknown>(
     })
     return response.data
   } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 401)
+      throw new LocalAuthorizationError()
     if (axios.isAxiosError<LocalApiError>(error))
       throw new Error(
         error.response?.data?.error || error.response?.data?.message || '本地请求失败',

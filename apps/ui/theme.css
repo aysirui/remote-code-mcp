@@ -1,3 +1,5 @@
+@import './overlays.css';
+
 /* 两端共享的工作台设计变量，状态色保留明确语义。 */
 :root {
   --ui-bg: #f5f6f8;
@@ -105,14 +107,6 @@ input {
 }
 .el-empty__image {
   width: 84px !important;
-}
-.el-dialog,
-.el-message-box {
-  max-width: calc(100vw - 32px);
-  border-radius: 10px;
-}
-.el-dialog__body {
-  overflow-wrap: anywhere;
 }
 .el-form-item__label {
   font-weight: 500;

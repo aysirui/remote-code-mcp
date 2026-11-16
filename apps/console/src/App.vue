@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { provide, watch } from 'vue'
+import { computed, provide, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Monitor,
@@ -18,7 +18,7 @@ import AuthPage from './AuthPage.vue'
 import PasswordPage from './PasswordPage.vue'
 const ctx = useConsole()
 provide('console', ctx)
-const { me, loading, page, isAdmin, title, refresh, logout } = ctx
+const { me, loading, page, isAdmin, title, refresh, refreshing, logout } = ctx
 const router = useRouter()
 /** 管理页仅管理员可打开；未登录与首次改密由根布局统一拦截展示。 */
 watch(
@@ -35,6 +35,18 @@ watch(
   },
   { immediate: true },
 )
+const descriptions: Record<string, string> = {
+  overview: '查看设备连接与工作区授权概况',
+  devices: '管理已绑定设备及其连接状态',
+  workspaces: '独立控制每个工作区的云端访问策略',
+  connections: '连接 AI 客户端，管理持久授权',
+  history: '追踪工具执行结果与耗时',
+  'admin-users': '管理平台账户及访问状态',
+  'admin-audit': '追踪权限变更与平台安全事件',
+  'admin-devices': '查看平台设备，撤销失效授权',
+  'admin-overview': '了解平台资源与连接状态',
+}
+const pageDescription = computed(() => descriptions[page.value] || '管理设备与 AI 工具授权')
 </script>
 <template>
   <div v-if="loading" class="loading-screen">
@@ -45,9 +57,11 @@ watch(
   <div v-else class="app-shell">
     <aside class="sidebar">
       <div class="brand">
-        <span class="brand-mark">◈</span><span class="brand-text">Remote Code MCP</span>
+        <img class="brand-mark" src="/remote-code-logo.png" alt="" width="32" height="32" />
+        <span class="brand-text">Remote Code<span class="brand-caption">控制中心</span></span>
       </div>
-      <nav class="nav">
+      <nav class="nav" aria-label="控制台导航">
+        <div class="nav-group-label">工作空间</div>
         <router-link
           v-for="item in [
             { id: 'overview', name: '工作台概览', icon: DataAnalysis },
@@ -58,16 +72,13 @@ watch(
           ]"
           :key="item.id"
           :to="pagePaths[item.id]"
+          :title="item.name"
+          :aria-current="page === item.id ? 'page' : undefined"
           :class="{ active: page === item.id }"
           ><el-icon><component :is="item.icon" /></el-icon
           ><span class="label">{{ item.name }}</span></router-link
         >
-        <div
-          v-if="isAdmin"
-          style="padding: 22px 13px 9px; color: #7285a0; font-size: 11px; font-weight: 700"
-        >
-          ADMINISTRATION
-        </div>
+        <div v-if="isAdmin" class="nav-group-label">平台管理</div>
         <router-link
           v-for="item in isAdmin
             ? [
@@ -79,18 +90,22 @@ watch(
             : []"
           :key="item.id"
           :to="pagePaths[item.id]"
+          :title="item.name"
+          :aria-current="page === item.id ? 'page' : undefined"
           :class="{ active: page === item.id }"
           ><el-icon><component :is="item.icon" /></el-icon
           ><span class="label">{{ item.name }}</span></router-link
         >
       </nav>
-      <div class="sidebar-footer">v0.1.0 · Secure by default</div>
+      <div class="sidebar-footer"><span class="security-dot"></span> 授权访问 · 安全连接</div>
     </aside>
     <div class="content">
       <header class="topbar">
-        <div class="muted">工作空间 / {{ title }}</div>
-        <div style="display: flex; align-items: center; gap: 12px">
-          <span class="muted">{{ me.email }}</span
+        <div class="breadcrumbs">
+          <span>控制中心</span><span>/</span><strong>{{ title }}</strong>
+        </div>
+        <div class="account-actions">
+          <span class="account-email" :title="me.email">{{ me.email }}</span
           ><el-button text @click="logout"
             ><el-icon><SwitchButton /></el-icon> 退出</el-button
           >
@@ -101,9 +116,9 @@ watch(
         <div class="pagehead">
           <div>
             <h1>{{ title }}</h1>
-            <div class="muted">统一管理你的本地设备与 AI 工具授权</div>
+            <div class="muted">{{ pageDescription }}</div>
           </div>
-          <el-button :icon="Refresh" @click="refresh">刷新</el-button>
+          <el-button :icon="Refresh" :loading="refreshing" @click="refresh">刷新</el-button>
         </div>
         <router-view />
       </main>

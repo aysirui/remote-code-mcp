@@ -4,7 +4,7 @@ export type LocalEventName = 'status' | 'workspaces' | 'write-approvals'
 /**
  * 用 fetch + ReadableStream 读取 SSE，便于通过 Authorization Header 认证。
  * 原生 EventSource 不支持自定义请求头，因此不能直接复用现有 Bearer Token 安全机制。
- * SSE 只承载单向推送，配置修改与写入审批仍使用受保护的 HTTP API。
+ * SSE 只承载单向推送，配置修改与操作审批仍使用受保护的 HTTP API。
  */
 export function subscribeLocalEvents(
   token: string,

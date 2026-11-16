@@ -28,7 +28,7 @@ const { devices, workspaces, navigate } = inject<ConsoleContext>('console')!
       <h3 class="card-title">最近设备</h3>
       <el-button text type="primary" @click="navigate('devices')">查看全部</el-button>
     </div>
-    <div v-for="d in devices" :key="d.id" class="device-row">
+    <div v-for="d in devices.slice(0, 5)" :key="d.id" class="device-row">
       <div class="device-icon">
         <el-icon><Monitor /></el-icon>
       </div>

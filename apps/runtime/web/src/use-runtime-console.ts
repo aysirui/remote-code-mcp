@@ -82,7 +82,10 @@ interface WriteApprovalView {
   bytes: number
   preview: string
   truncated: boolean
+  itemCount: number
+  riskLevel: 'normal' | 'high'
   createdAt: number
+  expiresAt: number
 }
 
 /** Runtime 本地管理视图的数据模型。 */
@@ -196,14 +199,16 @@ export function useRuntimeConsole() {
       if (approve) {
         const item = writeApprovals.value.find((x) => x.id === id)
         const operation = item?.operation
-        const sensitive = ['file.delete', 'command.run', 'git.add', 'git.commit'].includes(
-          operation || '',
-        )
+        const sensitive =
+          item?.riskLevel === 'high' ||
+          ['command.run', 'git.add', 'git.commit'].includes(operation || '')
         const message =
           operation === 'command.run'
             ? '将执行本地预先登记的命令，可能修改项目或访问本机资源。请确认命令和工作区后再批准。'
             : operation === 'file.delete'
-              ? '这项操作可能删除文件或目录，且无法保证撤销。请核对路径后再批准。'
+              ? item?.riskLevel === 'high'
+                ? `这将递归删除 ${item.itemCount} 个目录项，且无法保证撤销。请再次核对目标路径和影响范围。`
+                : '这项操作将删除指定文件或空目录。请核对路径后再批准。'
               : operation === 'git.add'
                 ? '将把列出的普通文件加入 Git 暂存区。请核对文件路径和内容是否符合预期。'
                 : operation === 'git.commit'

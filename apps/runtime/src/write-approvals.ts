@@ -3,6 +3,8 @@ import { ToolInputs, type RpcRequest } from '@rcm/protocol'
 import type { LocalWorkspace } from './state'
 import { resolveCommand } from './command-operations'
 import { gitApprovalContext } from './git-operations'
+import { inspectDeleteTarget, HIGH_RISK_DELETE_THRESHOLD } from './file-operations'
+import { resolveSafe, assertSafeRelativePath } from './path-safety'
 
 /** 本地审批页面可展示的待处理任务；详情只驻留 Runtime 内存，不上传或落库。 */
 export interface WriteApprovalInfo {
@@ -15,6 +17,10 @@ export interface WriteApprovalInfo {
   bytes: number
   preview: string
   truncated: boolean
+  /** 目录删除影响条目数；仅本地审批 UI 可见。 */
+  itemCount: number
+  /** normal / high；风险等级由 Runtime 根据本地资源计算。 */
+  riskLevel: 'normal' | 'high'
   createdAt: number
   expiresAt: number
 }
@@ -55,6 +61,8 @@ export class WriteApprovalQueue {
         bytes,
         preview,
         truncated,
+        itemCount,
+        riskLevel,
         createdAt,
         expiresAt,
       }) => ({
@@ -66,6 +74,8 @@ export class WriteApprovalQueue {
         bytes,
         preview,
         truncated,
+        itemCount,
+        riskLevel,
         createdAt,
         expiresAt,
       }),
@@ -79,6 +89,8 @@ export class WriteApprovalQueue {
     let preview = ''
     let bytes = 0
     let previewTruncated = false
+    let itemCount = 0
+    let riskLevel: 'normal' | 'high' = 'normal'
     let resourceHash: string | undefined
     if (req.operation === 'file.write') {
       const payload = ToolInputs['file.write'].parse(req.payload)
@@ -96,8 +108,16 @@ export class WriteApprovalQueue {
       preview = '移动或重命名本地文件/目录，不覆盖目标'
     } else if (req.operation === 'file.delete') {
       const payload = ToolInputs['file.delete'].parse(req.payload)
+      assertSafeRelativePath(payload.path)
       pathLabel = payload.path
-      preview = payload.recursive ? '递归删除目录（不可撤销）' : '删除文件或空目录（不可撤销）'
+      const target = await resolveSafe(workspace, payload.path)
+      const snapshot = await inspectDeleteTarget(target)
+      itemCount = snapshot.entryCount
+      resourceHash = snapshot.fingerprint
+      riskLevel = payload.recursive && itemCount > HIGH_RISK_DELETE_THRESHOLD ? 'high' : 'normal'
+      preview = payload.recursive
+        ? `递归删除目录（影响 ${itemCount} 个目录项，不可撤销）`
+        : '删除文件或空目录（不可撤销）'
     } else if (req.operation === 'command.run') {
       const payload = ToolInputs['command.run'].parse(req.payload)
       const selected = resolveCommand(workspace, payload.command)
@@ -171,6 +191,8 @@ export class WriteApprovalQueue {
         bytes,
         preview,
         truncated: previewTruncated,
+        itemCount,
+        riskLevel,
         requestHash,
         resourceHash,
         createdAt,

@@ -21,11 +21,11 @@ import { startLocalServer } from './local-server'
 import { LocalEvents } from './local-events'
 import { commandFingerprint, resolveCommand } from './command-operations'
 import { gitApprovalContext } from './git-operations'
+import { inspectDeleteTarget, HIGH_RISK_DELETE_THRESHOLD } from './file-operations'
+import { resolveSafe } from './path-safety'
 
 const port = Number(process.env.RUNTIME_PORT || 18787)
 const localKey = randomBytes(32).toString('base64url')
-/** 与 Runtime 本地审批时限保持一致，避免审批未结束时 Gateway 先行超时。 */
-const RPC_TIMEOUT_MS = 5 * 60 * 1000
 const approvalRequestHash = (req: RpcRequest) =>
   createHash('sha256')
     .update(
@@ -47,7 +47,7 @@ let reconnectTimer: ReturnType<typeof setTimeout> | undefined
 const events = new LocalEvents()
 const approvals = new WriteApprovalQueue(() => events.publish('write-approvals'))
 
-/** 断开设备 WebSocket，并取消所有尚未完成的写入审批。 */
+/** 断开设备 WebSocket，并取消所有尚未完成的操作审批。 */
 function disconnect() {
   approvals.cancelAll()
   if (reconnectTimer) clearTimeout(reconnectTimer)
@@ -150,12 +150,21 @@ function connect() {
           : undefined
 
       let approvalResourceHash: string | undefined
-      // 删除、命令执行以及云端要求审批的操作都不能通过 allow 策略跳过本机确认。
-      // 审批队列最多等待五分钟；超时、拒绝或设备断线都会以拒绝结果结束请求。
+      // 文件删除根据本机真实目录项数量判断风险；工具名称本身不再触发强制审批。
+      let highRiskDelete = false
+      if (parsed.operation === 'file.delete') {
+        const payload = parsed.payload as { path: string; recursive: boolean }
+        const target = await resolveSafe(workspace, payload.path)
+        const snapshot = await inspectDeleteTarget(target)
+        highRiskDelete = payload.recursive && snapshot.entryCount > HIGH_RISK_DELETE_THRESHOLD
+      }
+      // 策略要求审批、云端要求审批、Git 高风险写操作或本机识别的高危删除均需确认。
+      // 普通文件删除在 allow 下直接执行；审批队列最多等待五分钟。
       if (
         policy === 'approval' ||
         parsed.approvalRequired ||
-        operationRequiresLocalApproval(parsed.operation)
+        operationRequiresLocalApproval(parsed.operation) ||
+        highRiskDelete
       ) {
         const expectedApprovalHash = approvalRequestHash(parsed)
         const decision = await approvals.request(parsed, workspace)
@@ -167,9 +176,17 @@ function connect() {
         )
           throw Error('APPROVAL_REQUEST_CHANGED')
         if (decision.resourceHash !== undefined) {
-          const current = await gitApprovalContext(workspace, parsed.operation, parsed.payload)
-          if (current.fingerprint !== decision.resourceHash)
-            throw Error('GIT_STATE_CHANGED_DURING_APPROVAL')
+          if (parsed.operation === 'file.delete') {
+            const payload = parsed.payload as { path: string }
+            const target = await resolveSafe(workspace, payload.path)
+            const current = await inspectDeleteTarget(target)
+            if (current.fingerprint !== decision.resourceHash)
+              throw Error('DELETE_TARGET_CHANGED_DURING_APPROVAL')
+          } else {
+            const current = await gitApprovalContext(workspace, parsed.operation, parsed.payload)
+            if (current.fingerprint !== decision.resourceHash)
+              throw Error('GIT_STATE_CHANGED_DURING_APPROVAL')
+          }
         }
       }
 

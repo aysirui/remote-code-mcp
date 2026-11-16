@@ -8,7 +8,10 @@ defineProps<{
 <template>
   <div class="auth-page">
     <aside class="auth-art">
-      <div class="auth-brand"><span class="auth-brand-symbol">◈</span> Remote Code MCP</div>
+      <div class="auth-brand">
+        <img class="auth-brand-symbol" src="/remote-code-logo.png" alt="" width="40" height="40" />
+        Remote Code MCP
+      </div>
       <div class="auth-hero">
         <div class="auth-kicker">SECURE REMOTE DEVELOPMENT</div>
         <h1>{{ headline }}</h1>

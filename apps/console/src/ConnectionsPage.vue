@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { inject, ref } from 'vue'
 import type { ConsoleContext } from './use-console'
+import { useLocalPage } from './use-local-page'
+import ListFooter from './ListFooter.vue'
 import { CopyDocument, Link, Refresh } from '@element-plus/icons-vue'
 const { mcpUrl, grants, revokeGrant, copyUrl, refresh } = inject<ConsoleContext>('console')!
 const refreshing = ref(false)
@@ -27,6 +29,7 @@ async function refreshGrants() {
     refreshing.value = false
   }
 }
+const { rows, page, pageSize, total, resize } = useLocalPage(grants)
 </script>
 <template>
   <div class="card connections-card">
@@ -50,7 +53,7 @@ async function refreshGrants() {
         <el-button :icon="Refresh" :loading="refreshing" @click="refreshGrants">刷新</el-button>
       </div>
       <ul v-if="grants.length" class="grants-list">
-        <li v-for="g in grants" :key="g.clientId" class="grant-row">
+        <li v-for="g in rows" :key="g.clientId" class="grant-row">
           <div class="grant-icon" aria-hidden="true">
             <el-icon><Link /></el-icon>
           </div>
@@ -108,12 +111,18 @@ async function refreshGrants() {
       title="授权说明"
       description="ChatGPT 只能操作你当前账号下的设备和工作区。文件写入仍受本地 Runtime 权限约束。"
     />
+    <ListFooter
+      v-if="total > 10"
+      :page="page"
+      :page-size="pageSize"
+      :total="total"
+      :busy="false"
+      @page="page = $event"
+      @size="resize"
+    />
   </div>
 </template>
 <style scoped>
-.connections-card {
-  max-width: 880px;
-}
 .connection-description,
 .grants-description,
 .grants-timezone {

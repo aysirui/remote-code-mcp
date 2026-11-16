@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { inject } from 'vue'
 import type { ConsoleContext } from './use-console'
+import { useLocalPage } from './use-local-page'
+import ListFooter from './ListFooter.vue'
 import { Monitor, Plus } from '@element-plus/icons-vue'
 const { devices, rename, revoke, navigate } = inject<ConsoleContext>('console')!
+const { rows, page, pageSize, total, resize } = useLocalPage(devices)
 </script>
 <template>
   <div class="card">
@@ -12,7 +15,7 @@ const { devices, rename, revoke, navigate } = inject<ConsoleContext>('console')!
         ><el-icon><Plus /></el-icon> 绑定设备</el-button
       >
     </div>
-    <div v-for="d in devices" :key="d.id" class="device-row">
+    <div v-for="d in rows" :key="d.id" class="device-row">
       <div class="device-icon">
         <el-icon><Monitor /></el-icon>
       </div>
@@ -31,5 +34,14 @@ const { devices, rename, revoke, navigate } = inject<ConsoleContext>('console')!
       ><el-button text type="danger" @click="revoke(d)">解绑</el-button>
     </div>
     <el-empty v-if="!devices.length" description="还没有绑定设备" />
+    <ListFooter
+      v-if="total > 10"
+      :page="page"
+      :page-size="pageSize"
+      :total="total"
+      :busy="false"
+      @page="page = $event"
+      @size="resize"
+    />
   </div>
 </template>

@@ -35,7 +35,7 @@ function openActivationPage() {
   <section class="card">
     <div class="row between server-header">
       <div>
-        <h2 class="title">服务器配置</h2>
+        <h1 class="title">设备连接</h1>
         <p class="muted">保存多个服务器，各自配对与授权；同一时间连接一个服务器。</p>
       </div>
       <el-button type="primary" :icon="Plus" :disabled="serverBusy" @click="showAddServer = true"
@@ -273,6 +273,31 @@ function openActivationPage() {
   .server-actions {
     width: 100%;
     justify-content: flex-end;
+  }
+}
+</style>
+
+<style scoped>
+.server-header h1.title {
+  font-size: 23px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+.server-meta,
+.server-url,
+.device-id {
+  color: var(--ui-muted);
+}
+.server-current .server-symbol {
+  background: var(--ui-selected);
+  color: var(--ui-accent);
+}
+.pairing-panel {
+  border-radius: 6px;
+}
+@media (max-width: 760px) {
+  .server-header h1.title {
+    font-size: 21px;
   }
 }
 </style>

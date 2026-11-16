@@ -22,8 +22,18 @@
 
 ## Local Runtime and filesystem boundaries
 
+### 本次安全加固与兼容性变化
+
+- 本地管理路由统一校验 Bearer Token；URL 大小写变化不能跳过鉴权，Host/Origin 校验仍然生效。
+- 所有 Git 工具拒绝有效配置中的外部 filter（包括 include 配置），Git 子进程只继承白名单环境变量。使用 Git LFS 等 filter 的仓库将被拒绝，不能退回不受保护的执行路径。
+- 文件读取、搜索、写入、移动、删除和 Git 暂存拒绝多重硬链接；Git diff 也校验候选工作树路径。二进制 Git 暂存仍保留原始字节。
+- `.remote-code-mcp` 及内部子目录禁止远程访问；自定义 `RUNTIME_DATA_DIR` 按配置路径和真实路径同时保护，包括配置备份。禁止将数据目录作为工作区。
+- `command.run` 在缺少文件隔离、网络隔离或资源限制时返回 `COMMAND_ISOLATION_REQUIRED`。当前默认 Provider 拒绝执行，普通 spawn 仅保留为内部进程管理实现；远程构建、测试、类型检查和格式化暂不可执行，allow 策略和本地审批均不能绕过此限制。
+- 有界读取及读取后复核缩小了文件增长和路径替换的影响，但不能消除原生文件系统接口缺失造成的父目录替换竞态。部署时仍须用专用系统账号、ACL 或容器限制 Runtime 的操作系统权限；不得声称应用层路径检查构成完整沙箱。
+- 生产依赖已升级至安全公告修复范围，`pnpm-lock.yaml` 固定完整依赖树；CI/部署使用 `pnpm install --frozen-lockfile`。
+
 - Run Runtime as an ordinary, dedicated OS account with access only to intended workspace directories. Never run it as root or an administrator. Node.js path checks are **not a substitute for OS-level sandboxing**.
-- The runtime rejects absolute paths, `..`, symlinks visible during validation, common secret files, and unapproved writes. Existing file replacements require the current SHA-256, and write via a same-directory temporary file and rename.
+- The runtime rejects absolute paths, `..`, symlinks visible during validation, hardlinks, common secret files, and policy-denied writes. Existing file replacements require the current SHA-256, and write via a same-directory temporary file and rename.
 - Race conditions against **parent directory replacement** cannot be fully eliminated using portable Node.js `realpath` and `O_NOFOLLOW`; use OS-level containment (container, sandbox, ACL, mount namespaces, dedicated account), and test on each supported OS.
 - Never authorize a workspace root containing credentials, private keys, production data, the user's entire home folder, or other broad filesystem trees.
 - The local management API is loopback-only and requires an in-memory Bearer token. Do not reverse-proxy its port or expose its token.
@@ -34,7 +44,7 @@
 - OAuth uses authorization code + PKCE S256. Consent parameters are bound with an APP_SECRET HMAC, and code redemption uses a database transaction/row lock.
 - Device pairing approval and token retrieval use database transactions/row locks to guard state transitions.
 - Only HTTPS remote gateways are accepted for device connectivity. Loopback HTTP is supported for local development.
-- The supplied OAuth implementation is custom code. **Full interoperability and adversarial OAuth testing are still required before claiming standards compliance**. There is currently no refresh token workflow.
+- The supplied OAuth implementation is custom code. **Full interoperability and adversarial OAuth testing are still required before claiming standards compliance**. Refresh tokens use rotation and replay revocation.
 - Administrators should disable compromised accounts and revoke devices and OAuth grants promptly.
 
 ## Validation before deployment
@@ -65,7 +75,7 @@ Additionally verify:
 ## Known remaining work
 
 - Cross-platform adversarial filesystem race testing and OS-level sandboxing.
-- Every remote file.write now requires local Runtime UI approval within 30 seconds in addition to the workspace write grant; test the UX and upstream MCP timeout compatibility before enabling in production.
+- File operations follow the local/cloud policy intersection. Approval requests expire after five minutes; high-risk recursive deletes and Git writes retain mandatory local approval.
 - Verified email ownership, account recovery, multi-factor authentication, durable distributed rate limiting and abuse monitoring.
 - Dedicated OAuth conformance testing, key rotation, and token/authorization-record retention cleanup.
 - End-to-end test run and production deployment review: these cannot be established by source inspection alone.

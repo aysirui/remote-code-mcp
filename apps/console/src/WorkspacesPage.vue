@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, inject } from 'vue'
 import type { ConsoleContext } from './use-console'
+import { useLocalPage } from './use-local-page'
+import ListFooter from './ListFooter.vue'
 
 const { workspaces, devices, disableWorkspace, setCloudPolicy } = inject<ConsoleContext>('console')!
 const deviceNames = computed(() => new Map(devices.value.map((device) => [device.id, device.name])))
 const deviceName = (deviceId: string) => deviceNames.value.get(deviceId) || '未知设备'
+const { rows, page, pageSize, total, resize } = useLocalPage(workspaces)
 </script>
 
 <template>
@@ -13,7 +16,7 @@ const deviceName = (deviceId: string) => deviceNames.value.get(deviceId) || '未
     和授权元数据，不接收本地目录名、绝对路径或项目结构。
   </div>
   <div class="card table-wrap">
-    <el-table :data="workspaces" style="width: 100%">
+    <el-table :data="rows" style="width: 100%">
       <el-table-column label="工作区信息" min-width="260">
         <template #default="{ row }">
           <div class="workspace-cell">
@@ -75,6 +78,15 @@ const deviceName = (deviceId: string) => deviceNames.value.get(deviceId) || '未
       </el-table-column>
     </el-table>
     <el-empty v-if="!workspaces.length" description="请在本地 Runtime 添加一个项目" />
+    <ListFooter
+      v-if="total > 10"
+      :page="page"
+      :page-size="pageSize"
+      :total="total"
+      :busy="false"
+      @page="page = $event"
+      @size="resize"
+    />
   </div>
 </template>
 

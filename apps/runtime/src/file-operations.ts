@@ -3,7 +3,12 @@ import path from 'node:path'
 import { constants } from 'node:fs'
 import { randomUUID, createHash } from 'node:crypto'
 import type { LocalWorkspace } from './state'
-import { resolveSafe, isSensitive } from './path-safety'
+import {
+  resolveSafe,
+  isSensitive,
+  assertSafeRelativePath,
+  assertNotRuntimeData,
+} from './path-safety'
 
 /** 单次文件读写允许的最大字节数，避免大文件导致内存耗尽。 */
 const MAX_FILE = 512 * 1024
@@ -15,23 +20,50 @@ export const sha = (content: string) => createHash('sha256').update(content).dig
  * 校验路径并以文件描述符读取内容，限制文件大小及普通文件类型。
  * 校验后仍需 OS 级授权限制，不能视为无竞态沙箱。
  */
-export async function readChecked(w: LocalWorkspace, relative: string, maxSize = MAX_FILE) {
+export async function readBufferChecked(w: LocalWorkspace, relative: string, maxSize = MAX_FILE) {
   const filename = await resolveSafe(w, relative)
   const fd = await fs.open(filename, constants.O_RDONLY | (constants.O_NOFOLLOW || 0))
   try {
     const st = await fd.stat()
+    if (st.nlink > 1) throw Error('HARD_DENY_HARDLINK')
     if (!st.isFile() || st.size > maxSize) throw Error('FILE_TOO_LARGE_OR_UNSUPPORTED')
     // Verify name still resolves to the same inode after opening.
     const latest = await resolveSafe(w, relative)
     const named = await fs.stat(latest)
     if (named.dev !== st.dev || named.ino !== st.ino) throw Error('FILE_CHANGED')
-    const data = await fd.readFile({ encoding: 'utf8' })
-    if (Buffer.byteLength(data, 'utf8') > maxSize || data.includes('\0'))
-      throw Error('FILE_TOO_LARGE_OR_UNSUPPORTED')
-    return data
+    // 有界读取防止校验后文件增长导致内存耗尽；读取后重新校验链接和路径。
+    const buffer = Buffer.alloc(maxSize + 1)
+    let length = 0
+    while (length < buffer.length) {
+      const { bytesRead } = await fd.read(buffer, length, buffer.length - length, null)
+      if (!bytesRead) break
+      length += bytesRead
+    }
+    if (length > maxSize) throw Error('FILE_TOO_LARGE_OR_UNSUPPORTED')
+    const after = await fd.stat()
+    const finalPath = await resolveSafe(w, relative)
+    const finalStat = await fs.lstat(finalPath)
+    if (after.nlink > 1 || finalStat.nlink > 1) throw Error('HARD_DENY_HARDLINK')
+    if (
+      after.size !== st.size ||
+      after.mtimeMs !== st.mtimeMs ||
+      after.ctimeMs !== st.ctimeMs ||
+      finalStat.dev !== st.dev ||
+      finalStat.ino !== st.ino
+    )
+      throw Error('FILE_CHANGED')
+    return buffer.subarray(0, length)
   } finally {
     await fd.close()
   }
+}
+
+/** 文本工具额外拒绝二进制数据；Git 暂存复用相同边界检查并保留原始字节。 */
+export async function readChecked(w: LocalWorkspace, relative: string, maxSize = MAX_FILE) {
+  const data = (await readBufferChecked(w, relative, maxSize)).toString('utf8')
+  if (Buffer.byteLength(data, 'utf8') > maxSize || data.includes('\0'))
+    throw Error('FILE_TOO_LARGE_OR_UNSUPPORTED')
+  return data
 }
 
 /**
@@ -94,6 +126,7 @@ export async function writeChecked(
  * 但父目录必须存在且所有已存在路径段不得是符号链接。
  */
 async function safeDestination(w: LocalWorkspace, requested: string) {
+  assertSafeRelativePath(requested)
   if (
     !requested ||
     requested === '.' ||
@@ -111,15 +144,126 @@ async function safeDestination(w: LocalWorkspace, requested: string) {
   const parentPath = await resolveSafe(w, parent)
   if (!(await fs.lstat(parentPath)).isDirectory()) throw Error('NOT_DIRECTORY')
   const target = path.join(parentPath, parts[parts.length - 1])
+  await assertNotRuntimeData(target)
   if (target === root || !target.startsWith(root + path.sep)) throw Error('OUTSIDE_WORKSPACE')
   return target
 }
 
+/** 删除审批阈值：递归删除超过 20 个目录项时，即使策略为 allow 也必须人工确认。 */
+export const HIGH_RISK_DELETE_THRESHOLD = 20
+
+/** 递归检查待删除树并生成稳定快照；快照用于审批前后校验资源未发生变化。 */
+export async function inspectDeleteTarget(target: string) {
+  const entries: Array<{
+    path: string
+    type: string
+    dev: number
+    ino: number
+    size: number
+    mtimeMs: number
+    ctimeMs: number
+    contentHash?: string
+  }> = []
+  let totalBytes = 0
+  async function visit(current: string, relative: string) {
+    await assertNotRuntimeData(current)
+    if (entries.length >= 1000) throw Error('TOO_MANY_ENTRIES')
+    const st = await fs.lstat(current)
+    if (st.isSymbolicLink()) throw Error('SYMLINK_DENIED')
+    if (st.isFile() && st.nlink > 1) throw Error('HARD_DENY_HARDLINK')
+    if (st.isDirectory()) {
+      entries.push({
+        path: relative,
+        type: 'directory',
+        dev: st.dev,
+        ino: st.ino,
+        size: st.size,
+        mtimeMs: st.mtimeMs,
+        ctimeMs: st.ctimeMs,
+      })
+      const children = (await fs.readdir(current)).sort()
+      for (const child of children) {
+        if (isSensitive(child)) throw Error('SENSITIVE_PATH_DENIED')
+        await visit(path.join(current, child), relative ? relative + '/' + child : child)
+      }
+      // 遍历期间目录被替换或增删条目时，不生成混合时刻的审批快照。
+      const after = await fs.lstat(current)
+      if (
+        after.isSymbolicLink() ||
+        after.dev !== st.dev ||
+        after.ino !== st.ino ||
+        after.mtimeMs !== st.mtimeMs ||
+        after.ctimeMs !== st.ctimeMs ||
+        JSON.stringify((await fs.readdir(current)).sort()) !== JSON.stringify(children)
+      )
+        throw Error('DELETE_TARGET_CHANGED_DURING_APPROVAL')
+      return
+    }
+    if (!st.isFile()) throw Error('UNSUPPORTED_FILE_TYPE')
+    // 内容参与快照，防止同长度改写并恢复 mtime 后复用旧审批；限制总读取量。
+    totalBytes += st.size
+    if (totalBytes > 64 * 1024 * 1024) throw Error('DELETE_SNAPSHOT_TOO_LARGE')
+    const fd = await fs.open(current, constants.O_RDONLY | (constants.O_NOFOLLOW || 0))
+    let contentHash: string
+    try {
+      const opened = await fd.stat()
+      if (!opened.isFile() || opened.nlink > 1 || opened.dev !== st.dev || opened.ino !== st.ino)
+        throw Error('DELETE_TARGET_CHANGED_DURING_APPROVAL')
+      const hash = createHash('sha256')
+      const buffer = Buffer.alloc(64 * 1024)
+      let readBytes = 0
+      for (;;) {
+        const { bytesRead } = await fd.read(buffer, 0, buffer.length, null)
+        if (!bytesRead) break
+        readBytes += bytesRead
+        if (readBytes > st.size) throw Error('DELETE_TARGET_CHANGED_DURING_APPROVAL')
+        hash.update(buffer.subarray(0, bytesRead))
+      }
+      const after = await fd.stat()
+      const named = await fs.lstat(current)
+      if (
+        readBytes !== st.size ||
+        after.mtimeMs !== st.mtimeMs ||
+        after.ctimeMs !== st.ctimeMs ||
+        named.dev !== st.dev ||
+        named.ino !== st.ino ||
+        named.isSymbolicLink() ||
+        named.nlink > 1 ||
+        after.nlink > 1
+      )
+        throw Error('DELETE_TARGET_CHANGED_DURING_APPROVAL')
+      contentHash = hash.digest('hex')
+    } finally {
+      await fd.close()
+    }
+    entries.push({
+      path: relative,
+      type: 'file',
+      dev: st.dev,
+      ino: st.ino,
+      size: st.size,
+      mtimeMs: st.mtimeMs,
+      ctimeMs: st.ctimeMs,
+      contentHash,
+    })
+  }
+  await visit(target, '')
+  const fingerprint = createHash('sha256')
+    .update(JSON.stringify({ target: path.resolve(target), entries }))
+    .digest('hex')
+  // 文件本身计为 1 项；目录只统计其内部子项，避免把容器目录重复计入批量删除数量。
+  const entryCount = entries.length - (entries[0]?.type === 'directory' ? 1 : 0)
+  // 不从目标父目录推测工作区；根目录由调用方按授权工作区明确拒绝。
+  return { entryCount, fingerprint }
+}
+
 /** 拒绝破坏性操作处理链接、敏感路径、以及超大目录树。 */
 async function verifyTree(target: string, budget = { count: 0 }) {
+  await assertNotRuntimeData(target)
   if (++budget.count > 1000) throw Error('TOO_MANY_ENTRIES')
   const st = await fs.lstat(target)
   if (st.isSymbolicLink()) throw Error('SYMLINK_DENIED')
+  if (st.isFile() && st.nlink > 1) throw Error('HARD_DENY_HARDLINK')
   if (!st.isDirectory()) {
     if (!st.isFile()) throw Error('UNSUPPORTED_FILE_TYPE')
     return
@@ -132,6 +276,7 @@ async function verifyTree(target: string, budget = { count: 0 }) {
 
 /** 创建目录；每级路径均校验，禁止从工作区跳转至绝对路径、链接或敏感目录。 */
 export async function mkdirChecked(w: LocalWorkspace, requested: string, recursive: boolean) {
+  assertSafeRelativePath(requested)
   if (!recursive) {
     const target = await safeDestination(w, requested)
     await fs.mkdir(target)
@@ -190,17 +335,23 @@ export async function moveChecked(w: LocalWorkspace, from: string, to: string) {
 
 /**
  * 删除文件必须提供内容 SHA-256；删除目录默认仅允许空目录。
- * 递归删除有 1000 项上限且必须经本地逐次审批。
+ * 递归删除有 1000 项上限；超过 20 个目录项时由 Runtime 风险层强制逐次审批。
  */
 export async function deleteChecked(
   w: LocalWorkspace,
   requested: string,
   recursive: boolean,
   expectedSha256?: string,
+  expectedResourceHash?: string,
 ) {
   assertMutationSource(requested)
   const target = await resolveSafe(w, requested)
   if (target === (await fs.realpath(w.root))) throw Error('WORKSPACE_ROOT_PROTECTED')
+  const snapshot = await inspectDeleteTarget(target)
+  if (recursive && snapshot.entryCount > HIGH_RISK_DELETE_THRESHOLD && !expectedResourceHash)
+    throw Error('HIGH_RISK_DELETE_REQUIRES_APPROVAL')
+  if (expectedResourceHash && snapshot.fingerprint !== expectedResourceHash)
+    throw Error('DELETE_TARGET_CHANGED_DURING_APPROVAL')
   const st = await fs.lstat(target)
   if (st.isSymbolicLink()) throw Error('SYMLINK_DENIED')
   if (st.isFile()) {
@@ -212,6 +363,10 @@ export async function deleteChecked(
     if (expectedSha256) throw Error('INVALID_FILE_HASH')
     if (recursive) {
       await verifyTree(target)
+      await resolveSafe(w, requested)
+      const latest = await inspectDeleteTarget(target)
+      if (latest.fingerprint !== snapshot.fingerprint)
+        throw Error('DELETE_TARGET_CHANGED_DURING_APPROVAL')
       await fs.rm(target, { recursive: true, force: false })
     } else await fs.rmdir(target)
   } else throw Error('UNSUPPORTED_FILE_TYPE')

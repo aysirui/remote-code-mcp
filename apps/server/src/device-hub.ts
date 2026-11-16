@@ -250,6 +250,7 @@ export class DeviceHub {
         workspaceId,
         operation,
         payload,
+        // Server 只负责传递策略审批；本地文件删除的高危程度必须由 Runtime 检查真实目录内容。
         approvalRequired: cloudPolicy === 'approval' || operationRequiresLocalApproval(operation),
         deadlineAt: Date.now() + RPC_TIMEOUT_MS,
       }

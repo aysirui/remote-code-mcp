@@ -10,12 +10,13 @@ import {
   NotFoundException,
 } from '@nestjs/common'
 import type { Request } from 'express'
-import { eq, and, desc, isNull } from 'drizzle-orm'
+import { eq, and, desc, isNull, count } from 'drizzle-orm'
 import { Identity } from './identity'
 import { Store } from './store'
 import { DeviceHub } from './device-hub'
 import { csrf } from './http-security'
 import * as S from './schema'
+import { parsePagination } from './pagination'
 
 /** 当前登录用户的设备、工作区、OAuth 授权与个人操作记录接口。 */
 @Controller('api')
@@ -232,11 +233,18 @@ export class AccountController {
   /** 当前用户自己的 MCP 工具执行记录；只返回最小化元数据。 */
   @Get('me/operation-logs') async operationLogs(@Req() req: Request) {
     const u = await this.id.requireUser(req)
-    return this.store.db
+    const paging = parsePagination(req.query)
+    const filter = eq(S.operationLogs.userId, u.id)
+    const query = this.store.db
       .select()
       .from(S.operationLogs)
-      .where(eq(S.operationLogs.userId, u.id))
-      .orderBy(desc(S.operationLogs.createdAt))
-      .limit(100)
+      .where(filter)
+      .orderBy(desc(S.operationLogs.createdAt), desc(S.operationLogs.id))
+    if (!paging) return query.limit(100)
+    const [items, totals] = await Promise.all([
+      query.limit(paging.pageSize).offset(paging.offset),
+      this.store.db.select({ total: count() }).from(S.operationLogs).where(filter),
+    ])
+    return { items, total: Number(totals[0].total), page: paging.page, pageSize: paging.pageSize }
   }
 }

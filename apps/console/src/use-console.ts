@@ -7,8 +7,6 @@ import {
   type Device,
   type Workspace,
   type User as Account,
-  type OperationLog,
-  type SecurityAudit,
   type OAuthGrant,
   type OverviewStats,
 } from './api'
@@ -23,6 +21,8 @@ const reportError = (error: unknown) => {
 export function useConsole() {
   const me = ref<Account | null>(null)
   const loading = ref(true)
+  const refreshing = ref(false)
+  const listRevision = ref(0)
   const route = useRoute()
   const page = computed(() => String(route.name || 'overview'))
   const email = ref('')
@@ -30,10 +30,6 @@ export function useConsole() {
   const registering = ref(false)
   const devices = ref<Device[]>([])
   const workspaces = ref<Workspace[]>([])
-  const users = ref<Account[]>([])
-  const logs = ref<OperationLog[]>([])
-  const adminDevices = ref<Device[]>([])
-  const adminLogs = ref<SecurityAudit[]>([])
   const stats = ref<OverviewStats>({ users: 0, devices: 0, online: 0, workspaces: 0 })
   const grants = ref<OAuthGrant[]>([])
   const pairingCode = ref('')
@@ -63,24 +59,22 @@ export function useConsole() {
 
   /** 操作记录和安全审计分别加载，避免将 MCP 工具调用混入安全审计。 */
   async function refresh() {
-    if (!me.value || me.value.passwordChangeRequired) return
+    if (!me.value || me.value.passwordChangeRequired || refreshing.value) return
+    refreshing.value = true
+    listRevision.value++
     try {
-      ;[devices.value, workspaces.value, logs.value, grants.value] = await Promise.all([
+      ;[devices.value, workspaces.value, grants.value] = await Promise.all([
         request<Device[]>('/api/me/devices'),
         request<Workspace[]>('/api/me/workspaces'),
-        request<OperationLog[]>('/api/me/operation-logs'),
         request<OAuthGrant[]>('/api/me/oauth-grants'),
       ])
       if (isAdmin.value) {
-        ;[users.value, stats.value, adminDevices.value, adminLogs.value] = await Promise.all([
-          request<Account[]>('/api/admin/users'),
-          request<OverviewStats>('/api/admin/overview'),
-          request<Device[]>('/api/admin/devices'),
-          request<SecurityAudit[]>('/api/admin/security-audits'),
-        ])
+        ;[stats.value] = await Promise.all([request<OverviewStats>('/api/admin/overview')])
       }
     } catch (error: unknown) {
       reportError(error)
+    } finally {
+      refreshing.value = false
     }
   }
 
@@ -309,16 +303,14 @@ export function useConsole() {
   return {
     me,
     loading,
+    refreshing,
+    listRevision,
     page,
     email,
     password,
     registering,
     devices,
     workspaces,
-    users,
-    logs,
-    adminDevices,
-    adminLogs,
     stats,
     grants,
     pairingCode,

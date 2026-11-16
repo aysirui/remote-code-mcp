@@ -17,6 +17,7 @@ import { postGateway } from './gateway-client'
 import type { WriteApprovalQueue } from './write-approvals'
 import type { LocalEvents, LocalEventName } from './local-events'
 import { validateLocalCommand } from './command-operations'
+import { resolveSafe } from './path-safety'
 
 /** 本地管理 HTTP Server 的外部依赖，由 Runtime 主入口注入以避免全局状态耦合。 */
 export interface LocalServerOptions {
@@ -39,6 +40,7 @@ export interface LocalServerOptions {
 export function startLocalServer(options: LocalServerOptions) {
   const { port, localKey, config, approvals, events, status, disconnect, connect, sync } = options
   const app = express()
+  app.enable('case sensitive routing')
   app.disable('x-powered-by')
   app.use(express.json({ limit: '1mb' }))
 
@@ -53,13 +55,20 @@ export function startLocalServer(options: LocalServerOptions) {
       res.status(403).json({ error: 'origin denied' })
       return
     }
-    if (req.path.startsWith('/local/api/') && req.headers.authorization !== 'Bearer ' + localKey) {
-      res.status(401).json({ error: 'unauthorized' })
-      return
-    }
     res.setHeader('X-Content-Type-Options', 'nosniff')
     res.setHeader('Referrer-Policy', 'no-referrer')
     res.setHeader('Cache-Control', 'no-store')
+    next()
+  })
+
+  // 所有管理接口只注册到此 Router，鉴权与路由共用 Express 的挂载语义。
+  const api = express.Router({ caseSensitive: true })
+  app.use(/^\/local\/api(?=\/|$)/i, api)
+  api.use((req, res, next) => {
+    if (req.headers.authorization !== 'Bearer ' + localKey) {
+      res.status(401).json({ error: 'unauthorized' })
+      return
+    }
     next()
   })
 
@@ -67,7 +76,7 @@ export function startLocalServer(options: LocalServerOptions) {
    * 本地状态 SSE 订阅：复用 Bearer 鉴权，不把启动 Token 放在 URL 查询参数。
    * 首次连接发送完整快照，后续仅推送变化的资源；断连时移除监听器。
    */
-  app.get('/local/api/events', (req, res) => {
+  api.get('/events', (req, res) => {
     res.status(200)
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
     res.setHeader('Connection', 'keep-alive')
@@ -100,13 +109,13 @@ export function startLocalServer(options: LocalServerOptions) {
   })
 
   /** 当前设备连接状态，不包含原始设备凭据。 */
-  app.get('/local/api/status', (_req, res) => res.json(status()))
+  api.get('/status', (_req, res) => res.json(status()))
 
   /** 获取本地用户尚未批准的文件写入任务。 */
-  app.get('/local/api/write-approvals', (_req, res) => res.json(approvals.list()))
+  api.get('/write-approvals', (_req, res) => res.json(approvals.list()))
 
   /** 只接受布尔决定，每个审批请求只允许完成一次。 */
-  app.post('/local/api/write-approvals/:id', (req, res) => {
+  api.post('/write-approvals/:id', (req, res) => {
     if (typeof req.body?.approve !== 'boolean') {
       res.status(400).json({ error: 'approve must be a boolean' })
       return
@@ -166,7 +175,7 @@ export function startLocalServer(options: LocalServerOptions) {
   }
 
   /** 兼容原入口：相同 origin 恢复原配置，不覆盖或清除任何已保存的配对。 */
-  app.post('/local/api/config', async (req, res) => {
+  api.post('/config', async (req, res) => {
     try {
       const server = addServer(config, String(req.body.gateway), req.body.name)
       await switchServer(server.id)
@@ -175,7 +184,7 @@ export function startLocalServer(options: LocalServerOptions) {
       fail(res, error)
     }
   })
-  app.post('/local/api/servers', async (req, res) => {
+  api.post('/servers', async (req, res) => {
     try {
       const server = addServer(config, String(req.body.gateway), String(req.body.name || ''))
       await save(config)
@@ -185,7 +194,7 @@ export function startLocalServer(options: LocalServerOptions) {
       fail(res, error)
     }
   })
-  app.post('/local/api/servers/:id/activate', async (req, res) => {
+  api.post('/servers/:id/activate', async (req, res) => {
     try {
       await switchServer(String(req.params.id))
       res.json(status())
@@ -193,7 +202,7 @@ export function startLocalServer(options: LocalServerOptions) {
       fail(res, error)
     }
   })
-  app.patch('/local/api/servers/:id', async (req, res) => {
+  api.patch('/servers/:id', async (req, res) => {
     try {
       const server = requireServer(req.params.id)
       if (req.body.name !== undefined) {
@@ -216,7 +225,7 @@ export function startLocalServer(options: LocalServerOptions) {
       fail(res, error)
     }
   })
-  app.delete('/local/api/servers/:id', async (req, res) => {
+  api.delete('/servers/:id', async (req, res) => {
     try {
       if (config.servers.length <= 1) throw Error('至少保留一个服务器配置')
       const server = requireServer(req.params.id)
@@ -234,7 +243,7 @@ export function startLocalServer(options: LocalServerOptions) {
   })
 
   /** 配对始终绑定具体服务器；重复点击复用仍有效的配对码。 */
-  app.post('/local/api/pair/start', async (req, res) => {
+  api.post('/pair/start', async (req, res) => {
     let server: ServerProfile | undefined
     let acquired = false
     try {
@@ -260,7 +269,7 @@ export function startLocalServer(options: LocalServerOptions) {
       if (server && acquired) pairingBusy.delete(server.id)
     }
   })
-  app.post('/local/api/pair/complete', async (req, res) => {
+  api.post('/pair/complete', async (req, res) => {
     let server: ServerProfile | undefined
     let acquired = false
     try {
@@ -303,7 +312,7 @@ export function startLocalServer(options: LocalServerOptions) {
     }
   })
   /** 主动解除绑定时同步撤销服务端设备，暂停、切换均不走此入口。 */
-  app.post('/local/api/unpair', async (req, res) => {
+  api.post('/unpair', async (req, res) => {
     try {
       await revokeBinding(requireServer(req.body.serverId))
       await save(config)
@@ -315,7 +324,7 @@ export function startLocalServer(options: LocalServerOptions) {
   })
 
   /** 仅在本地展示目录供用户选择工作区，绝对路径不发送到 Gateway。 */
-  app.get('/local/api/browse', async (req, res) => {
+  api.get('/browse', async (req, res) => {
     try {
       const dir = await fs.realpath(String(req.query.path || os.homedir()))
       const entry = await fs.stat(dir)
@@ -331,12 +340,13 @@ export function startLocalServer(options: LocalServerOptions) {
   })
 
   /** 本地目录共用，各服务器的访问权限独立展示。 */
-  app.get('/local/api/workspaces', (_req, res) => res.json(workspaceViews(config)))
-  app.post('/local/api/workspaces', async (req, res) => {
+  api.get('/workspaces', (_req, res) => res.json(workspaceViews(config)))
+  api.post('/workspaces', async (req, res) => {
     try {
       const server = requireActiveServer(req.body.serverId)
       const root = await fs.realpath(String(req.body.root || ''))
       if (!(await fs.stat(root)).isDirectory()) throw Error('目录不存在')
+      await resolveSafe({ root }, '.')
       if ([os.homedir(), path.parse(root).root].includes(root))
         throw Error('不能授权整个用户目录或磁盘根目录')
       let workspace = config.workspaces.find((item) =>
@@ -362,7 +372,7 @@ export function startLocalServer(options: LocalServerOptions) {
       fail(res, error)
     }
   })
-  app.patch('/local/api/workspaces/:id', async (req, res) => {
+  api.patch('/workspaces/:id', async (req, res) => {
     try {
       const server = requireActiveServer(req.body.serverId)
       const workspace = config.workspaces.find((item) => item.id === req.params.id)
@@ -420,7 +430,7 @@ export function startLocalServer(options: LocalServerOptions) {
    * 用户只能从本机管理界面配置固定命令，不能通过远程 RPC 提交 executable 或 args。
    * 命令修改不改变云端授权元数据；待审批的旧命令请求必须失效。
    */
-  app.post('/local/api/workspaces/:id/commands', async (req, res) => {
+  api.post('/workspaces/:id/commands', async (req, res) => {
     try {
       const workspace = config.workspaces.find((w) => w.id === req.params.id)
       if (!workspace) return res.status(404).json({ error: 'Workspace not found' })
@@ -441,7 +451,7 @@ export function startLocalServer(options: LocalServerOptions) {
   })
 
   /** 删除本地命令配置并取消所有待审批的工作区请求。 */
-  app.delete('/local/api/workspaces/:id/commands/:commandId', async (req, res) => {
+  api.delete('/workspaces/:id/commands/:commandId', async (req, res) => {
     try {
       const workspace = config.workspaces.find((w) => w.id === req.params.id)
       if (!workspace) return res.status(404).json({ error: 'Workspace not found' })
@@ -461,7 +471,7 @@ export function startLocalServer(options: LocalServerOptions) {
   })
 
   /** 移除工作区授权并同步云端，同时立即拒绝该工作区的待审批操作。 */
-  app.delete('/local/api/workspaces/:id', async (req, res) => {
+  api.delete('/workspaces/:id', async (req, res) => {
     rejectWorkspaceApprovals(String(req.params.id))
     for (const server of config.servers)
       server.workspaces = server.workspaces.filter((grant) => grant.workspaceId !== req.params.id)

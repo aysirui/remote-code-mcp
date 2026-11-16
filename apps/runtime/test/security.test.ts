@@ -1,10 +1,15 @@
 import { execute, resolveSafe } from '../src/executors'
-import { mkdtemp, rm, symlink, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, rm, symlink, writeFile, mkdir, stat, utimes } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { gitAdd, gitCommit, gitApprovalContext, gitStatus } from '../src/git-operations'
 import { runCheckedCommand } from '../src/command-operations'
+import {
+  inspectDeleteTarget,
+  deleteChecked,
+  HIGH_RISK_DELETE_THRESHOLD,
+} from '../src/file-operations'
 import { createHash } from 'node:crypto'
 import type { RpcRequest } from '@rcm/protocol'
 
@@ -146,7 +151,7 @@ test('Git add rejects repositories with configured external filters', async () =
   await expect(gitAdd(ws(true), ['README.md'])).rejects.toThrow('GIT_FILTERS_NOT_ALLOWED')
 })
 
-test('Command timeout terminates the process group instead of only the direct child', async () => {
+test('缺少隔离后端时不能通过登记命令执行任意程序', async () => {
   const command = {
     id: 'long-running',
     name: 'Long running test',
@@ -156,14 +161,101 @@ test('Command timeout terminates the process group instead of only the direct ch
       "require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); setInterval(() => {}, 1000)",
     ],
   }
-  const result = await runCheckedCommand(
-    {
-      ...ws(true),
-      commands: [command],
-    },
-    'long-running',
-    150,
+  await expect(
+    runCheckedCommand(
+      {
+        ...ws(true),
+        commands: [command],
+      },
+      'long-running',
+      150,
+    ),
+  ).rejects.toThrow('COMMAND_ISOLATION_REQUIRED')
+})
+
+test('普通文件和小目录删除不达到高危阈值，批量目录删除超过 20 项触发高危判定', async () => {
+  const small = path.join(workspaceRoot, 'small')
+  await mkdir(small)
+  await writeFile(path.join(small, 'one.txt'), '1')
+  const smallSnapshot = await inspectDeleteTarget(small)
+  expect(smallSnapshot.entryCount).toBe(1)
+  expect(smallSnapshot.entryCount > HIGH_RISK_DELETE_THRESHOLD).toBe(false)
+
+  const batch = path.join(workspaceRoot, 'batch')
+  await mkdir(batch)
+  for (let index = 0; index < HIGH_RISK_DELETE_THRESHOLD + 1; index++) {
+    await writeFile(path.join(batch, 'file-' + index + '.txt'), String(index))
+  }
+  const batchSnapshot = await inspectDeleteTarget(batch)
+  expect(batchSnapshot.entryCount).toBe(21)
+  expect(batchSnapshot.entryCount > HIGH_RISK_DELETE_THRESHOLD).toBe(true)
+  await expect(deleteChecked(ws(true), 'batch', true)).rejects.toThrow(
+    'HIGH_RISK_DELETE_REQUIRES_APPROVAL',
   )
-  expect(result.output).toContain('COMMAND_TIMEOUT')
-  expect(result.exitCode).not.toBe(0)
+})
+
+test('目录内容在审批等待期间变化时，删除执行必须拒绝旧资源快照', async () => {
+  const batch = path.join(workspaceRoot, 'approved')
+  await mkdir(batch)
+  await writeFile(path.join(batch, 'one.txt'), 'one')
+  const snapshot = await inspectDeleteTarget(batch)
+  await writeFile(path.join(batch, 'two.txt'), 'two')
+  await expect(
+    deleteChecked(ws(true), 'approved', true, undefined, snapshot.fingerprint),
+  ).rejects.toThrow('DELETE_TARGET_CHANGED_DURING_APPROVAL')
+  await expect(resolveSafe(ws(), 'approved')).resolves.toBe(batch)
+})
+
+test('递归删除工作区根目录始终被 Hard Deny 拒绝', async () => {
+  await expect(deleteChecked(ws(true), '.', true)).rejects.toThrow()
+})
+
+test('allow 策略下单文件与 20 项以内的小目录删除无需额外审批', async () => {
+  const fileHash = sha('original')
+  await deleteChecked(ws(true), 'README.md', false, fileHash)
+  await expect(resolveSafe(ws(), 'README.md')).rejects.toThrow()
+
+  const small = path.join(workspaceRoot, 'small-delete')
+  await mkdir(small)
+  await writeFile(path.join(small, 'one.txt'), 'one')
+  await deleteChecked(ws(true), 'small-delete', true)
+  await expect(resolveSafe(ws(), 'small-delete')).rejects.toThrow()
+})
+
+test('审批快照拒绝同长度内容改写，即使恢复修改时间', async () => {
+  const folder = path.join(workspaceRoot, 'same-size')
+  await mkdir(folder)
+  const filename = path.join(folder, 'data.txt')
+  await writeFile(filename, 'before')
+  const before = await stat(filename)
+  const snapshot = await inspectDeleteTarget(folder)
+  await writeFile(filename, 'after!')
+  await utimes(filename, before.atime, before.mtime)
+  await expect(
+    deleteChecked(ws(true), 'same-size', true, undefined, snapshot.fingerprint),
+  ).rejects.toThrow('DELETE_TARGET_CHANGED_DURING_APPROVAL')
+})
+
+test('20 项允许直接删除，21 项审批快照不变后允许执行', async () => {
+  for (const count of [20, 21]) {
+    const name = 'boundary-' + count
+    const folder = path.join(workspaceRoot, name)
+    await mkdir(folder)
+    for (let i = 0; i < count; i++) await writeFile(path.join(folder, i + '.txt'), 'x')
+    const snapshot = await inspectDeleteTarget(folder)
+    expect(snapshot.entryCount).toBe(count)
+    await expect(
+      deleteChecked(ws(true), name, true, undefined, count > 20 ? snapshot.fingerprint : undefined),
+    ).resolves.toMatchObject({ deleted: true })
+  }
+})
+
+test('删除树中的敏感项不能通过审批放行', async () => {
+  const folder = path.join(workspaceRoot, 'sensitive-delete')
+  await mkdir(folder)
+  await writeFile(path.join(folder, '.env'), 'secret')
+  await expect(inspectDeleteTarget(folder)).rejects.toThrow('SENSITIVE_PATH_DENIED')
+  await expect(
+    deleteChecked(ws(true), 'sensitive-delete', true, undefined, 'approved'),
+  ).rejects.toThrow('SENSITIVE_PATH_DENIED')
 })

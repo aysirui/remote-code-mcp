@@ -219,3 +219,318 @@ body {
     flex-basis: 100%;
   }
 }
+
+/* 与云端控制台共用导航节奏；本地权限页面保留完整操作空间。 */
+.runtime-shell {
+  display: flex;
+  min-height: 100dvh;
+}
+.runtime-sidebar {
+  width: 224px;
+  flex-shrink: 0;
+  height: 100dvh;
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 12px 16px;
+  background: var(--ui-nav);
+  border-right: 1px solid var(--ui-line);
+}
+.runtime-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+.runtime-brand small {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--ui-muted);
+  letter-spacing: 0;
+}
+.mark {
+  width: 32px;
+  height: 32px;
+  display: block;
+  flex-shrink: 0;
+  object-fit: contain;
+  border-radius: 7px;
+}
+.runtime-nav-label {
+  margin: 36px 12px 10px;
+  color: var(--ui-muted);
+  font-size: 11px;
+}
+.runtime-nav {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+.runtime-nav a {
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #526074;
+}
+.runtime-nav a .el-icon {
+  font-size: 17px;
+}
+.runtime-nav a:hover {
+  background: #edf0f5;
+  color: var(--ui-ink);
+}
+.runtime-nav a.router-link-active {
+  background: var(--ui-selected);
+  color: #1d4ed8;
+  font-weight: 600;
+}
+.runtime-nav .el-badge {
+  margin-left: auto;
+}
+.runtime-nav .el-badge__content {
+  position: static;
+  transform: none;
+}
+.runtime-sidebar-foot {
+  margin-top: auto;
+  border-top: 1px solid var(--ui-line);
+  padding: 16px 10px 0;
+  color: var(--ui-muted);
+  font-size: 11px;
+}
+.runtime-sidebar-foot small {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+}
+.runtime-content {
+  flex: 1;
+  min-width: 0;
+}
+.runtime-topbar {
+  height: 60px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 24px;
+  gap: 16px;
+  border-bottom: 1px solid var(--ui-line);
+  background: white;
+}
+.runtime-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--ui-muted);
+  font-size: 12px;
+}
+.runtime-breadcrumb strong {
+  color: var(--ui-ink);
+  font-weight: 500;
+}
+.runtime-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.runtime-main {
+  width: 100%;
+  max-width: 1440px;
+  padding: 24px 24px 32px;
+  margin: 0 auto;
+}
+.runtime-main .card {
+  border-radius: 8px;
+  border-color: var(--ui-line);
+  padding: 24px;
+  margin-bottom: 20px;
+}
+.title {
+  font-size: 17px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+.muted,
+.fine {
+  color: var(--ui-muted);
+}
+.runtime-main .row {
+  gap: 12px;
+}
+.project {
+  padding: 20px 0;
+}
+.command-list {
+  border-radius: 6px;
+  background: #f8f9fb;
+}
+.runtime-main .approval-page {
+  max-width: none;
+  padding: 0;
+}
+.runtime-main .approval-header {
+  margin-bottom: 24px;
+  align-items: center;
+}
+.runtime-main .approval-eyebrow {
+  display: none;
+}
+.runtime-main .approval-heading h1 {
+  font-size: 23px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+.runtime-main .approval-heading p {
+  color: var(--ui-muted);
+  margin-top: 6px;
+  line-height: 1.6;
+}
+.runtime-main .approval-counter {
+  flex-direction: row;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 6px;
+  min-width: 0;
+}
+.runtime-main .counter-number {
+  font-size: 17px;
+}
+.runtime-main .counter-label {
+  margin-top: 0;
+  color: var(--ui-muted);
+  font-size: 12px;
+}
+.runtime-main .connection-strip {
+  border-radius: 6px;
+  padding: 12px 16px;
+}
+.runtime-main .connection-copy span,
+.runtime-main .connection-state {
+  color: var(--ui-muted);
+  font-size: 12px;
+}
+.runtime-main .empty-state {
+  min-height: 280px;
+  padding: 40px 24px;
+  border: 1px solid var(--ui-line);
+  border-radius: 8px;
+  margin-top: 20px;
+}
+.runtime-main .empty-state h2 {
+  font-size: 16px;
+  font-weight: 600;
+}
+.runtime-main .empty-state p {
+  color: var(--ui-muted);
+  font-size: 13px;
+  margin-top: 4px;
+}
+.runtime-main .empty-icon {
+  width: 36px;
+  height: 36px;
+  font-size: 18px;
+}
+.runtime-main .approval-card {
+  border-radius: 8px;
+  box-shadow: none;
+}
+.runtime-main .approval-guidance {
+  border-radius: 6px;
+}
+.runtime-main .field-label,
+.runtime-main .request-time {
+  color: var(--ui-muted);
+  font-size: 12px;
+}
+.runtime-main .target-block code,
+.runtime-main .detail-panel pre {
+  font-size: 12px;
+}
+.runtime-main .privacy-note {
+  color: var(--ui-muted);
+  text-align: left;
+  font-size: 12px;
+  margin-top: 16px;
+}
+@media (max-width: 1000px) {
+  .runtime-sidebar {
+    width: 188px;
+  }
+  .runtime-brand {
+    font-size: 14px;
+    padding: 0 4px;
+  }
+  .runtime-main {
+    padding: 24px;
+  }
+  .runtime-topbar {
+    padding: 0 24px;
+  }
+}
+@media (max-width: 760px) {
+  .runtime-shell {
+    flex-direction: column;
+  }
+  .runtime-sidebar {
+    width: 100%;
+    height: auto;
+    position: static;
+    padding: 14px 16px 10px;
+    gap: 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--ui-line);
+  }
+  .runtime-nav-label,
+  .runtime-sidebar-foot {
+    display: none;
+  }
+  .runtime-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+  .runtime-nav a {
+    flex: 0 0 auto;
+    padding: 9px 12px;
+  }
+  .runtime-topbar {
+    padding: 0 16px;
+    height: 52px;
+  }
+  .runtime-breadcrumb {
+    font-size: 0;
+    gap: 0;
+  }
+  .runtime-breadcrumb span {
+    display: none;
+  }
+  .runtime-breadcrumb strong {
+    font-size: 12px;
+  }
+  .runtime-header-actions {
+    gap: 8px;
+  }
+  .runtime-main {
+    padding: 24px 16px;
+  }
+  .runtime-main .card {
+    padding: 16px;
+  }
+  .runtime-main .approval-heading h1 {
+    font-size: 21px;
+  }
+  .runtime-main .approval-header {
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .runtime-main .approval-counter {
+    flex-shrink: 0;
+  }
+}

@@ -4,7 +4,14 @@ import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { LocalWorkspace } from './state'
-import { assertSafeRelativePath, resolveSafe, isSensitive } from './path-safety'
+import { readBufferChecked } from './file-operations'
+import {
+  assertSafeRelativePath,
+  resolveSafe,
+  isSensitive,
+  SENSITIVE_NAMES,
+  SENSITIVE_EXTENSIONS,
+} from './path-safety'
 
 const exec = promisify(execFile)
 const nullDevice = process.platform === 'win32' ? 'NUL' : '/dev/null'
@@ -22,31 +29,45 @@ const gitArgs = [
   '-c',
   'diff.trustExitCode=false',
   '-c',
-  `core.hooksPath=${nullDevice}`,
+  'core.hooksPath=' + nullDevice,
   '-c',
   'commit.gpgSign=false',
+  '-c',
+  'log.showSignature=false',
+  '-c',
+  'diff.submodule=short',
 ]
 const gitEnv = () => ({
-  ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^GIT_/i.test(key))),
+  PATH: process.env.PATH,
+  Path: process.env.Path,
+  SystemRoot: process.env.SystemRoot,
+  TEMP: process.env.TEMP,
+  TMP: process.env.TMP,
   GIT_CONFIG_NOSYSTEM: '1',
   GIT_CONFIG_GLOBAL: nullDevice,
   GIT_OPTIONAL_LOCKS: '0',
   GIT_PAGER: 'cat',
   GIT_TERMINAL_PROMPT: '0',
+  GIT_ATTR_NOSYSTEM: '1',
 })
+
+/**
+ * Git Diff 与文件工具共用同一份敏感名称/扩展名清单。
+ * 同时排除同名文件和目录内容，并忽略大小写，避免 Git 读取入口绕过 Hard Deny。
+ */
 const diffExcludes = [
-  ':(exclude,glob)**/.env*',
-  ':(exclude,glob)**/.npmrc',
-  ':(exclude,glob)**/*.pem',
-  ':(exclude,glob)**/*.key',
-  ':(exclude,glob)**/credentials.json',
-  ':(exclude,glob)**/.ssh/**',
+  ':(exclude,icase,glob)**/.env*',
+  ...SENSITIVE_NAMES.flatMap((name) => [
+    ':(exclude,icase,glob)**/' + name,
+    ':(exclude,icase,glob)**/' + name + '/**',
+  ]),
+  ...SENSITIVE_EXTENSIONS.map((extension) => ':(exclude,icase,glob)**/*.' + extension),
 ]
 const inside = (root: string, item: string) => item === root || item.startsWith(root + path.sep)
 
 /** Git 仓库必须恰好位于授权工作区根目录，且 .git 元数据不得指向工作区外。 */
 async function assertWorkspaceGitRoot(workspace: LocalWorkspace) {
-  const root = await fs.realpath(workspace.root)
+  const root = await resolveSafe(workspace, '.')
   const [top, gitDir] = await Promise.all([
     exec('git', [...gitArgs, 'rev-parse', '--show-toplevel'], {
       cwd: root,
@@ -66,15 +87,16 @@ async function assertWorkspaceGitRoot(workspace: LocalWorkspace) {
   const normalize = (value: string) => (process.platform === 'win32' ? value.toLowerCase() : value)
   if (normalize(repositoryRoot) !== normalize(root) || !inside(root, metadataRoot))
     throw Error('GIT_REPOSITORY_OUTSIDE_WORKSPACE')
+  await assertNoGitFilters(root)
   return root
 }
 
-/** 禁止本地仓库配置注册 clean/smudge/process filter，避免 add/commit 执行外部程序。 */
+/** 所有 Git 入口拒绝有效配置中的外部 filter，包含 include 引入的配置。 */
 async function assertNoGitFilters(root: string) {
   try {
     const { stdout } = await exec(
       'git',
-      [...gitArgs, 'config', '--local', '--get-regexp', '^filter\\.'],
+      [...gitArgs, 'config', '--includes', '--get-regexp', '^filter\\.'],
       {
         cwd: root,
         env: gitEnv(),
@@ -93,12 +115,16 @@ async function assertNoGitFilters(root: string) {
 /** 返回当前分支和非敏感文件状态；过滤密钥目录及凭据文件名。 */
 export async function gitStatus(workspace: LocalWorkspace) {
   const root = await assertWorkspaceGitRoot(workspace)
-  const { stdout } = await exec('git', [...gitArgs, 'status', '--short', '--branch'], {
-    cwd: root,
-    env: gitEnv(),
-    timeout: 10000,
-    maxBuffer: 256 * 1024,
-  })
+  const { stdout } = await exec(
+    'git',
+    [...gitArgs, 'status', '--short', '--branch', '--ignore-submodules=all'],
+    {
+      cwd: root,
+      env: gitEnv(),
+      timeout: 10000,
+      maxBuffer: 256 * 1024,
+    },
+  )
   return stdout
     .split('\n')
     .filter((line) => !line.split(/[\s/\\]+/).some(isSensitive))
@@ -134,9 +160,41 @@ export async function gitLog(workspace: LocalWorkspace, limit = 10) {
 /** 只返回工作区内受允许文件的未暂存 Diff，禁止外部 Diff 和 Textconv。 */
 export async function gitDiff(workspace: LocalWorkspace) {
   const root = await assertWorkspaceGitRoot(workspace)
+  // Git 直接读取工作树，不经过文件工具；先验证候选文件，防止硬链接和私有目录旁路。
+  const { stdout: tracked } = await exec(
+    'git',
+    [...gitArgs, 'ls-files', '-z', '--', '.', ...diffExcludes],
+    {
+      cwd: root,
+      env: gitEnv(),
+      timeout: 5000,
+      maxBuffer: 512 * 1024,
+    },
+  )
+  const files = tracked.split('\0').filter(Boolean)
+  if (files.length > 2000) throw Error('GIT_TOO_MANY_FILES')
+  for (const file of files) {
+    try {
+      await resolveSafe(workspace, file)
+    } catch (error) {
+      // 已删除的文件仍允许展示删除 Diff；其父目录必须经过相同校验。
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      assertSafeRelativePath(file)
+      await resolveSafe(workspace, path.posix.dirname(file))
+    }
+  }
   const { stdout } = await exec(
     'git',
-    [...gitArgs, 'diff', '--no-ext-diff', '--no-textconv', '--', '.', ...diffExcludes],
+    [
+      ...gitArgs,
+      'diff',
+      '--no-ext-diff',
+      '--no-textconv',
+      '--ignore-submodules=all',
+      '--',
+      '.',
+      ...diffExcludes,
+    ],
     { cwd: root, env: gitEnv(), timeout: 10000, maxBuffer: 512 * 1024 },
   )
   return stdout
@@ -180,7 +238,7 @@ async function addSnapshot(workspace: LocalWorkspace, files: string[]) {
     if (stat.size > 5 * 1024 * 1024) throw Error('GIT_ADD_FILE_TOO_LARGE')
     totalBytes += stat.size
     if (totalBytes > 20 * 1024 * 1024) throw Error('GIT_ADD_TOTAL_TOO_LARGE')
-    const content = await fs.readFile(absolute)
+    const content = await readBufferChecked(workspace, file, 5 * 1024 * 1024)
     entries.push({
       path: file,
       size: content.length,

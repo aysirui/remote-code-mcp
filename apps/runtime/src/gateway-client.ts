@@ -1,6 +1,18 @@
 import axios from 'axios'
 
 /**
+ * 设备解绑是幂等操作：服务端明确返回“设备凭据无效”时，表示该绑定已不存在，
+ * Runtime 可以清除本地失效凭据；其他 401（例如代理认证失败）不得被当作解绑成功。
+ */
+export function isStaleDeviceCredentialResponse(
+  endpoint: string,
+  status: number | undefined,
+  detail: string | undefined,
+): boolean {
+  return endpoint === '/api/device/unpair' && status === 401 && detail === '设备凭据无效'
+}
+
+/**
  * Runtime 发往云端 Gateway 的受控 HTTP 客户端。
  * 设备配对仅使用明确的服务端地址，远程连接一律要求 HTTPS；
  * 本机开发可使用 localhost / 127.0.0.1 的 HTTP。
@@ -46,8 +58,14 @@ export async function postGateway<T = unknown>(
           : typeof serverMessage?.error === 'string'
             ? serverMessage.error
             : undefined
+
+      // 仅服务端明确确认设备凭据不存在时，按“已经解绑”处理。
+      if (isStaleDeviceCredentialResponse(endpoint, status, detail)) {
+        return { ok: true } as T
+      }
+
       const reason = status
-        ? `Gateway HTTP ${status}${detail ? ': ' + detail : ''}`
+        ? 'Gateway HTTP ' + status + (detail ? ': ' + detail : '')
         : error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT'
           ? 'Gateway 请求超时'
           : error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN'
@@ -60,7 +78,7 @@ export async function postGateway<T = unknown>(
                     error.code?.startsWith('CERT_') ||
                     error.code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE'
                   ? 'Gateway TLS 证书校验失败'
-                  : `Gateway 网络请求失败${error.code ? ' (' + error.code + ')' : ''}`
+                  : 'Gateway 网络请求失败' + (error.code ? ' (' + error.code + ')' : '')
       throw new Error(reason, { cause: error })
     }
     throw error

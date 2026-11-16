@@ -34,6 +34,10 @@ export const operationRequiresWrite = (operation: Operation): boolean =>
     'command.run',
   ].includes(operation)
 
-/** 删除、命令执行和 Git 写操作始终需要 Runtime 本机逐次确认，不能被 allow 策略绕过。 */
+/**
+ * Git 暂存和提交始终需要 Runtime 本机逐次确认；
+ * 文件删除是否需要审批由 Runtime 根据本地真实目录项数量进行风险评估。
+ * Command 是否需要审批完全由云端与本地 Command 策略决定。
+ */
 export const operationRequiresLocalApproval = (operation: Operation): boolean =>
-  ['file.delete', 'command.run', 'git.add', 'git.commit'].includes(operation)
+  ['git.add', 'git.commit'].includes(operation)

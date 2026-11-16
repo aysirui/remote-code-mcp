@@ -7,3 +7,4 @@ dist/
 .runtime-data/
 coverage/
 .DS_Store
+output/

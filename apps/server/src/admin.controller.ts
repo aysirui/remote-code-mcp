@@ -11,12 +11,13 @@ import {
   NotFoundException,
 } from '@nestjs/common'
 import type { Request } from 'express'
-import { eq, desc } from 'drizzle-orm'
+import { eq, desc, count } from 'drizzle-orm'
 import { Identity } from './identity'
 import { Store } from './store'
 import { DeviceHub } from './device-hub'
 import { csrf } from './http-security'
 import * as S from './schema'
+import { parsePagination } from './pagination'
 
 /** 管理员用户、设备和安全审计接口；业务处理前必须验证管理员角色。 */
 @Controller('api')
@@ -30,7 +31,8 @@ export class AdminController {
   /** 列出管理员允许查看的用户摘要。 */
   @Get('admin/users') async users(@Req() req: Request) {
     await this.id.requireAdmin(req)
-    return this.store.db
+    const paging = parsePagination(req.query)
+    const query = this.store.db
       .select({
         id: S.users.id,
         email: S.users.email,
@@ -39,7 +41,13 @@ export class AdminController {
         createdAt: S.users.createdAt,
       })
       .from(S.users)
-      .limit(500)
+      .orderBy(desc(S.users.createdAt), desc(S.users.id))
+    if (!paging) return query.limit(500)
+    const [items, totals] = await Promise.all([
+      query.limit(paging.pageSize).offset(paging.offset),
+      this.store.db.select({ total: count() }).from(S.users),
+    ])
+    return { items, total: Number(totals[0].total), page: paging.page, pageSize: paging.pageSize }
   }
 
   /** 修改目标用户状态，阻止自禁用和低权限管理员操作高权限角色。 */
@@ -94,10 +102,23 @@ export class AdminController {
   /** 列出设备与在线状态，不授予跨用户文件访问能力。 */
   @Get('admin/devices') async adminDevices(@Req() req: Request) {
     await this.id.requireAdmin(req)
-    return (await this.store.db.select().from(S.devices).limit(500)).map((d) => ({
-      ...d,
-      online: this.hub.isOnline(d.id),
-    }))
+    const paging = parsePagination(req.query)
+    const query = this.store.db
+      .select()
+      .from(S.devices)
+      .orderBy(desc(S.devices.lastSeenAt), desc(S.devices.id))
+    if (!paging)
+      return (await query.limit(500)).map((d) => ({ ...d, online: this.hub.isOnline(d.id) }))
+    const [rows, totals] = await Promise.all([
+      query.limit(paging.pageSize).offset(paging.offset),
+      this.store.db.select({ total: count() }).from(S.devices),
+    ])
+    return {
+      items: rows.map((d) => ({ ...d, online: this.hub.isOnline(d.id) })),
+      total: Number(totals[0].total),
+      page: paging.page,
+      pageSize: paging.pageSize,
+    }
   }
 
   /** 管理员撤销指定设备凭据和连接。 */
@@ -134,11 +155,17 @@ export class AdminController {
   /** 仅管理员可查询平台安全审计，不包含 MCP 对话或工具参数。 */
   @Get('admin/security-audits') async securityAudits(@Req() req: Request) {
     await this.id.requireAdmin(req)
-    return this.store.db
+    const paging = parsePagination(req.query)
+    const query = this.store.db
       .select()
       .from(S.securityAudits)
-      .orderBy(desc(S.securityAudits.createdAt))
-      .limit(200)
+      .orderBy(desc(S.securityAudits.createdAt), desc(S.securityAudits.id))
+    if (!paging) return query.limit(200)
+    const [items, totals] = await Promise.all([
+      query.limit(paging.pageSize).offset(paging.offset),
+      this.store.db.select({ total: count() }).from(S.securityAudits),
+    ])
+    return { items, total: Number(totals[0].total), page: paging.page, pageSize: paging.pageSize }
   }
 
   /** 聚合平台用户、设备和工作区数量。 */

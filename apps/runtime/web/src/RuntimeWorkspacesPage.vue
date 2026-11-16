@@ -537,3 +537,67 @@ function onWorkspaceAction(action: string, workspace: Workspace) {
   }
 }
 </style>
+
+<style scoped>
+.workspace-page {
+  background: transparent;
+  border: 0;
+  padding: 0 !important;
+  box-shadow: none;
+}
+.workspace-heading h1 {
+  font-size: 23px;
+  font-weight: 650;
+  margin-bottom: 6px;
+}
+.workspace-description,
+.workspace-server,
+.workspace-path {
+  color: var(--ui-muted);
+}
+.workspace-card {
+  border-radius: 8px;
+  border-color: var(--ui-line);
+}
+.workspace-card:hover {
+  box-shadow: none;
+  border-color: #c8d4e5;
+}
+.workspace-folder-icon {
+  width: 36px;
+  height: 36px;
+  flex-basis: 36px;
+  border-radius: 7px;
+  font-size: 18px;
+}
+.workspace-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+.workspace-card-main {
+  padding: 20px;
+}
+.workspace-card-footer {
+  background: #f8f9fb;
+}
+.workspace-command-code,
+.workspace-policy-disabled {
+  color: var(--ui-muted);
+}
+@media (max-width: 760px) {
+  .workspace-heading h1 {
+    font-size: 21px;
+  }
+  .workspace-policy-grid {
+    grid-template-columns: 1fr;
+  }
+  .workspace-card-main {
+    padding: 16px;
+    flex-wrap: wrap;
+  }
+  .workspace-card-footer {
+    padding: 16px;
+    flex-wrap: wrap;
+  }
+}
+</style>

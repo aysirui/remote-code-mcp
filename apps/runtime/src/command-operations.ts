@@ -1,8 +1,8 @@
-import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { LocalCommand, LocalWorkspace } from './state'
+import { commandExecutionProvider } from './command-provider'
 
 /** 内置命令只保留项目任务；所有 Git 操作必须通过独立 Git 工具域执行。 */
 const builtins: Record<string, LocalCommand> = {
@@ -73,37 +73,22 @@ export function commandFingerprint(command: LocalCommand): string {
 /** 命令默认最长运行 20 秒；超时后先温和终止，再强制清理进程树。 */
 export const COMMAND_TIMEOUT_MS = 20_000
 
-/**
- * 尽力终止命令及其子进程。
- * Unix 使用独立进程组；Windows 使用 taskkill /T。两者都不是不可逃逸的 OS 级进程容器。
- */
-function terminateProcessTree(child: ReturnType<typeof spawn>, force = false) {
-  if (!child.pid) return
-  const signal = force ? 'SIGKILL' : 'SIGTERM'
-  if (process.platform === 'win32') {
-    // 首次只请求结束进程树；超时宽限期结束后再通过 /F 强制终止。
-    const args = ['/PID', String(child.pid), '/T', ...(force ? ['/F'] : [])]
-    const killer = spawn('taskkill.exe', args, {
-      stdio: 'ignore',
-      windowsHide: true,
-    })
-    killer.on('error', () => child.kill(signal))
-    killer.on('close', (code) => {
-      if (code !== 0) child.kill(signal)
-    })
-    return
-  }
-  try {
-    process.kill(-child.pid, signal)
-  } catch {
-    child.kill(signal)
-  }
+/** 没有经过验证的隔离后端时拒绝远程程序执行，审批不能替代文件及网络隔离。 */
+export function assertCommandIsolation() {
+  const capabilities = commandExecutionProvider.capabilities
+  if (
+    !capabilities.filesystemIsolation ||
+    !capabilities.networkIsolation ||
+    !capabilities.resourceLimits
+  )
+    throw Error('COMMAND_ISOLATION_REQUIRED')
 }
+/** 命令输出最多保留 48 KiB，避免大量日志占用 Runtime 内存或返回过大 RPC 响应。 */
+const COMMAND_OUTPUT_LIMIT_BYTES = 48 * 1024
 
 /**
  * 执行本机预先登记的固定命令，远程调用只能提供命令 ID。
- * 当前实现提供审批、环境变量收敛和超时进程清理，但尚未构成 OS 级沙箱；
- * 命令仍可能访问当前 OS 用户有权访问的工作区外资源，不能将审批视为隔离措施。
+ * 仅允许具备文件、网络与资源隔离能力的 Provider；当前普通 spawn 后端会被拒绝。
  *
  * @param w 已授权的本地工作区，命令工作目录固定为其真实根目录
  * @param id Runtime 本地登记的命令 ID
@@ -114,6 +99,7 @@ export async function runCheckedCommand(
   id: string,
   timeoutMs = COMMAND_TIMEOUT_MS,
 ) {
+  assertCommandIsolation()
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw Error('INVALID_COMMAND_TIMEOUT')
   const selected = resolveCommand(w, id)
   const root = await fs.realpath(w.root)
@@ -134,58 +120,20 @@ export async function runCheckedCommand(
     GIT_TERMINAL_PROMPT: '0',
     GIT_PAGER: 'cat',
   }
-  return new Promise<{
-    command: string
-    exitCode: number | null
-    output: string
-    truncated: boolean
-  }>((resolve, reject) => {
-    // Windows 的内置 pnpm 通过系统 .cmd 启动器运行；其参数来自固定内置定义，不接受远程 Shell 文本。
-    const child = spawn(executable, selected.args, {
-      cwd: root,
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: process.platform === 'win32' && isBuiltinPnpm,
-      detached: process.platform !== 'win32',
-      windowsHide: true,
-    })
-    let output = ''
-    let truncated = false
-    const limit = 48 * 1024
-    const collect = (chunk: Buffer) => {
-      const remaining = limit - Buffer.byteLength(output, 'utf8')
-      if (remaining <= 0) {
-        truncated = true
-        return
-      }
-      const bytes = Buffer.from(chunk)
-      if (bytes.length > remaining) truncated = true
-      output += bytes.subarray(0, remaining).toString('utf8')
-    }
-    child.stdout?.on('data', collect)
-    child.stderr?.on('data', collect)
-    let timedOut = false
-    let forceTimer: ReturnType<typeof setTimeout> | undefined
-    // 超时先发送 TERM，留出清理时间后再发送 KILL；子进程退出时清除两个计时器。
-    const timer = setTimeout(() => {
-      timedOut = true
-      terminateProcessTree(child)
-      forceTimer = setTimeout(() => terminateProcessTree(child, true), 1500)
-    }, timeoutMs)
-    child.on('error', (error) => {
-      clearTimeout(timer)
-      if (forceTimer) clearTimeout(forceTimer)
-      reject(error)
-    })
-    child.on('close', (code) => {
-      clearTimeout(timer)
-      if (forceTimer) clearTimeout(forceTimer)
-      resolve({
-        command: id,
-        exitCode: code,
-        output: timedOut ? output + '\nCOMMAND_TIMEOUT' : output,
-        truncated,
-      })
-    })
+  const result = await commandExecutionProvider.run({
+    executable,
+    args: selected.args,
+    cwd: root,
+    env,
+    timeoutMs,
+    outputLimitBytes: COMMAND_OUTPUT_LIMIT_BYTES,
+    // 仅 Windows 内置 pnpm 需要通过系统 .cmd 启动器执行；自定义命令始终不启用 Shell。
+    shell: process.platform === 'win32' && isBuiltinPnpm,
   })
+  return {
+    command: id,
+    exitCode: result.exitCode,
+    output: result.timedOut ? result.output + '\nCOMMAND_TIMEOUT' : result.output,
+    truncated: result.truncated,
+  }
 }

@@ -125,9 +125,9 @@ test('Command 执行必须具备工作区写权限，Git 只读查询不需要',
   expect(operationRequiresWrite('git.commit')).toBe(true)
 })
 
-test('删除、Command 执行和 Git 写入始终需要 Runtime 本机审批', () => {
-  expect(operationRequiresLocalApproval('file.delete')).toBe(true)
-  expect(operationRequiresLocalApproval('command.run')).toBe(true)
+test('Command 是否逐次审批由 Command 策略决定，不再被固定操作规则强制审批', () => {
+  expect(operationRequiresLocalApproval('file.delete')).toBe(false)
+  expect(operationRequiresLocalApproval('command.run')).toBe(false)
   expect(operationRequiresLocalApproval('git.add')).toBe(true)
   expect(operationRequiresLocalApproval('git.commit')).toBe(true)
   expect(operationRequiresLocalApproval('file.write')).toBe(false)

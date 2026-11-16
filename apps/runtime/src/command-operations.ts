@@ -3,7 +3,12 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { LocalCommand, LocalWorkspace } from './state'
 import { commandExecutionProvider } from './command-provider'
-import { CommandRunInputSchema, type CommandRunInput } from '@rcm/protocol'
+import {
+  CommandRunInputSchema,
+  sanitizeCommandAudit,
+  type CommandAudit,
+  type CommandRunInput,
+} from '@rcm/protocol'
 import { policyForOperation } from './state'
 
 /** 内置命令只保留项目任务；所有 Git 操作必须通过独立 Git 工具域执行。 */
@@ -112,6 +117,7 @@ export async function runCheckedCommand(
   input: CommandRunInput,
   approvalResourceHash?: string,
   timeoutMs = COMMAND_TIMEOUT_MS,
+  onExecution?: (command: CommandAudit) => void,
 ) {
   if (!w.enabled || !w.permissions.read || !w.permissions.write) throw Error('PERMISSION_DENIED')
   if (policyForOperation(w, 'command.run') === 'deny') throw Error('POLICY_DENIED')
@@ -134,6 +140,7 @@ export async function runCheckedCommand(
     GIT_TERMINAL_PROMPT: '0',
     GIT_PAGER: 'cat',
   }
+  onExecution?.(sanitizeCommandAudit(selected))
   const result = await commandExecutionProvider.run({
     executable: selected.executable,
     args: selected.args,

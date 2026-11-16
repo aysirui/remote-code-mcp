@@ -531,15 +531,24 @@ export function useRuntimeConsole() {
   }
 
   /** 解除当前服务器的设备配对，清除本机凭据并终止当前连接。 */
-  async function unpair() {
+  async function unpair(localOnly = false) {
     const serverId = status.value.serverId
     try {
       await ElMessageBox.confirm(
-        `确认解除 ${status.value.serverName} 的设备绑定？服务器中的设备将被撤销，之后需要重新配对。暂停连接或切换服务器无需解除绑定。`,
-        '解除设备绑定',
-        { type: 'warning', confirmButtonText: '解除绑定', confirmButtonType: 'danger' },
+        localOnly
+          ? `确认仅清除 ${status.value.serverName} 在本机保存的设备凭据？适用于服务器数据库已重置、凭据失效或无法正常解绑的情况。此操作会断开连接，之后需要重新配对；如果服务器仍保留旧设备，请在平台中撤销该设备。`
+          : `确认解除 ${status.value.serverName} 的设备绑定？服务器中的设备将被撤销，之后需要重新配对。暂停连接或切换服务器无需解除绑定。`,
+        localOnly ? '仅清除本地绑定' : '解除设备绑定',
+        {
+          type: 'warning',
+          confirmButtonText: localOnly ? '清除本地绑定' : '解除绑定',
+          confirmButtonType: 'danger',
+        },
       )
-      await manageServer(() => api('unpair', 'POST', { serverId }), '设备绑定已在服务器撤销')
+      await manageServer(
+        () => api('unpair', 'POST', { serverId, localOnly }),
+        localOnly ? '本地绑定已清除，可以重新配对' : '设备绑定已解除，可以重新配对',
+      )
     } catch (error: unknown) {
       reportError(error)
     }

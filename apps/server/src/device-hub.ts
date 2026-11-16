@@ -9,7 +9,12 @@ import { WebSocketServer, WebSocket } from 'ws'
 import type { Server as HttpServer, IncomingMessage } from 'node:http'
 import { URL } from 'node:url'
 import type { RpcRequest } from '@rcm/protocol'
-import { RpcResponseSchema, HelloSchema, operationRequiresWrite } from '@rcm/protocol'
+import {
+  RpcResponseSchema,
+  HelloSchema,
+  operationRequiresWrite,
+  type CommandAudit,
+} from '@rcm/protocol'
 import * as S from './schema'
 import { Store } from './store'
 import { uid, hash } from './security'
@@ -28,6 +33,7 @@ export class DeviceHub {
       timer: NodeJS.Timeout
       deviceId: string
       connection: WebSocket
+      onCommandAudit: (command?: CommandAudit) => void
     }
   >()
 
@@ -155,6 +161,7 @@ export class DeviceHub {
           if (!p || p.deviceId !== deviceId || p.connection !== ws) return
           clearTimeout(p.timer)
           this.pending.delete(r.id)
+          p.onCommandAudit(r.commandAudit)
           if (r.success) p.resolve(r.data)
           else p.reject(new Error(r.error?.code || 'EXECUTION_FAILED'))
         }
@@ -182,7 +189,7 @@ export class DeviceHub {
   }
 
   /**
-   * 执行远程 RPC，并只写入操作元数据。
+   * 执行远程 RPC，记录元数据及 Runtime 生成的脱敏命令。
    * payload 只用于转发到 Runtime，绝不传给持久化日志方法。
    */
   async execute(
@@ -197,6 +204,7 @@ export class DeviceHub {
     let deviceId: string | undefined
     let status: 'success' | 'failed' = 'failed'
     let errorCode: string | undefined
+    let commandAudit: CommandAudit | undefined
     try {
       const ws = await this.store.one(
         this.store.db
@@ -246,6 +254,9 @@ export class DeviceHub {
           timer,
           deviceId: device.id,
           connection: socket,
+          onCommandAudit: (command) => {
+            if (operation === 'command.run') commandAudit = command
+          },
         })
         socket.send(JSON.stringify(request), (error) => {
           if (error) {
@@ -277,6 +288,7 @@ export class DeviceHub {
           status,
           durationMs: Date.now() - startedAt,
           errorCode,
+          commandAudit,
         })
       } catch (logError: unknown) {
         console.error(

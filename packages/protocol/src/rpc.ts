@@ -25,6 +25,9 @@ export const RpcResponseSchema = z.object({
   id: z.string(),
   success: z.boolean(),
   data: z.unknown().optional(),
+  commandAudit: z
+    .object({ executable: z.string().max(260), args: z.array(z.string().max(500)).max(20) })
+    .optional(),
   error: z.object({ code: z.string(), message: z.string() }).optional(),
 })
 

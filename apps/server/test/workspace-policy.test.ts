@@ -130,7 +130,13 @@ test('Gateway 转发工具请求不附加云端审批，本地只读权限仍生
       const request = JSON.parse(raw.toString()) as RpcRequest
       requests.push(request)
       client.send(
-        JSON.stringify({ kind: 'response', id: request.id, success: true, data: { done: true } }),
+        JSON.stringify({
+          kind: 'response',
+          id: request.id,
+          success: true,
+          data: { done: true },
+          commandAudit: { executable: 'pnpm', args: ['run', 'build'] },
+        }),
       )
     })
     // 三档策略都交给 Runtime 判断，Gateway 不另设审批或拒绝策略。
@@ -146,7 +152,18 @@ test('Gateway 转发工具请求不附加云端审批，本地只读权限仍生
       ).resolves.toEqual({ done: true })
     }
     expect(requests).toHaveLength(3)
-    for (const request of requests) {
+    for (const [record] of store.logOperation.mock.calls) {
+      expect(record.commandAudit).toBeUndefined()
+    }
+    store.one.mockResolvedValueOnce(workspace).mockResolvedValueOnce(device)
+    await hub.execute('owner', 'ai-client', workspace.id, 'command.run', { command: 'build' })
+    expect(store.logOperation).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        toolName: 'command_run',
+        commandAudit: { executable: 'pnpm', args: ['run', 'build'] },
+      }),
+    )
+    for (const request of requests.slice(0, 3)) {
       expect(request).not.toHaveProperty('approvalRequired')
       expect(request).toMatchObject({ workspaceId: workspace.id, operation: 'file.write' })
     }
@@ -154,7 +171,7 @@ test('Gateway 转发工具请求不附加云端审批，本地只读权限仍生
     await expect(hub.execute('owner', 'ai-client', workspace.id, 'file.write', {})).rejects.toThrow(
       'PERMISSION_DENIED',
     )
-    expect(requests).toHaveLength(3)
+    expect(requests).toHaveLength(4)
   } finally {
     const closed = once(client, 'close')
     client.close()

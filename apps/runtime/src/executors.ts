@@ -1,6 +1,11 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { ToolInputs, operationRequiresWrite, type RpcRequest } from '@rcm/protocol'
+import {
+  ToolInputs,
+  operationRequiresWrite,
+  type RpcRequest,
+  type CommandAudit,
+} from '@rcm/protocol'
 import { policyForOperation, type LocalWorkspace } from './state'
 import { resolveSafe, isSensitive, assertSafeRelativePath } from './path-safety'
 import {
@@ -104,7 +109,12 @@ export async function validateOperationSafety(w: LocalWorkspace, req: RpcRequest
  * 每次请求先校验工作区 ID、截止时间、读写授权及 Zod 参数，
  * 再调用文件/Git/Command 各自的领域执行器；拒绝任意 Shell。
  */
-export async function execute(w: LocalWorkspace, req: RpcRequest, approvalResourceHash?: string) {
+export async function execute(
+  w: LocalWorkspace,
+  req: RpcRequest,
+  approvalResourceHash?: string,
+  onCommandExecution?: (command: CommandAudit) => void,
+) {
   if (req.workspaceId !== w.id) throw Error('WORKSPACE_ID_MISMATCH')
   if (req.deadlineAt < Date.now()) throw Error('REQUEST_EXPIRED')
   if (!w.enabled) throw Error('WORKSPACE_DISABLED')
@@ -214,7 +224,7 @@ export async function execute(w: LocalWorkspace, req: RpcRequest, approvalResour
       return listCommands(w).map(({ id, name }) => ({ id, name }))
     case 'command.run': {
       const payload = ToolInputs['command.run'].parse(req.payload)
-      return runCheckedCommand(w, payload, approvalResourceHash)
+      return runCheckedCommand(w, payload, approvalResourceHash, undefined, onCommandExecution)
     }
     default:
       throw Error('UNSUPPORTED_OPERATION')

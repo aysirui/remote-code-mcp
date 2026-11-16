@@ -4,6 +4,7 @@ import { drizzle } from 'drizzle-orm/mysql2'
 import { createDatabasePool } from './database'
 import * as S from './schema'
 import { uid } from './security'
+import { commandAuditSummary, type CommandAudit } from '@rcm/protocol'
 
 export type OperationType = 'file' | 'git' | 'command'
 export type OperationStatus = 'success' | 'failed'
@@ -21,7 +22,7 @@ export class Store {
 
   /**
    * 记录 MCP 工具执行的最小元数据。
-   * 此方法不接收 payload、路径、命令、输出、Diff 或对话信息，避免误存隐私数据。
+   * 仅允许额外接收脱敏命令；不接收 payload、路径、输出、Diff 或对话信息。
    */
   async logOperation(input: {
     operationId: string
@@ -34,10 +35,16 @@ export class Store {
     status: OperationStatus
     durationMs: number
     errorCode?: string
+    commandAudit?: CommandAudit
   }) {
+    const { commandAudit, ...metadata } = input
     await this.db.insert(S.operationLogs).values({
       id: uid(),
-      ...input,
+      ...metadata,
+      commandSummary:
+        input.toolName === 'command_run' && commandAudit
+          ? commandAuditSummary(commandAudit)
+          : undefined,
       durationMs: Math.max(0, Math.trunc(input.durationMs)),
       errorCode: input.errorCode,
     })

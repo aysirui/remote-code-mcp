@@ -13,7 +13,8 @@ interface LocalApiError {
  */
 const client = axios.create({
   baseURL: '/local/api/',
-  timeout: 15000,
+  // 留出 Gateway 请求（15 秒）超时后本地服务返回错误的时间。
+  timeout: 20000,
   headers: { 'Content-Type': 'application/json' },
 })
 

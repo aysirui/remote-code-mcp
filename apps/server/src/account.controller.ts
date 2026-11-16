@@ -157,7 +157,7 @@ export class AccountController {
     return { ok: true }
   }
 
-  /** 当前用户自己的 MCP 工具执行记录；只返回最小化元数据。 */
+  /** 当前用户自己的 MCP 工具执行记录，包含元数据及脱敏命令摘要。 */
   @Get('me/operation-logs') async operationLogs(@Req() req: Request) {
     const u = await this.id.requireUser(req)
     const paging = parsePagination(req.query)

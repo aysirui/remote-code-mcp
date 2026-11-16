@@ -15,6 +15,7 @@ import {
   operationRequiresWrite,
   operationRequiresLocalApproval,
   type RpcRequest,
+  type CommandAudit,
 } from '@rcm/protocol'
 import { WriteApprovalQueue } from './write-approvals'
 import { startLocalServer } from './local-server'
@@ -124,6 +125,7 @@ function connect() {
   connection.on('message', async (raw) => {
     if (socket !== connection) return
     let req: RpcRequest | undefined
+    let commandAudit: CommandAudit | undefined
     try {
       const parsed = RpcRequestSchema.parse(JSON.parse(raw.toString()))
       req = parsed
@@ -218,9 +220,13 @@ function connect() {
       )
         throw Error('WORKSPACE_PERMISSION_REVOKED')
       // execute 内部再次校验工作区权限、策略、参数和路径，形成独立的执行层防线。
-      const data = await execute(workspace, parsed, approvalResourceHash)
+      const data = await execute(workspace, parsed, approvalResourceHash, (command) => {
+        commandAudit = command
+      })
       if (connection.readyState === WebSocket.OPEN)
-        connection.send(JSON.stringify({ kind: 'response', id: parsed.id, success: true, data }))
+        connection.send(
+          JSON.stringify({ kind: 'response', id: parsed.id, success: true, data, commandAudit }),
+        )
     } catch (e: unknown) {
       if (req?.id && connection.readyState === WebSocket.OPEN) {
         const message = e instanceof Error ? e.message : String(e)
@@ -229,6 +235,7 @@ function connect() {
             kind: 'response',
             id: req.id,
             success: false,
+            commandAudit,
             error: { code: 'EXECUTION_FAILED', message },
           }),
         )

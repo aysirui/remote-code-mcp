@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { inject } from 'vue'
+import { ElMessage } from 'element-plus'
 import type { RuntimeContext } from './use-runtime-console'
 import {
   Plus,
@@ -9,6 +10,7 @@ import {
   Delete,
   VideoPause,
   VideoPlay,
+  CopyDocument,
 } from '@element-plus/icons-vue'
 const {
   status,
@@ -29,6 +31,16 @@ const {
 } = inject<RuntimeContext>('runtime')!
 function openActivationPage() {
   if (pairing.value?.activationUrl) window.open(pairing.value.activationUrl, '_blank', 'noopener')
+}
+async function copyPairingCode() {
+  const code = pairing.value?.code
+  if (!code) return
+  try {
+    await navigator.clipboard.writeText(code)
+    ElMessage.success('配对码已复制')
+  } catch {
+    ElMessage.error('复制失败，请选中配对码手动复制')
+  }
 }
 </script>
 <template>
@@ -118,7 +130,15 @@ function openActivationPage() {
           @click="toggleConnection"
           >{{ status.paused ? '恢复连接' : '暂停连接' }}</el-button
         >
-        <el-button text type="danger" :disabled="serverBusy" @click="unpair">解除绑定</el-button>
+        <el-button text type="danger" :disabled="serverBusy" @click="unpair()">解除绑定</el-button>
+        <el-button
+          v-if="!status.online"
+          text
+          type="danger"
+          :disabled="serverBusy"
+          @click="unpair(true)"
+          >仅清除本地绑定</el-button
+        >
         <el-button text :icon="Refresh" :disabled="serverBusy" @click="refresh">刷新状态</el-button>
       </div>
     </div>
@@ -131,7 +151,16 @@ function openActivationPage() {
       }}</el-button>
       <div v-if="pairing" class="pairing-panel">
         <div class="muted">请在 {{ status.serverName }} 对应的平台确认此配对码</div>
-        <div class="pairing-code">{{ pairing.code }}</div>
+        <div class="pairing-code-row">
+          <span class="pairing-code">{{ pairing.code }}</span>
+          <el-button
+            text
+            :icon="CopyDocument"
+            aria-label="复制配对码"
+            title="复制配对码"
+            @click="copyPairingCode"
+          />
+        </div>
         <div class="row binding-actions">
           <el-button @click="openActivationPage">打开平台授权页面</el-button>
           <el-button type="primary" :loading="serverBusy" @click="finishPair"
@@ -259,8 +288,15 @@ function openActivationPage() {
   border-radius: 10px;
   background: var(--el-color-primary-light-9);
 }
-.pairing-code {
+.pairing-code-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   margin: 12px 0 20px;
+}
+.pairing-code {
+  overflow-wrap: anywhere;
   font-size: 28px;
   font-weight: 700;
   letter-spacing: 3px;

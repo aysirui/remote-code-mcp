@@ -167,10 +167,10 @@ export function startLocalServer(options: LocalServerOptions) {
     connect()
     publishConfig()
   }
-  const revokeBinding = async (server: ServerProfile) => {
+  const revokeBinding = async (server: ServerProfile, localOnly = false) => {
     if (pairingBusy.has(server.id)) throw Error('正在配对，请稍后再试')
     // 服务端确认撤销成功前保留本地凭据，离线时不会丢失恢复连接所需的信息。
-    if (server.deviceToken)
+    if (server.deviceToken && !localOnly)
       await postGateway(server.gateway, '/api/device/unpair', {}, server.deviceToken)
     if (config.activeServerId === server.id) disconnect()
     server.deviceId = undefined
@@ -318,7 +318,10 @@ export function startLocalServer(options: LocalServerOptions) {
   /** 主动解除绑定时同步撤销服务端设备，暂停、切换均不走此入口。 */
   api.post('/unpair', async (req, res) => {
     try {
-      await revokeBinding(requireServer(req.body.serverId))
+      if (req.body.localOnly !== undefined && typeof req.body.localOnly !== 'boolean')
+        throw Error('本地清除选项无效')
+      // 仅本地清除必须由用户明确选择，仍要求有效的本地管理凭据。
+      await revokeBinding(requireServer(req.body.serverId), req.body.localOnly === true)
       await save(config)
       publishConfig()
       res.json(status())

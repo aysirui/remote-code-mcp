@@ -63,6 +63,17 @@ test('已登记命令 allow 下直接运行，approval 下没有本机批准不�
   )
 })
 
+test('执行回调只提供脱敏命令，审批被拒绝时没有执行记录', async () => {
+  const record = jest.fn()
+  await execute(workspace(), rpc({ command: registered.id }), undefined, record)
+  expect(record).toHaveBeenCalledWith({ executable: 'node', args: ['[已隐藏]', '[已隐藏]'] })
+  record.mockClear()
+  await expect(
+    execute(workspace('approval'), rpc({ command: registered.id }), undefined, record),
+  ).rejects.toThrow('COMMAND_APPROVAL_REQUIRED')
+  expect(record).not.toHaveBeenCalled()
+})
+
 test('临时命令必须先审批，完整程序与参数、工作目录和风险全部可见，批准只消费一次', async () => {
   const w = workspace()
   const request = rpc(temporary())

@@ -27,6 +27,15 @@ const fields = computed(() =>
   selected.value
     ? [
         { label: '工具', value: selected.value.toolName },
+        ...(selected.value.toolName === 'command_run'
+          ? [
+              {
+                label: '执行命令（已脱敏）',
+                value:
+                  selected.value.commandSummary || '未记录（历史记录、旧版 Runtime 或未开始执行）',
+              },
+            ]
+          : []),
         { label: '结果', value: selected.value.status === 'success' ? '执行成功' : '执行失败' },
         { label: '耗时', value: selected.value.durationMs + ' ms' },
         { label: '时间', value: fullDate(selected.value.createdAt) },
@@ -41,7 +50,8 @@ const fields = computed(() =>
 </script>
 <template>
   <p class="list-privacy">
-    <el-icon><Lock /></el-icon>仅记录执行元数据，源码、命令内容和 AI 对话不会保存。
+    <el-icon><Lock /></el-icon>记录执行元数据和脱敏命令；目录路径、未识别参数、源码、输出和 AI
+    对话不会保存。
   </p>
   <DataListPanel
     title="执行明细"

@@ -122,7 +122,7 @@ export const oauthTokens = mysqlTable('oauth_tokens', {
 })
 /**
  * MCP 工具执行元数据。
- * 严禁增加路径、工具参数、文件内容、Diff、命令行、输出或对话标识/正文等字段。
+ * 只允许额外保存脱敏命令摘要；不保存路径、原始参数、文件内容、Diff、输出或对话正文。
  */
 export const operationLogs = mysqlTable(
   'operation_logs',
@@ -134,6 +134,7 @@ export const operationLogs = mysqlTable(
     workspaceId: varchar('workspace_id', { length: 48 }).notNull(),
     clientId: varchar('client_id', { length: 255 }).notNull(),
     toolName: varchar('tool_name', { length: 128 }).notNull(),
+    commandSummary: text('command_summary'),
     operationType: varchar('operation_type', { length: 32 }).notNull(),
     status: varchar('status', { length: 20 }).notNull(),
     durationMs: int('duration_ms').notNull(),

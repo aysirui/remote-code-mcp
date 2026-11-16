@@ -95,7 +95,7 @@ export type User = {
   passwordChangeRequired?: boolean
 }
 
-/** MCP 操作日志仅含必要元数据，不含路径、参数、内容、输出或对话信息。 */
+/** MCP 操作日志包含必要元数据及脱敏命令，不含路径、原始参数、内容、输出或对话信息。 */
 export type OperationLog = {
   id: string
   operationId: string
@@ -104,6 +104,7 @@ export type OperationLog = {
   workspaceId: string
   clientId: string
   toolName: string
+  commandSummary?: string | null
   operationType: 'file' | 'git' | 'command'
   status: 'success' | 'failed'
   durationMs: number

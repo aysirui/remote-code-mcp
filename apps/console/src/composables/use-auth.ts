@@ -1,7 +1,7 @@
-import { ref, onUnmounted, type Ref } from 'vue'
+import { ref, watch, onUnmounted, type Ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ApiError, request, type User as Account } from '../api'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 /** 认证表单及会话操作；登录成功后由 Console 刷新业务数据。 */
 export function useAuth(
@@ -10,16 +10,51 @@ export function useAuth(
   reportError: (error: unknown) => void,
 ) {
   const router = useRouter()
+  const route = useRoute()
   const email = ref('')
   const password = ref('')
-  const registering = ref(false)
+  const registering = ref(route.query.register === '1')
+  /** 激活链接失效时可直接跳转至注册恢复入口，支持 SPA 内部导航。 */
+  watch(
+    () => route.query.register,
+    (value) => {
+      if (value === '1') registering.value = true
+    },
+  )
+  /** 登录或注册请求进行中，整个认证表单禁止重复提交。 */
+  const authBusy = ref(false)
+  /** 仅在已有账号未激活或首次发送失败时展示邮件恢复弹窗。 */
+  const activationDialogOpen = ref(false)
+  /** 弹窗显示本次提交的邮箱，不随表单后续编辑改变。 */
+  const activationEmail = ref('')
+  // 重发始终使用触发弹窗时的凭据，不允许通过重复注册覆盖原账号密码。
+  let activationCredentials: { email: string; password: string } | null = null
+  /** 冷却属于单个邮箱，切换账号时不沿用其他邮箱的倒计时。 */
+  let cooldownEmail = ''
+  /** 打开未激活提示；邮件只在用户点击重发后发送。 */
+  function showActivationPrompt(submittedEmail: string, submittedPassword: string) {
+    if (cooldownEmail !== submittedEmail.trim().toLowerCase()) {
+      clearInterval(resendTimer)
+      resendSeconds.value = 0
+    }
+    activationCredentials = { email: submittedEmail.trim(), password: submittedPassword }
+    activationEmail.value = submittedEmail.trim()
+    activationDialogOpen.value = true
+  }
+  /** 弹窗关闭后释放暂存凭据，不清除用户仍在编辑的表单。 */
+  function clearActivationPrompt() {
+    if (activationDialogOpen.value) return
+    activationCredentials = null
+    activationEmail.value = ''
+  }
   /** 重发请求进行中，避免重复提交。 */
   const resendBusy = ref(false)
   /** 距下一次允许重发的秒数，429 时以服务端剩余时间为准。 */
   const resendSeconds = ref(0)
   let resendTimer: ReturnType<typeof setInterval> | undefined
   /** 服务端冷却时间同步到按钮，卸载时释放计时器。 */
-  function startCooldown(seconds: number) {
+  function startCooldown(seconds: number, mailbox: string) {
+    cooldownEmail = mailbox.trim().toLowerCase()
     clearInterval(resendTimer)
     resendSeconds.value = seconds
     resendTimer = setInterval(() => {
@@ -27,19 +62,22 @@ export function useAuth(
     }, 1000)
   }
   onUnmounted(() => clearInterval(resendTimer))
-  /** 使用当前邮箱和密码重发激活邮件，失败时保留输入便于恢复。 */
+  /** 使用弹窗对应的原注册凭据重发；成功关闭弹窗，失败保留提示与冷却状态。 */
   async function resendActivation() {
-    if (resendBusy.value || resendSeconds.value) return
+    if (resendBusy.value || resendSeconds.value || !activationCredentials) return
+    const credentials = activationCredentials
     resendBusy.value = true
     try {
       await request('/api/auth/resend-activation', 'POST', {
-        email: email.value,
-        password: password.value,
+        ...credentials,
       })
-      startCooldown(60)
+      startCooldown(60, credentials.email)
+      activationDialogOpen.value = false
+      registering.value = false
       ElMessage.success('激活邮件已发送，请前往邮箱确认')
     } catch (error) {
-      if (error instanceof ApiError && error.retryAfter) startCooldown(error.retryAfter)
+      if (error instanceof ApiError && error.retryAfter)
+        startCooldown(error.retryAfter, credentials.email)
       reportError(error)
     } finally {
       resendBusy.value = false
@@ -51,22 +89,26 @@ export function useAuth(
   const location = window.location
   const returnTo = new URLSearchParams(location.search).get('returnTo')
 
-  /** 处理注册与登录；首次管理员登录必须先完成临时密码修改。 */
+  /** 登录与注册均维护加载状态；未激活账号只弹出恢复提示，不自动发送或替换密码。 */
   async function signIn() {
+    if (authBusy.value || resendBusy.value || activationDialogOpen.value) return
+    const submittedEmail = email.value
+    const submittedPassword = password.value
+    authBusy.value = true
     try {
       if (registering.value) {
         await request('/api/auth/register', 'POST', {
-          email: email.value,
-          password: password.value,
+          email: submittedEmail,
+          password: submittedPassword,
         })
         ElMessage.success('账号已创建，请前往邮箱激活后再登录。')
-        startCooldown(60)
+        startCooldown(60, submittedEmail)
         registering.value = false
         return
       }
       me.value = await request<Account>('/api/auth/login', 'POST', {
-        email: email.value,
-        password: password.value,
+        email: submittedEmail,
+        password: submittedPassword,
       })
       if (me.value?.passwordChangeRequired) {
         currentPassword.value = password.value
@@ -85,11 +127,17 @@ export function useAuth(
       await refresh()
       ElMessage.success('登录成功')
     } catch (error: unknown) {
+      if (error instanceof ApiError && error.code === 'EMAIL_NOT_VERIFIED') {
+        showActivationPrompt(submittedEmail, submittedPassword)
+        return
+      }
       if (error instanceof ApiError && error.code === 'ACCOUNT_ACTIVATION_SEND_FAILED') {
-        registering.value = false
-        startCooldown(error.retryAfter || 60)
+        startCooldown(error.retryAfter || 60, submittedEmail)
+        showActivationPrompt(submittedEmail, submittedPassword)
       }
       reportError(error)
+    } finally {
+      authBusy.value = false
     }
   }
 
@@ -127,6 +175,10 @@ export function useAuth(
   }
 
   return {
+    authBusy,
+    activationDialogOpen,
+    activationEmail,
+    clearActivationPrompt,
     resendBusy,
     resendSeconds,
     resendActivation,

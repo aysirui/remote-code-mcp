@@ -38,7 +38,7 @@ async function getCsrf(): Promise<string> {
 export class ApiError extends Error {
   constructor(
     message: string,
-    /** 服务端稳定业务码，用于识别可恢复的注册发信失败。 */
+    /** 服务端稳定业务码，用于区分账号已存在、未激活和发信失败。 */
     public readonly code?: string,
     /** 服务端建议的重试等待秒数。 */
     public readonly retryAfter?: number,

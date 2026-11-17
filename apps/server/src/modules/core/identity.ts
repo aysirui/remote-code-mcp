@@ -52,7 +52,7 @@ export class Identity {
     if (!['admin', 'super_admin'].includes(u.role)) throw new ForbiddenException()
     return u
   }
-  /** 创建未验证邮箱的普通账号；保留 ADMIN_EMAIL，不允许公开注册提权。 */
+  /** 创建未验证普通账号；重复邮箱按激活状态返回业务码，保留管理员邮箱及既有凭据。 */
   async register(email: string, password: string) {
     email = email.trim().toLowerCase()
     if (
@@ -78,7 +78,17 @@ export class Identity {
         (error as { cause?: { code?: string }; code?: string }).cause ??
         (error as { code?: string })
       if (cause.code !== 'ER_DUP_ENTRY') throw error
-      throw new BadRequestException('账号已存在，请登录或重发激活邮件')
+      // 唯一约束处理并发注册；仅查询已有状态，不覆盖既有密码，也不自动重发邮件。
+      const existing = await this.store.one(
+        this.store.db.select().from(S.users).where(eq(S.users.email, email)).limit(1),
+      )
+      if (existing?.status === 'disabled') throw new ForbiddenException('账号已禁用')
+      if (existing && !existing.emailVerified)
+        throw new BadRequestException({
+          code: 'EMAIL_NOT_VERIFIED',
+          message: '该账号尚未激活，请先完成邮箱激活',
+        })
+      throw new BadRequestException({ code: 'ACCOUNT_EXISTS', message: '账号已存在，请直接登录' })
     }
     return user
   }

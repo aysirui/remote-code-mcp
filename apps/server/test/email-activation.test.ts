@@ -185,3 +185,37 @@ test('公开注册显式创建未验证账号，注册邮件投递失败返回�
     response: expect.objectContaining({ code: 'ACCOUNT_ACTIVATION_SEND_FAILED', retryAfter: 60 }),
   })
 })
+
+test.each([
+  { verified: true, status: 'active', code: 'ACCOUNT_EXISTS' },
+  { verified: false, status: 'active', code: 'EMAIL_NOT_VERIFIED' },
+])('重复注册按激活状态返回 $code，不发送邮件或覆盖密码', async ({ verified, status, code }) => {
+  const s = setup()
+  s.user.emailVerified = verified
+  s.user.status = status
+  const originalHash = s.user.passwordHash
+  s.insert.mockImplementationOnce(() => {
+    throw Object.assign(new Error('duplicate'), { cause: { code: 'ER_DUP_ENTRY' } })
+  })
+  await expect(s.auth.register(s.user.email, 'another-password-123')).rejects.toMatchObject({
+    response: expect.objectContaining({ code }),
+  })
+  expect(s.mail.sendActivation).not.toHaveBeenCalled()
+  expect(s.user.passwordHash).toBe(originalHash)
+})
+
+test('禁用账号重复注册不能进入重发流程，其他数据库错误继续抛出', async () => {
+  const s = setup()
+  s.user.status = 'disabled'
+  s.insert.mockImplementationOnce(() => {
+    throw Object.assign(new Error('duplicate'), { code: 'ER_DUP_ENTRY' })
+  })
+  await expect(s.auth.register(s.user.email, 'another-password-123')).rejects.toThrow('账号已禁用')
+  s.insert.mockImplementationOnce(() => {
+    throw new Error('database unavailable')
+  })
+  await expect(s.auth.register(s.user.email, 'another-password-123')).rejects.toThrow(
+    'database unavailable',
+  )
+  expect(s.mail.sendActivation).not.toHaveBeenCalled()
+})

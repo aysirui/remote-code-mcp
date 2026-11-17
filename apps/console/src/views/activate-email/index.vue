@@ -142,15 +142,15 @@ async function activate() {
           <span>邮箱状态已同步，无需在电脑上再次激活</span>
         </p>
         <p v-else-if="state === 'invalid'" class="activation-detail recovery-detail">
-          重发方式：在登录页填写注册邮箱和密码，点击“重发激活邮件”。
+          重发方式：在注册页填写原邮箱和密码，点击“注册账号”，再在提示中选择“重发激活邮件”。
         </p>
 
         <div class="activation-actions">
           <router-link
             v-if="state === 'success' || state === 'invalid'"
             class="activation-primary"
-            to="/console">
-            {{ state === 'success' ? '前往登录' : '前往登录页重发' }}
+            :to="state === 'invalid' ? '/console?register=1' : '/console'">
+            {{ state === 'success' ? '前往登录' : '前往注册页重发' }}
             <el-icon aria-hidden="true"><ArrowRight /></el-icon>
           </router-link>
           <el-button

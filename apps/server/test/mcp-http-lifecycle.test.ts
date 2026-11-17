@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import type { Request, Response } from 'express'
 import { McpController } from '../src/modules/mcp/mcp.controller'
+import { env } from '../src/config/env'
 
 const connect = jest.fn().mockResolvedValue(undefined)
 const closeServer = jest.fn().mockResolvedValue(undefined)
@@ -49,6 +50,27 @@ describe('MCP HTTP 生命周期', () => {
     const res = response()
     await controller.post({ headers: {} } as Request, res as unknown as Response)
     expect(res.status).toHaveBeenCalledWith(401)
+    expect(res.set).toHaveBeenCalledWith(
+      'WWW-Authenticate',
+      `Bearer resource_metadata="${env.publicUrl}/.well-known/oauth-protected-resource"`,
+    )
+    expect(connect).not.toHaveBeenCalled()
+  })
+
+  test('失效 Bearer 凭据返回带 invalid_token 和发现地址的 401，不创建 MCP Transport', async () => {
+    const oauth = { token: jest.fn().mockRejectedValue(new Error('Invalid MCP token')) }
+    const controller = new McpController(oauth as never, {} as never, {} as never)
+    const res = response()
+    await controller.post(
+      { headers: { authorization: 'Bearer expired-or-revoked' } } as Request,
+      res as unknown as Response,
+    )
+    expect(res.status).toHaveBeenCalledWith(401)
+    expect(res.json).toHaveBeenCalledWith({ error: 'invalid_token' })
+    expect(res.set).toHaveBeenCalledWith(
+      'WWW-Authenticate',
+      `Bearer error="invalid_token", resource_metadata="${env.publicUrl}/.well-known/oauth-protected-resource"`,
+    )
     expect(connect).not.toHaveBeenCalled()
   })
 

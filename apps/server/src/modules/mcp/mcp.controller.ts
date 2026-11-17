@@ -45,6 +45,11 @@ export class McpController {
     try {
       user = await this.oauth.token(bearer)
     } catch {
+      // 过期、撤销或无效 Token 的 401 也必须携带 Bearer challenge，供客户端刷新或重新发现授权。
+      res.set(
+        'WWW-Authenticate',
+        `Bearer error="invalid_token", resource_metadata="${env.publicUrl}/.well-known/oauth-protected-resource"`,
+      )
       return res.status(401).json({ error: 'invalid_token' })
     }
     const server = new McpServer({ name: 'remote-code-mcp', version: '0.1.0' })

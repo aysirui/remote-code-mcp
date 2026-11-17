@@ -2,6 +2,12 @@ import type { Store } from '../src/infrastructure/database/store'
 import { OAuthRepository } from '../src/modules/oauth/oauth.repository'
 import { canonicalResource } from '../src/modules/oauth/oauth-utils'
 
+let log: jest.SpyInstance
+beforeEach(() => {
+  log = jest.spyOn(console, 'info').mockImplementation(() => undefined)
+})
+afterEach(() => log.mockRestore())
+
 /** 模拟 Drizzle 事务内的行锁和写入，检查安全拒绝路径与事务副作用。 */
 function setup() {
   const now = new Date(Date.now() + 60000)
@@ -70,7 +76,10 @@ function setup() {
 
 test('刷新：错误客户端或过期凭据不得签发令牌', async () => {
   const first = setup()
-  await expect(first.repository.rotateRefreshToken('hash', 'other-client')).resolves.toBeNull()
+  await expect(
+    first.repository.rotateRefreshToken('hash', 'other-client', 'request-1'),
+  ).resolves.toBeNull()
+  expect(log).toHaveBeenCalledWith(expect.stringContaining('"reason":"client_mismatch"'))
   expect(first.insert).not.toHaveBeenCalled()
   const expired = setup()
   expired.refresh.expiresAt = new Date(Date.now() - 1000)
@@ -87,6 +96,16 @@ test('刷新：旧令牌重放撤销令牌族和相关 Access Token，不签发�
   expect(state.update).toHaveBeenCalledTimes(2)
   expect(state.insert).not.toHaveBeenCalled()
   expect(state.set).toHaveBeenCalledWith(expect.objectContaining({ revokedAt: expect.any(Date) }))
+  const diagnostic = JSON.parse(log.mock.calls[0][0])
+  expect(diagnostic).toEqual(
+    expect.objectContaining({
+      event: 'token.refresh_replay_detected',
+      tokenId: 'refresh-1',
+      familyId: 'family-1',
+      grantId: 'grant-1',
+      consumedAt: state.refresh.consumedAt.toISOString(),
+    }),
+  )
 })
 
 test('刷新：有效令牌消费旧令牌并签发新 Access/Refresh', async () => {
@@ -100,7 +119,92 @@ test('刷新：有效令牌消费旧令牌并签发新 Access/Refresh', async ()
   expect(state.forUpdate).toHaveBeenCalledTimes(2)
   expect(state.insert).toHaveBeenCalledTimes(2)
   expect(state.update).toHaveBeenCalledTimes(2)
+  const diagnostic = JSON.parse(log.mock.calls[0][0])
+  expect(diagnostic).toEqual(
+    expect.objectContaining({
+      event: 'token.refresh_rotating',
+      tokenId: 'refresh-1',
+      nextTokenId: expect.any(String),
+      familyId: 'family-1',
+    }),
+  )
+  expect(state.values).toHaveBeenCalledWith(expect.objectContaining({ id: diagnostic.nextTokenId }))
+  expect(diagnostic).not.toHaveProperty('tokenHash')
+  expect(JSON.stringify(diagnostic)).not.toContain(result!.refresh)
 })
+
+test('刷新：首次授权超过一小时且省略 client_id，仍按原归属签发令牌', async () => {
+  jest.useFakeTimers()
+  try {
+    const state = setup()
+    const refreshExpiresAt = new Date(Date.now() + 30 * 86400_000)
+    state.refresh.expiresAt = refreshExpiresAt
+    jest.setSystemTime(Date.now() + 63 * 60000)
+    await expect(state.repository.rotateRefreshToken('hash', undefined)).resolves.toEqual({
+      access: expect.any(String),
+      refresh: expect.any(String),
+      scope: 'mcp:tools',
+    })
+    expect(state.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        familyId: 'family-1',
+        clientId: 'client-1',
+        grantId: 'grant-1',
+        expiresAt: refreshExpiresAt,
+      }),
+    )
+    expect(state.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: 'client-1',
+        userId: 'user-1',
+        scope: 'mcp:tools',
+        resource: canonicalResource(),
+        expiresAt: new Date(Date.now() + 3600_000),
+      }),
+    )
+  } finally {
+    jest.useRealTimers()
+  }
+})
+
+test('刷新：省略 client_id 仍拒绝令牌与授权关系的客户端不一致', async () => {
+  const state = setup()
+  state.grant.clientId = 'other-client'
+  await expect(state.repository.rotateRefreshToken('hash', undefined)).resolves.toBeNull()
+  expect(state.insert).not.toHaveBeenCalled()
+  expect(state.update).not.toHaveBeenCalled()
+})
+
+test.each(['token_not_found', 'token_revoked', 'user_inactive'])(
+  '刷新诊断：%s 记录具体原因和关联编号，不签发新令牌',
+  async (reason) => {
+    const state = setup()
+    if (reason === 'token_not_found') state.locked.length = 0
+    if (reason === 'token_revoked') state.refresh.revokedAt = new Date()
+    if (reason === 'user_inactive') state.locked[2] = { id: 'user-1', status: 'disabled' }
+    await expect(
+      state.repository.rotateRefreshToken('secret-hash', undefined, 'request-1'),
+    ).resolves.toBeNull()
+    expect(log).toHaveBeenCalledWith(expect.stringContaining(`"reason":"${reason}"`))
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('"requestId":"request-1"'))
+    expect(JSON.stringify(log.mock.calls)).not.toContain('secret-hash')
+    expect(state.insert).not.toHaveBeenCalled()
+  },
+)
+
+test.each(['revoked', 'expired', 'replay'] as const)(
+  '刷新：省略 client_id 不绕过 %s 校验',
+  async (reason) => {
+    const state = setup()
+    if (reason === 'revoked') state.grant.revokedAt = new Date()
+    if (reason === 'expired') state.refresh.expiresAt = new Date(Date.now() - 1000)
+    if (reason === 'replay') state.refresh.consumedAt = new Date()
+    await expect(state.repository.rotateRefreshToken('hash', undefined)).resolves.toEqual(
+      reason === 'replay' ? { replay: true } : null,
+    )
+    expect(state.insert).not.toHaveBeenCalled()
+  },
+)
 
 test('授权码：行锁检查失败时不得删除授权码或签发凭据', async () => {
   const state = setup()

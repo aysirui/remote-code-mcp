@@ -4,6 +4,7 @@ import { Store } from '../../infrastructure/database/store'
 import * as S from '../../infrastructure/database/schema'
 import { uid, hash, secret } from '../../common/security'
 import { canonicalResource } from './oauth-utils'
+import { oauthLog } from './oauth-telemetry'
 
 /** OAuth 持久化仓储：封装凭据查询、事务行锁和原子状态变更。 */
 @Injectable()
@@ -58,9 +59,16 @@ export class OAuthRepository {
       clientName: data.clientName,
     })
   }
-  /** 刷新令牌事务：行锁串行化旋转；已消费令牌重放时撤销整个令牌族。 */
-  async rotateRefreshToken(tokenHash: string, clientId: string) {
+  /** 按 tokenHash 锁定并轮换令牌；可选 clientId 必须匹配，requestId 关联诊断。返回新凭据、重放标记或 null。 */
+  async rotateRefreshToken(tokenHash: string, clientId: string | undefined, requestId?: string) {
     return this.store.db.transaction(async (tx) => {
+      // 仅记录数据库记录 ID，不记录 Token 原文或摘要；这些 ID 不能作为凭据使用。
+      const fields: Record<string, string | undefined> = { requestId, clientId }
+      /** 记录具体拒绝原因并保持原有 null 返回契约；原因只写服务端日志。 */
+      const denied = (reason: string) => {
+        oauthLog('token.refresh_rejected', { ...fields, reason })
+        return null
+      }
       const rows = await tx
         .select()
         .from(S.oauthRefreshTokens)
@@ -68,7 +76,17 @@ export class OAuthRepository {
         .limit(1)
         .for('update')
       const old = rows[0]
-      if (!old || old.clientId !== clientId) return null
+      if (!old) return denied('token_not_found')
+      Object.assign(fields, {
+        tokenId: old.id,
+        familyId: old.familyId,
+        grantId: old.grantId,
+        clientId: old.clientId,
+        consumedAt: old.consumedAt?.toISOString(),
+        expiresAt: old.expiresAt.toISOString(),
+      })
+      // client_id 不是公共客户端的认证凭据；缺省时从已验证摘要对应的令牌读取归属。
+      if (clientId !== undefined && old.clientId !== clientId) return denied('client_mismatch')
       const grantRows = await tx
         .select()
         .from(S.oauthGrants)
@@ -76,21 +94,22 @@ export class OAuthRepository {
         .limit(1)
         .for('update')
       const grant = grantRows[0]
-      const accountRows = grant
-        ? await tx.select().from(S.users).where(eq(S.users.id, grant.userId)).limit(1)
-        : []
-      if (!accountRows[0] || accountRows[0].status !== 'active') return null
-      if (
-        !grant ||
-        grant.revokedAt ||
-        grant.clientId !== clientId ||
-        grant.resource !== canonicalResource() ||
-        old.expiresAt <= new Date() ||
-        old.revokedAt
-      )
-        return null
-      // A consumed token is a replay: revoke the whole family and its active access tokens.
+      if (!grant) return denied('grant_not_found')
+      const accountRows = await tx
+        .select()
+        .from(S.users)
+        .where(eq(S.users.id, grant.userId))
+        .limit(1)
+      if (!accountRows[0]) return denied('user_not_found')
+      if (accountRows[0].status !== 'active') return denied('user_inactive')
+      if (grant.revokedAt) return denied('grant_revoked')
+      if (grant.clientId !== old.clientId) return denied('grant_client_mismatch')
+      if (grant.resource !== canonicalResource()) return denied('resource_mismatch')
+      if (old.expiresAt <= new Date()) return denied('token_expired')
+      if (old.revokedAt) return denied('token_revoked')
+      // 已消费令牌再次使用视为重放：撤销整族 Refresh Token 及此授权下仍有效的 Access Token。
       if (old.consumedAt) {
+        oauthLog('token.refresh_replay_detected', { ...fields, reason: 'token_consumed' })
         await tx
           .update(S.oauthRefreshTokens)
           .set({ revokedAt: new Date() })
@@ -103,13 +122,14 @@ export class OAuthRepository {
       }
       const now = new Date()
       const nextRefresh = secret()
+      const nextTokenId = uid()
       const access = secret()
       await tx
         .update(S.oauthRefreshTokens)
         .set({ consumedAt: now })
         .where(eq(S.oauthRefreshTokens.id, old.id))
       await tx.insert(S.oauthRefreshTokens).values({
-        id: uid(),
+        id: nextTokenId,
         tokenHash: hash(nextRefresh),
         familyId: old.familyId,
         grantId: grant.id,
@@ -127,6 +147,8 @@ export class OAuthRepository {
         expiresAt: new Date(Date.now() + 3600_000),
       })
       await tx.update(S.oauthGrants).set({ lastUsedAt: now }).where(eq(S.oauthGrants.id, grant.id))
+      // 记录旧、新刷新记录的对应关系；是否提交成功以 Controller 的 token.refreshed 为准。
+      oauthLog('token.refresh_rotating', { ...fields, nextTokenId })
       return { access, refresh: nextRefresh, scope: grant.scope }
     })
   }

@@ -12,7 +12,7 @@ import {
   oauthConsentSignature,
   equals,
 } from './oauth-utils'
-import { oauthLog, oauthError } from './oauth-telemetry'
+import { oauthLog, oauthError, trackOAuthRefresh } from './oauth-telemetry'
 
 /** 保留统一导出入口，供 MCP 和 NestJS Provider 引用。 */
 export { OAuthService } from './oauth.service'
@@ -189,6 +189,8 @@ export class OAuthController {
   ) {
     res.set('Cache-Control', 'no-store')
     res.set('Pragma', 'no-cache')
+    const requestId = b.grant_type === 'refresh_token' ? trackOAuthRefresh(req, res, b) : undefined
+    /** OAuth 拒绝响应沿用刷新请求编号，便于关联入口、事务决策与 HTTP 结束事件。 */
     const failure = (code: string, event: string) =>
       oauthError(
         res,
@@ -198,18 +200,54 @@ export class OAuthController {
           ? 'Authorization or refresh token invalid'
           : 'Invalid OAuth token request',
         event,
+        requestId,
       )
     if (b.grant_type === 'refresh_token') {
-      if (!b.refresh_token || !b.client_id)
+      // 公共客户端刷新不强制提供 client_id；若提供，仓储仍校验它与令牌归属一致。
+      if (
+        typeof b.refresh_token !== 'string' ||
+        !b.refresh_token ||
+        (b.client_id !== undefined && (typeof b.client_id !== 'string' || !b.client_id))
+      )
         return failure('invalid_request', 'token.refresh_invalid_request')
-      const result = await this.oauth.rotateRefreshToken(b.client_id, String(b.refresh_token))
+      // 异常继续交给 NestJS 处理；日志只标记失败阶段，不输出可能含 SQL 参数的异常正文。
+      const result = await this.oauth
+        .rotateRefreshToken(b.client_id, b.refresh_token, requestId)
+        .catch((error: unknown) => {
+          // Drizzle 将驱动异常放在 cause；只允许固定错误码，绝不记录 message、SQL 或参数。
+          const driverError = error instanceof Error && error.cause ? error.cause : error
+          const code =
+            typeof driverError === 'object' && driverError !== null && 'code' in driverError
+              ? driverError.code
+              : undefined
+          const reason =
+            typeof code === 'string' &&
+            [
+              'ER_LOCK_DEADLOCK',
+              'ER_LOCK_WAIT_TIMEOUT',
+              'ER_DUP_ENTRY',
+              'ER_NO_SUCH_TABLE',
+              'ER_BAD_FIELD_ERROR',
+              'ER_CON_COUNT_ERROR',
+              'ECONNRESET',
+              'ECONNREFUSED',
+              'ETIMEDOUT',
+              'PROTOCOL_CONNECTION_LOST',
+            ].includes(code)
+              ? code
+              : 'database_error'
+          oauthLog('token.refresh_transaction_failed', { requestId, clientId: b.client_id, reason })
+          throw error
+        })
       if (!result || 'replay' in result) {
         oauthLog(result ? 'token.refresh_replay' : 'token.refresh_denied', {
           clientId: b.client_id,
+          requestId,
         })
         return failure('invalid_grant', 'token.refresh_failed')
       }
-      oauthLog('token.refreshed', { clientId: b.client_id })
+      // 此事件表示数据库事务已提交；HTTP 写出结果由响应生命周期事件记录。
+      oauthLog('token.refreshed', { clientId: b.client_id, requestId })
       return res.json({
         access_token: result.access,
         refresh_token: result.refresh,

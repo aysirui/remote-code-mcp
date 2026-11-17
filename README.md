@@ -164,10 +164,14 @@ MCP 返回同时具有 TextContent 和（对于对象数据）structuredContent�
 ## 5.1 OAuth 客户端授权与刷新令牌
 
 - OAuth 授权关系保存在 `oauth_grants`，与一小时有效期的 Access Token 独立；Console 的“已授权 AI 客户端”不再因 Access Token 过期而隐藏。
-- 授权码 + PKCE 成功兑换后返回 `access_token`（3600 秒）和 `refresh_token`（最长 30 天）；支持 `POST /oauth/token` 使用 `grant_type=refresh_token`、`client_id`、`refresh_token` 换取新的 Access Token 和 Refresh Token。
+- 授权码 + PKCE 成功兑换后返回 `access_token`（3600 秒）和 `refresh_token`（最长 30 天）；支持 `POST /oauth/token` 使用 `grant_type=refresh_token`、`refresh_token` 换取新的 Access Token 和 Refresh Token。公共客户端刷新时 `client_id` 可省略（RFC 6749 §6）；提供时必须与令牌归属一致。刷新不要求携带 `resource` 或 `scope`，签发结果沿用原授权的资源与权限。
 - Refresh Token 服务端只保存 SHA-256 摘要，每次刷新原子消费旧令牌并发放新令牌；再次使用已消费令牌视为重放并撤销同一 Token family。过期、撤销或检测到重放后需要重新进行授权。
 - 用户可通过 Console 撤销某客户端授权，服务端同时撤销该客户端已有 Access/Refresh Token。授权数据按用户+客户端隔离。
 - 服务端在标准输出记录结构化 OAuth 安全事件（不含 code、token、PKCE、Cookie、CSRF、请求体）；拒绝请求会附带 `request_id` 方便定位。发生在 BunkerWeb 的拦截需要结合 WAF 日志判断。
+- 刷新诊断按服务端生成的 `requestId` 串联，成功和失败响应均带 `X-Request-Id`；它不是客户端 helper 的 trace ID，需要用时间或响应头与客户端、代理日志对应。入口 `token.refresh_received` 记录公开客户端 ID 及参数是否存在，不记录令牌、资源或 Scope 参数内容；被代理、WAF 或请求体解析层提前拒绝的请求不会到达此入口，需查看对应层的日志。
+- `token.refresh_rotating` 记录旧 `tokenId`、新 `nextTokenId`、`familyId`、`grantId` 及旧令牌到期/消费时间；这些是数据库记录 ID，不是令牌原文或摘要。只有后续同编号的 `token.refreshed` 才表示事务提交成功；`token.refresh_transaction_failed` 表示轮换执行或提交抛出异常，`reason` 只记录白名单中的死锁、锁等待超时、连接中断等驱动错误码，其余统一为 `database_error`，不记录异常正文。
+- `token.refresh_rejected` 的 `reason` 区分 `token_not_found`、`client_mismatch`、`grant_not_found`、`user_not_found`、`user_inactive`、`grant_revoked`、`grant_client_mismatch`、`resource_mismatch`、`token_expired` 和 `token_revoked`。`token.refresh_replay_detected` 表示发现已消费令牌；后续同编号的 `token.refresh_replay` 表示撤销事务已提交。
+- `token.refresh_response_finished`、`token.refresh_response_closed`、`token.refresh_response_error` 分别表示响应完成写出、完成前连接关闭和响应流错误，附 HTTP 状态、耗时（毫秒）、响应头是否发出及流是否写完。`finished` 仅证明本机 HTTP 层完成写出，不能证明代理已转发或客户端已保存新令牌。若先出现 `token.refreshed`，随后同一 `tokenId` 被重放，需结合这些事件和代理日志区分响应中断、并发刷新与客户端保存失败。
 - 数据库部署使用新的 `0001_oauth_grants_refresh` 增量迁移，并回填历史未撤销的 Token 对应的客户端授权关系，但不会延长旧 Token 的有效期，也不会为旧 Token 补发 Refresh Token。旧客户端若已过期需重新完成 OAuth 授权。
 - **无感刷新由客户端发起**：RCM 提供标准 Refresh Token 协议，具备自动刷新实现的 MCP 客户端可自行续期；不能保证所有 ChatGPT 客户端版本都自动使用 Refresh Token，需做实际兼容验证。
 - 部署后验证：授权码兑换得到两种 Token；过期 Access Token 返回 401；刷新成功后新 Access Token 可使用；旧 Refresh Token 再次使用被拒绝；Console 撤销后 Access/Refresh Token 均被拒绝；重复并发刷新不可同时成功。

@@ -64,9 +64,9 @@ export class OAuthService {
       response_types: ['code'],
     }
   }
-  /** 验证刷新请求参数后执行原子旋转，结果由 HTTP 层映射为 OAuth 错误。 */
-  async rotateRefreshToken(clientId: string, refreshToken: string) {
-    return this.repository.rotateRefreshToken(hash(refreshToken), clientId)
+  /** 按刷新令牌摘要执行原子旋转；可选 clientId 必须匹配归属，requestId 仅关联诊断日志。返回新令牌或拒绝结果。 */
+  async rotateRefreshToken(clientId: string | undefined, refreshToken: string, requestId?: string) {
+    return this.repository.rotateRefreshToken(hash(refreshToken), clientId, requestId)
   }
   /** 查询授权码，兑换前由调用方验证 PKCE 和客户端参数。 */
   async authorizationCode(rawCode: string) {

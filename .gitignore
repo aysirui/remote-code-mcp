@@ -1,10 +1,20 @@
 node_modules/
 dist/
 .env
-.env.*.local
+.env.*
 !.env.example
+!.env.*.example
 *.tsbuildinfo
 .runtime-data/
+.remote-code-mcp/
+# 本机日志、私钥和凭据存储文件不纳入版本控制。
+*.log
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
 coverage/
 .DS_Store
 output/

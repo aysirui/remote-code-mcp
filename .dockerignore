@@ -1,0 +1,23 @@
+# 本地配置和凭据不进入镜像构建上下文，保留不含真实密钥的示例。
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+
+# 依赖和构建产物由镜像内安装与生成。
+**/node_modules
+**/dist
+**/coverage
+**/*.tsbuildinfo
+.git
+output
+.runtime-data
+**/.remote-code-mcp
+# 本机日志、私钥和凭据存储文件不进入构建上下文。
+**/*.log
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+**/*.jks
+**/*.keystore

@@ -1,269 +1,124 @@
-# Remote Code MCP · Node.js 多用户远程本地代码工具平台
+# Remote Code MCP
 
-> **状态：可运行的 MVP 源代码 / 未完成端到端验证。** 项目包含主要应用源码和部署配置，但生成环境无法访问 npm Registry，尚未完成真实依赖安装、TypeScript 全量类型检查、数据库迁移及 ChatGPT OAuth 端到端测试。首次正式上线前必须完成下方验收流程和安全审计。不要把它当作已经过生产安全认证的成品。
+让 MCP 客户端在你授权的范围内，通过远程 Gateway 访问本机代码工作区。
 
-## 1. 架构
+Remote Code MCP（RCM）是一个可自行部署的 TypeScript monorepo，包含云端 Gateway、Web Console、本机 Runtime 和共享协议。Runtime 主动建立出站 WebSocket 连接，无需将本机工作区的服务端口暴露到公网。
 
+**项目处于早期开发阶段。** 支持源码构建和单 Gateway 实例的 Docker Compose 部署。部署前请按 [部署指南](docs/deployment.md) 验证目标环境及 MCP 客户端兼容性，并了解 [安全边界与已知限制](SECURITY.md)。
+
+## 能做什么
+
+- **远程访问代码**：浏览、读取、搜索和修改已授权的工作区文件。
+- **Git 协作**：查看状态、历史和差异，以及经本机审批执行暂存和提交。
+- **命令执行**：运行内置或本机登记命令；临时程序和参数必须经过本机单次审批。
+- **本机管理授权**：为各服务器独立设置工作区读写权限及 File / Git / Command 策略，处理待审批操作。
+- **多用户管理**：账号注册与邮箱激活、设备配对、OAuth 客户端授权及脱敏操作记录。
+
+命令以 Runtime 进程账号权限执行，可能访问工作区外的文件和网络。审批、超时和进程树清理不构成 OS 沙箱。使用前请阅读 [安全说明](SECURITY.md)。
+
+## 架构
+
+```text
+MCP 客户端
+    │ HTTPS / MCP Streamable HTTP / OAuth 2.0
+    ▼
+Server（NestJS Gateway） ── MySQL（Drizzle）
+    ▲          ▲
+    │ WSS      │ HTTPS
+    │          Console（Vue Web 管理台）
+Runtime（本机 Node.js 服务）
+    ├── 本地管理 API + Vue UI（127.0.0.1）
+    └── 已授权 Workspace → File / Git / Command
 ```
-ChatGPT --MCP HTTPS + OAuth--> NestJS Gateway --WSS--> Local Node.js Runtime --fs/git--> Authorized Workspace
-                                     |                        |
-                                MySQL 8                Vue3 local UI
-                                     |
-                             Vue3 Web Console
-```
 
-- `apps/server`: NestJS + Drizzle + MySQL，平台账号、OAuth 授权码 + PKCE、动态客户端注册 DCR、设备配对、管理 API、MCP Streamable HTTP 与 WSS RPC。
-- `apps/console`: Vue3 + Element Plus，用户账户、设备管理、工作区查看、MCP 连接引导、管理员用户/设备/审计界面。
-- `apps/runtime`: 无桌面框架的 Node.js Runtime，WebSocket 出站连接，本地 Vue3 管理界面与 `file.list/read/search/write`、`git.status/diff`。
-- `packages/protocol`: RPC Schema、操作类型与 Zod 数据校验。
+Server 验证用户、设备及工作区归属，Runtime 再按本机授权核验请求。工作区绝对路径保留在本机；文件内容和操作参数经 Gateway 转发，不作为 Server / Console 的持久化业务数据。操作审计仅保存允许的脱敏元数据。Gateway 能接触转发内容，请只连接你信任的服务器。
 
-**边界：** 云端只同步工作区 ID、名称、权限及设备状态，不存储本地绝对路径；文件内容经 Gateway 中转并返回 AI 客户端，不做云端持久化。Gateway 管 OAuth 和设备路由，Runtime 在本地再次检查工作区权限。管理员没有跨用户读源码权限。
+| 目录                | 职责                                                     |
+| ------------------- | -------------------------------------------------------- |
+| `apps/server`       | NestJS Gateway、账号与 OAuth、设备连接、MCP 工具及数据库 |
+| `apps/console`      | Vue 管理台：账号、设备、工作区快照、客户端授权及管理功能 |
+| `apps/runtime`      | 本机连接、目录授权、操作执行、本地 API 和内置 Web UI     |
+| `packages/protocol` | RPC、操作定义、Zod Schema 和共享类型                     |
+| `docker`            | Server / Console 镜像与启动配置                          |
 
-## 2. 环境要求
+## 快速开始
 
-Node.js 22+、pnpm 10+、MySQL 8.4、Git、Docker/Compose（部署时）。当前按全新开发项目初始化数据库，不维护旧库兼容逻辑。
+需要 Node.js 22+、pnpm 10.15.0（见 `packageManager`）、Git、MySQL 8.4，以及用于注册激活邮件的 SMTP 服务。Docker Compose 部署另见 [部署文档](docs/deployment.md)。
 
-## 3. 本地开发启动
+以下命令从仓库根目录执行，环境文件复制示例使用 PowerShell：
 
-```bash
+```powershell
+git clone https://github.com/aysirui/remote-code-mcp.git
+cd remote-code-mcp
 corepack enable
-cp .env.example .env
-cp apps/server/.env.example apps/server/.env
-cp apps/console/.env.example apps/console/.env.local
-# 修改 apps/server/.env 的 APP_SECRET、DATABASE_URL、ADMIN_EMAIL 和 SMTP 配置
-pnpm install
+pnpm install --frozen-lockfile
+Copy-Item apps/server/.env.example apps/server/.env
+Copy-Item apps/console/.env.example apps/console/.env.local
 ```
 
-Server 配置统一通过 `apps/server/src/config/env.ts` 的 `env` 访问，优先级为：**系统环境变量 → `apps/server/.env` → 仓库根目录 `.env` → 默认值**。已有环境变量不会被 `.env` 覆盖；文件路径以模块位置解析，从仓库根目录启动或直接运行构建产物均可加载。仅使用系统环境变量时无需创建 `.env`。
+macOS / Linux 可使用 `cp` 复制上述环境文件。修改 `apps/server/.env`，设置测试数据库的 `DATABASE_URL`、随机 `APP_SECRET`（至少 32 字符）、`ADMIN_EMAIL` 和 SMTP 配置。先创建空的开发数据库，再执行仓库中已提交的迁移：
 
-本地开发可在 `apps/server/.env` 中将 `DATABASE_URL` 指向测试数据库。服务启动、`db:generate`、`db:migrate` 和 `admin:init` 共用该配置；数据库操作前请确认目标库。`.env` 不会提交 Git，示例模板位于 `apps/server/.env.example`。服务启动时校验必填的 `DATABASE_URL`、至少 32 字符的 `APP_SECRET`、端口范围和 SMTP 配置；数据库命令只要求数据库配置，管理员初始化还要求有效的 `ADMIN_EMAIL`。
-
-启动 MySQL：
-
-```bash
-# 可使用现有 MySQL 8，也可 docker run --name rcm-mysql -e MYSQL_DATABASE=remote_code_mcp ...
-# 在空的开发数据库中初始化当前 Schema
-pnpm db:generate
+```sh
 pnpm db:migrate
 pnpm admin:init
-```
-
-分别启动：
-
-```bash
 pnpm --filter @rcm/protocol build
-pnpm dev:server                       # http://localhost:3000
-pnpm dev:console                      # http://localhost:5173
-pnpm --filter @rcm/runtime build      # 构建 Node 程序和内置的 Vue 界面
-pnpm --filter @rcm/runtime start      # 打印本地 UI 地址（带一次性启动访问密钥）
 ```
 
-Server 开发和生产均使用 TypeScript 编译器（`tsc`）以及同一份 `apps/server/tsconfig.json`。`pnpm dev:server` 监听源码变更，在编译通过后运行或重启 `dist/main.js`；编译错误时不启动新的服务进程。构造函数依赖由编译生成的类型元数据自动注入。生产执行 `pnpm --filter @rcm/server build` 后，通过 `pnpm --filter @rcm/server start` 运行同一入口。`pnpm admin:init` 也会先编译，再运行管理员初始化脚本。
+管理员初始化会显示一次随机临时密码，首次登录后需修改。首次运行不需要生成迁移；只有修改数据库 Schema 时才运行 `pnpm db:generate`。
 
-> `runtime dev` 在首次 UI 构建前可能没有静态界面；建议先执行 `runtime build`，之后使用 `runtime start`。Runtime 默认保存设置到 `~/.remote-code-mcp/config.json`（Unix 使用权限 0600）。
+分别在三个终端启动：
 
-### 首个管理员
-
-在 `apps/server/.env` 或系统环境变量中配置 `ADMIN_EMAIL=admin@example.com`。完成 Drizzle 数据库迁移后，**在受控终端中**执行一次（上述初始化流程已包含）：
-
-```bash
-pnpm admin:init
+```sh
+# Gateway：http://localhost:3000
+pnpm dev:server
 ```
 
-初始化脚本创建一个 `super_admin`，生成随机临时密码，使用 bcrypt 存入数据库；临时密码只会在该交互式终端显示一次，不会写入普通服务日志。非交互式容器启动同样会将临时密码输出到首次部署日志中。管理员首次登录 Console 会被要求修改密码，随后需重新登录。重复执行不重置现有管理员。普通注册永远不能凭 `ADMIN_EMAIL` 提权，且该邮箱禁止普通注册。
-
-### 注册与邮箱激活
-
-新注册账号必须验证真实邮箱后才能登录。请配置 Server 的 `SMTP_HOST`、`SMTP_PORT`（默认 587）、`SMTP_SECURE`（默认 false，465 默认 true）、`SMTP_USER`、`SMTP_PASSWORD` 和可选 `MAIL_FROM`（默认 SMTP_USER）。465 使用隐式 TLS，587 配置 `SMTP_SECURE=false` 并强制 STARTTLS，不关闭证书校验。`CONSOLE_URL` 必须是用户可访问的控制台地址，用于生成邮件链接。服务启动时校验 SMTP 配置完整性，但不连接邮箱服务器；数据库命令和管理员初始化无需 SMTP 配置。
-
-注册后前往邮箱打开链接，点击“激活账号”，再返回登录页登录。链接 24 小时有效、只能使用一次；在注册页再次填写原邮箱和密码，未激活账号会弹出提示，可选择“重发激活邮件”或“我知道了”；重发间隔 60 秒，旧链接随后失效。已激活账号重复注册提示账号已存在，登录页不展示常驻重发入口。发送失败时账号仍保留，可稍后重发；SMTP 接受邮件并不保证到达收件箱，可检查垃圾邮件和供应商投递状态。已有账号及初始化管理员无需补充激活。邮箱验证和管理员禁用相互独立，激活不能解除禁用。
-
-部署前执行已提交的数据库迁移以新增邮箱验证字段和激活记录表；迁移会为已有账号保留已验证状态。开发时通过 `pnpm db:generate` 生成迁移，部署只执行已提交的迁移。
-
-### Runtime 审批通知
-
-在 Runtime 页面点击“开启浏览器通知”，允许后新审批会触发系统弹窗；拒绝时可在浏览器站点设置中修改。页面需保持打开并具备有效的本地管理凭据，使用受支持的桌面浏览器和安全来源（回环地址或 HTTPS）。通知仅显示待审批数量，点击后进入审批页，不会自动批准操作。
-
-存在待审批操作时，标签页显示红点和待审批数量，处理完成或请求过期后恢复。支持 Web Locks 的浏览器由一个标签页发送通知，其他标签页更新角标；不支持时通过稳定通知 tag 合并相同审批。页面关闭后不保证继续通知。Node 可通过平台组件（如 node-notifier）发送系统通知，但依赖桌面会话和系统支持，本版本未集成。
-
-### Runtime 配对
-
-1. 打开启动日志打印的本地 UI URL，例如 `http://127.0.0.1:18787/#token=...`，**不要分享其中的 token**。
-   本地管理凭据每次启动都会重新生成。若页面提示凭据失效，请重新打开当前启动日志中的完整链接；找不到链接时，请重启 Runtime 并打开新打印的链接。刷新旧页面无法恢复，设备绑定和工作区授权不受影响。
-2. 在本地 UI 确定 Gateway URL（本机可用 `http://localhost:3000`；公网必须 `https://...`）。
-3. 点击 **绑定设备**，获得临时配对码。
-4. 打开 `http://localhost:5173/activate`，用平台账号登录，输入配对码并确认。
-5. 返回本地 UI 点击“我已确认，完成绑定”。
-6. 点击 **添加项目**，使用目录浏览器选择一个临时测试项目。默认只读；开启写入权限后，每个工作区可独立选择 **逐次审批**（默认，每次文件写入需在本地 30 秒内确认）或 **自动写入**（明确确认后无需逐次审批）。
-   可在对应工作区点击 **添加命令**，登记命令 ID、显示名称、可执行程序和固定参数。AI 使用 `command_list` 查询已登记 ID。`command_run` 支持两种互斥参数：`{ command: "build" }` 选择内置或登记命令；`{ executable: "pnpm", args: ["run", "lint"] }` 请求临时命令。登记命令遵循本地 Command 策略（deny 拒绝、approval 单次审批、allow 直接执行）；临时命令在 approval/allow 下始终需要本机单次审批，deny 下直接拒绝。审批展示完整程序、参数、工作目录与风险，不会自动登记命令。命令以 Runtime 账号权限执行，没有文件、网络及 CPU/内存隔离；普通命令默认 20 秒超时；内置 `typecheck`、`format` 为 120 秒，`test`、`build` 为 180 秒；本地登记命令可配置 `timeoutMs`（1～240 秒），远程请求不能覆盖。输出最多 48 KiB，进程树尽力清理。`git_status` / `git_diff` 保持独立只读工具；配置外部 filter 的仓库会被拒绝。
-7. Web Console 会显示绑定设备和同步工作区。
-
-### Runtime 0.2.0 多服务器配置
-
-Runtime 可以保存多个服务器配置，同一时间连接一个服务器。每台服务器分别保存名称、地址、设备 ID、配对凭据、工作区授权和写入策略。添加后在对应平台配对一次，之后切换、暂停和重启均保留绑定；切回已有服务器不会重新创建设备。相同服务器地址重复添加时会复用原配置。
-
-本地目录与命令定义只登记一次，但服务器不会自动获得已有目录的访问权限。在“工作区”页面，先确认当前服务器，再逐项授权；默认只读，写入权限与审批策略按服务器独立设置。切换服务器会取消尚未完成的审批。
-
-Console 操作记录详情会展示已开始执行的 `command_run` 脱敏命令，例如 `pnpm run build`。Runtime 发送前和服务器入库前均按白名单处理：只保留常见程序名、任务和无值开关，程序目录被移除，未知程序、路径、凭据、脚本正文及其他未识别参数显示为 `[已隐藏]`；遇到未知参数后，其余参数一并隐藏。不保存工作目录、命令输出或 AI 对话。历史记录及旧版 Runtime 没有命令摘要。设备配对时可点击配对码旁的复制图标，在平台填写。
-
-“暂停连接”保留所有配置；“解除绑定”会先在服务器撤销设备，再清除本地设备凭据。“移除服务器”对已绑定设备也会先执行撤销，服务器不可达或撤销失败时保留配置，不会直接丢弃凭据。远程平台需同步更新服务端代码以支持设备自主解绑接口；旧平台仍可正常使用已保存的连接与切换功能。
-
-旧版单服务器配置会自动迁移为配置格式版本 2，保留原来的设备身份、工作区 ID 与权限，迁移前保存 `config.v1.backup.json`。软件版本 `0.2.0` 与配置格式版本 `2` 分别维护。已撤销或失效的设备凭据不会自动重新配对。
-
-### MCP Inspector
-
-ChatGPT OAuth 接入前，建议先验证：
-
-- `GET /health` 返回 `{ok:true}`。
-- `GET /.well-known/oauth-protected-resource` 返回资源元数据。
-- `GET /.well-known/oauth-authorization-server` 返回 OAuth 授权服务元数据。
-- `POST /mcp` 无 Token 返回 401 和 `WWW-Authenticate`。
-- OAuth 客户端可完成 DCR → Authorization Code + PKCE → Token，并在请求 `/mcp` 时使用 Bearer Token。
-- 调用 `device_list`、`workspace_list`、`file_read` 和 `git_status`。
-
-**ChatGPT 连接方式**：在 ChatGPT 中添加自定义 MCP Server（服务器 URL），输入 `https://mcp.example.com/mcp`，使用 OAuth 授权同一个平台账号。该版本实现的是 DCR public OAuth client + PKCE 的最小闭环；未实现 CIMD 与完整认证服务的合规性测试；已实现 Refresh Token 一次性轮换，但尚需与 ChatGPT 做端到端互操作测试。ChatGPT 的实际连接行为可能需要补充标准兼容适配。
-
-## 4. Dokploy 一键部署（Docker Compose）
-
-**选择 Dokploy 的 Docker Compose 应用，而不是 Docker Stack。** 连接 Git 仓库并指定仓库根目录的 `docker-compose.yml`；Dokploy 会根据 Compose 构建镜像和启动服务。
-
-在 Dokploy 的 Environment 中设置：
-
-```env
-MYSQL_PASSWORD=your-long-random-password
-MYSQL_ROOT_PASSWORD=your-different-random-password
-APP_SECRET=your-cryptographically-random-secret-at-least-32-characters
-ADMIN_EMAIL=admin@example.com
-PUBLIC_URL=https://mcp.example.com
-CONSOLE_URL=https://console.example.com
+```sh
+# Console：http://localhost:5173
+pnpm dev:console
 ```
 
-必须在 Dokploy 的 **Domains** 中分别给 `server`（容器端口 `3000`）与 `console`（容器端口 `80`）设置域名和 HTTPS，并为 `/agent/connect` 保留 WebSocket Upgrade。推荐启用 Dokploy 的 **Isolated Deployments**，由 Dokploy 为各服务生成 Traefik 路由与网络配置。Compose 仅使用 `expose`，不将这两个服务的端口映射到公网或宿主机；MySQL 仅在内部网络可达。
-
-**第一次部署或重新部署只需点击 Deploy，不需要手动执行数据库或管理员命令。** Server 启动顺序：
-
-1. 等待 MySQL healthcheck 通过。
-2. 校验 Docker 镜像已包含 Git 提交的 `apps/server/drizzle/meta/_journal.json` 与迁移 SQL；缺失时启动失败。
-3. `drizzle-kit migrate` 自动执行尚未应用的迁移，数据库记录执行进度。
-4. `admin:init` 检查 `super_admin` 是否存在：首次创建随机临时密码，重复部署不重建账号、不重置密码。
-5. 全部成功后启动 NestJS。
-
-部署只需要持久化 `mysql_data` 数据卷。迁移文件、Drizzle 的 `meta/_journal.json` 和 Schema 快照全部提交 Git 并随 Server 镜像部署，不挂载迁移目录的 Volume。不要在重新部署时删除数据库卷。
-
-首次部署时，Server 会在 Dokploy 的容器部署日志中**输出一次**超级管理员邮箱与随机临时密码。请在首次部署后及时记录并登录 Console 修改密码。后续重部署检测到管理员存在时仅跳过初始化，**不会重新生成、打印或重置密码**。日志中的初始密码不会因为改密而自动消失，建议限制 Dokploy 日志查看权限和保留期限，避免将部署日志发送到公共日志平台。
-
-**迁移开发规范**：在本地修改 `apps/server/src/infrastructure/database/schema.ts` 后执行 `pnpm db:generate`，检查生成的 `apps/server/drizzle/` 下 SQL、`meta/_journal.json` 与快照，将其与 Schema 一起提交 Git。Dokploy 只执行 `db:migrate`，绝不在容器中生成或改写迁移历史。部署前务必确认迁移文件已提交。单实例应用适用当前启动流程；未来多副本部署应改为独立的一次性迁移 Job。
-
-Dokploy 对 Compose 环境变量的处理是：Environment 面板的变量会供 Compose 插值，但不会自动注入所有容器；这里需要的变量已经在 `docker-compose.yml` 的 `environment` 显式声明。改变环境变量后重新部署即可。
-
-## 4.1 本地开发
-
-本地修改 Schema 时执行 `pnpm db:generate` 并提交迁移文件。Docker Compose / Dokploy 部署时会自动执行 `db:migrate` 和 `admin:init`，无需每次手工操作。
-
-## 5. MCP 工具
-
-| 名称             | 功能                                            | 默认权限      |
-| ---------------- | ----------------------------------------------- | ------------- |
-| `device_list`    | 当前 OAuth 用户设备状态                         | Authenticated |
-| `workspace_list` | 当前 OAuth 用户可用工作区                       | Authenticated |
-| `file_list`      | 目录列表                                        | Read          |
-| `file_read`      | 文件内容 + SHA-256                              | Read          |
-| `file_search`    | 按字面字符串搜索                                | Read          |
-| `file_write`     | 新建/覆盖 UTF-8 文件；覆盖须提供 expectedSha256 | Write         |
-| `git_status`     | 工作区 Git 状态                                 | Read          |
-| `git_diff`       | 未暂存 Git Diff                                 | Read          |
-
-MCP 返回同时具有 TextContent 和（对于对象数据）structuredContent，不声明 outputSchema，以提高不同 MCP Host 的兼容性。
-
-## 5.1 OAuth 客户端授权与刷新令牌
-
-- `/oauth/token` 的授权码兑换和刷新成功均返回 HTTP 200（RFC 6749 §5.1），失败返回对应 OAuth 错误状态；`/oauth/register` 注册成功返回 HTTP 201。令牌端点不能沿用 NestJS POST 默认的 201，部分客户端会将其判为刷新失败。
-
-- OAuth 授权关系保存在 `oauth_grants`，与一小时有效期的 Access Token 独立；Console 的“已授权 AI 客户端”不再因 Access Token 过期而隐藏。
-- 授权码 + PKCE 成功兑换后返回 `access_token`（3600 秒）和 `refresh_token`（最长 30 天）；支持 `POST /oauth/token` 使用 `grant_type=refresh_token`、`refresh_token` 换取新的 Access Token 和 Refresh Token。公共客户端刷新时 `client_id` 可省略（RFC 6749 §6）；提供时必须与令牌归属一致。刷新不要求携带 `resource` 或 `scope`，签发结果沿用原授权的资源与权限。
-- Refresh Token 服务端只保存 SHA-256 摘要，每次刷新原子消费旧令牌并发放新令牌；再次使用已消费令牌视为重放并撤销同一 Token family。过期、撤销或检测到重放后需要重新进行授权。
-- 用户可通过 Console 撤销某客户端授权，服务端同时撤销该客户端已有 Access/Refresh Token。授权数据按用户+客户端隔离。
-- 服务端在标准输出记录结构化 OAuth 安全事件（不含 code、token、PKCE、Cookie、CSRF、请求体）；拒绝请求会附带 `request_id` 方便定位。发生在 BunkerWeb 的拦截需要结合 WAF 日志判断。
-- 刷新诊断按服务端生成的 `requestId` 串联，成功和失败响应均带 `X-Request-Id`；它不是客户端 helper 的 trace ID，需要用时间或响应头与客户端、代理日志对应。入口 `token.refresh_received` 记录公开客户端 ID 及参数是否存在，不记录令牌、资源或 Scope 参数内容；被代理、WAF 或请求体解析层提前拒绝的请求不会到达此入口，需查看对应层的日志。
-- `token.refresh_rotating` 记录旧 `tokenId`、新 `nextTokenId`、`familyId`、`grantId` 及旧令牌到期/消费时间；这些是数据库记录 ID，不是令牌原文或摘要。只有后续同编号的 `token.refreshed` 才表示事务提交成功；`token.refresh_transaction_failed` 表示轮换执行或提交抛出异常，`reason` 只记录白名单中的死锁、锁等待超时、连接中断等驱动错误码，其余统一为 `database_error`，不记录异常正文。
-- `token.refresh_rejected` 的 `reason` 区分 `token_not_found`、`client_mismatch`、`grant_not_found`、`user_not_found`、`user_inactive`、`grant_revoked`、`grant_client_mismatch`、`resource_mismatch`、`token_expired` 和 `token_revoked`。`token.refresh_replay_detected` 表示发现已消费令牌；后续同编号的 `token.refresh_replay` 表示撤销事务已提交。
-- `token.refresh_response_finished`、`token.refresh_response_closed`、`token.refresh_response_error` 分别表示响应完成写出、完成前连接关闭和响应流错误，附 HTTP 状态、耗时（毫秒）、响应头是否发出及流是否写完。`finished` 仅证明本机 HTTP 层完成写出，不能证明代理已转发或客户端已保存新令牌。若先出现 `token.refreshed`，随后同一 `tokenId` 被重放，需结合这些事件和代理日志区分响应中断、并发刷新与客户端保存失败。
-- 数据库部署使用新的 `0001_oauth_grants_refresh` 增量迁移，并回填历史未撤销的 Token 对应的客户端授权关系，但不会延长旧 Token 的有效期，也不会为旧 Token 补发 Refresh Token。旧客户端若已过期需重新完成 OAuth 授权。
-- **无感刷新由客户端发起**：RCM 提供标准 Refresh Token 协议，具备自动刷新实现的 MCP 客户端可自行续期；不能保证所有 ChatGPT 客户端版本都自动使用 Refresh Token，需做实际兼容验证。
-- 部署后验证：授权码兑换得到两种 Token；过期 Access Token 返回 401；刷新成功后新 Access Token 可使用；旧 Refresh Token 再次使用被拒绝；Console 撤销后 Access/Refresh Token 均被拒绝；重复并发刷新不可同时成功。
-
-## 6. 安全约束与已知限制
-
-### 已实现的基础防护
-
-- Web Console 使用服务器 Session Cookie + CSRF 双重提交令牌，登录/注册/设备配对入口有进程内粗粒度限速。
-- OAuth 使用授权码 + PKCE S256、令牌 Hash 存储、资源受众和 scope 校验、客户端 Redirect URI 精确匹配、5 分钟授权码过期。
-- Runtime 与 Gateway 独立设备凭据认证；设备撤销后 Gateway 关闭 WSS 连接。
-- Gateway 根据 Token 确认用户身份并限制工作区归属，管理员不具备代码读取后门。
-- Runtime 只对本地明确注册的工作区操作，默认只读；阻止常见路径穿越、符号链接和敏感路径。工作区启用状态、读写权限和 File/Git/Command 策略统一在本地按服务器设置，云端仅同步展示，不提供独立策略或工作区停用开关。文件替换仍需要 SHA-256 版本校验，高危删除和 Git 写操作保留本机强制审批。
-- 远程 MCP 接受登记命令 ID 或临时命令的程序与参数数组，两种形式不能混用，也不能覆盖登记命令参数。未知 ID 会拒绝；未登记程序须显式使用临时命令形式。临时命令必须经本机单次审批，拒绝、超时、断线或授权撤销后不执行。Shell、Git 和 Shell 脚本入口继续沿用原有命令校验限制。程序实际具有 Runtime 账号的系统权限，文件工具的路径保护不约束命令子进程；审批绑定程序和参数，但不保证项目脚本及依赖内容不变。
-- Runtime 本地管理 API 只监听 127.0.0.1，要求随机 Bearer Token 和 Origin 检查。
-
-### 生产上线前必须补充或强化
-
-1. **OAuth 合规**：使用成熟 OAuth Provider 替代 MVP 内置授权服务，完成 CIMD/DCR、RFC 8707、PKCE、刷新 Token、撤销、状态参数、授权页防重放等完整互操作测试。授权码兑换已增加行锁和事务，但仍需真实数据库并发测试。
-2. **认证安全**：邮箱验证、密码找回、MFA、账号锁定、IP/设备风控、会话失效与管理员审计；超级管理员现通过独立初始化命令创建并强制首次修改密码；邮箱验证等仍未实现。
-3. **运行时文件安全**：硬化 `file_write` 的符号链接/TOCTOU 竞态与原子替换，完善 Windows ACL / 路径处理；禁止在特权账户下运行。当前仅实现基本检查，不能视为完整文件系统沙箱。
-4. **管理 API**：全接口权限审计、请求配额、签名设备凭据和密钥轮换、并发限制、连接抖动恢复、一次性配对状态机的数据库并发回归测试。
-5. **分布式/稳定性**：WSS 多实例路由、任务持久化、消息去重、断线后的写入幂等、超时取消与完整失败审计。首版仅支持单 Gateway 实例。
-6. **UI/客户端交付**：Runtime 安装程序、开机自启、自动升级、系统凭据库、管理员 MFA、工作区 Diff 审批。Runtime 已添加文件写入前的本地逐次确认（30 秒超时），但尚无完整 Diff 审批；目前使用 Node CLI 启动、浏览器管理界面，不是签名安装包。
-7. **测试**：真实 MySQL、OAuth 客户端、MCP Inspector、ChatGPT、跨平台与浏览器 E2E 测试尚未通过。
-
-因此本工程是一个**包含全部核心模块代码的 MVP 骨架**，不是未经人工验证即可安全对公网用户开放的成熟服务。
-
-## 7. 质量与部署验收清单
-
-```bash
-pnpm install
-pnpm --filter @rcm/protocol build
-pnpm --filter @rcm/server build
-pnpm --filter @rcm/console build
+```sh
+# Runtime：构建 Node 程序和本地 Web UI，再启动
 pnpm --filter @rcm/runtime build
-pnpm test
+pnpm --filter @rcm/runtime start
 ```
 
-然后至少验证：
+打开 Runtime 日志中的完整本地管理链接，添加服务器并完成设备配对，再授权一个测试工作区。具体流程、命令策略和多服务器管理见 [使用指南](docs/usage.md)。
 
-- 用户 A、B 各连接一台 Runtime，只能列出并读取自己的工作区。
-- Runtime 断开后返回 `DEVICE_OFFLINE`，而不是卡住。
-- 设备解绑后旧凭据被拒绝，云端不可再路由到该设备。
-- 只读工作区禁止 `file_write`。
-- 覆盖文件时 SHA-256 不匹配返回冲突。
-- 尝试读取 `../`、`.env`、`.ssh` 等被拒绝。
-- OAuth Code PKCE 错误、无效 Audience、跨用户 Workspace ID 被拒绝。
-- 管理员无法通过普通 MCP Tool 读取其他用户的文件。
-- MCP Inspector、ChatGPT 都能正确返回 `file_read` 结构化数据。
+MCP 接入地址为 `https://你的服务器域名/mcp`，使用平台账号进行 OAuth 授权。公网 Gateway 必须使用 HTTPS，反向代理需支持 `/agent/connect` 的 WebSocket Upgrade。各客户端兼容性需要实测，建议先用 MCP Inspector 验证。
 
-## 8. 源码与配置
+## MCP 工具
 
-- `apps/server/src/infrastructure/database/schema.ts`：Drizzle 数据库模型。
-- `apps/server/src/identity.ts` / `store.ts` / `device-hub.ts`：身份、持久化与设备 RPC 分层（`core.ts` 仅统一导出）。
-- `apps/server/src/auth.controller.ts` / `account.controller.ts` / `admin.controller.ts` / `pairing.controller.ts`：按身份、用户、管理员、配对拆分的 API。
-- `apps/server/src/oauth.ts`：MVP OAuth 授权服务。
-- `apps/server/src/mcp.ts`：MCP Streamable HTTP / Tools。
-- `apps/runtime/src/executors.ts`：工具调度与授权；文件/Git 安全操作分别位于 `file-operations.ts`、`git-operations.ts`、`path-safety.ts`。
-- `apps/runtime/src/main.ts`：设备 WSS 生命周期；`local-server.ts` 负责 localhost API 与 Vue 静态资源，`write-approvals.ts` 负责本地审批。
-- `apps/console/src/App.vue`：平台 UI 模板；`use-console.ts` 负责页面逻辑，`api.ts` 使用 Axios 与 CSRF。
-- `apps/runtime/web/src/App.vue`：Runtime 本地 UI 模板；`use-runtime-console.ts` 负责逻辑，`http.ts` 使用 Axios。
+所有工作区工具都需要 `workspaceId`，可通过 `workspace_list` 获取。实际可执行范围由本机工作区权限和策略决定。
 
-LICENSE: 代码可作为自有项目进一步开发。请自行检查依赖项许可和部署环境的法律合规要求。
+| 工具                                                   | 用途                                   |
+| ------------------------------------------------------ | -------------------------------------- |
+| `device_list`、`workspace_list`                        | 列出当前用户的设备和已授权工作区       |
+| `file_list`、`file_read`、`file_search`                | 浏览目录、读取文件及 SHA-256、搜索文本 |
+| `file_write`、`file_mkdir`、`file_move`、`file_delete` | 写入、创建目录、移动和删除             |
+| `git_status`、`git_log`、`git_diff`                    | 查看状态、提交历史和未暂存差异         |
+| `git_add`、`git_commit`                                | 暂存和提交，始终需要本机审批           |
+| `command_list`、`command_run`                          | 查询登记命令、运行登记或临时命令       |
 
-开发时的完整模块职责与中文注释约定详见 [CODE_STRUCTURE.md](CODE_STRUCTURE.md)。
+覆盖已有文件须提供当前 `expectedSha256`；命令执行需要工作区写权限。工具输入和输出契约以 [共享协议](packages/protocol/src/mcp-tools.ts) 为准。
 
-跨平台格式约定：文本统一使用 UTF-8 和 LF。`.gitattributes` 负责 Git 提交与检出的换行规则，`.editorconfig` 约束编辑器，Prettier 的 `endOfLine: 'lf'` 约束格式化输出，macOS 和 Windows 使用同一套配置。
+## 文档与贡献
 
-已有工作目录中的 CRLF 文件不会仅因新增 `.gitattributes` 自动重写，可运行 `pnpm format` 统一受支持文件的格式，再执行 `pnpm format:check` 检查。新检出的文本文件会遵循仓库的 LF 规则，无需修改个人的全局 Git 配置。
+- [使用指南](docs/usage.md)：配对、工作区、审批、命令和 OAuth 排查。
+- [部署指南](docs/deployment.md)：环境配置、Docker Compose / Dokploy、迁移和上线验证。
+- [贡献指南](CONTRIBUTING.md)：开发流程、检查命令及提交要求。
+- [安全说明与漏洞报告](SECURITY.md)：信任边界、已知限制和报告方式。
+- [项目协作规范](AGENTS.md)：模块职责、代码约束和迁移规则。
 
-## 设备与工作区同步：验收结论与后续 TODO
+欢迎通过 Issue 反馈问题或通过 Pull Request 提交改进。请勿在公开 Issue 中上传密钥、工作区源码或未公开的漏洞利用细节。
 
-设备撤销、工作区授权撤销、Runtime 失效授权清理、WebSocket `hello` 串行同步及旧连接替换的代码路径已经完成，并通过现有自动化回归测试。Server 与 Runtime 的权限边界分别校验；云端不保存工作区绝对路径。
+## 许可证
 
-**当前阶段验收：完成（代码与自动化测试范围）。** 真实 MySQL 锁竞争验证属于独立的部署前验证事项，不阻塞当前功能模块的开发验收，也不代表已完成生产环境并发认证。
+本项目采用 [GNU Affero General Public License v3.0 only（AGPL-3.0-only）](LICENSE)，允许商业使用。分发受许可覆盖的版本时需履行对应源码提供义务；修改本程序并通过网络提供服务时，须按第 13 条向远程交互用户提供该修改版本的对应源码。
 
-- [ ] **TODO（部署前）：真实 MySQL 8.4 并发集成验证。** 使用独立临时测试数据库及测试账号，禁止复用生产库；先通过正式 Drizzle 迁移创建测试表，再并发执行用户禁用、设备撤销、工作区撤销与连续 `hello`，检查锁等待、死锁、事务回滚、墓碑持久性及最终一致性。验证完成后销毁测试数据库。此项需要明确可用的隔离测试数据库和受控执行入口。
-- [ ] **TODO（上线前）：真实 Runtime ↔ Gateway WebSocket 端到端验证。** 在独立测试环境中覆盖断线重连、设备解绑、撤销反馈、连接替换与权限拒绝；确认不记录本地绝对路径、工具正文或审批详情。
+Copyright (C) 2026 安阳市思锐科技有限责任公司。
+
+上述公司版权声明适用于公司拥有版权的原创部分；第三方依赖、素材及外部贡献的权利归属和许可声明应予保留。开源许可不转移版权，也不授予冒用公司名称、商标或声称官方背书的权利。
+
+用户通过 RCM 访问的工作区代码，不会仅因使用本工具而自动受 AGPL 约束。许可范围、分叉及 SaaS 场景见 [许可证说明](docs/licensing.md)；完整且具有约束力的条款以 `LICENSE` 为准。在适用法律允许的范围内，本项目按现状提供，不附带任何担保。

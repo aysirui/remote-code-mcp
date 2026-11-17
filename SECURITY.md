@@ -1,81 +1,61 @@
-# Remote Code MCP security and deployment checklist
+# 安全说明与漏洞报告
 
-> Security hardening is in progress. Do not expose this service to untrusted tenants until the test and operational controls below have been verified.
+Remote Code MCP 允许远程 MCP 客户端触发本机文件、Git 和命令操作。部署者需要同时信任 Gateway、MCP 客户端和已授权的本地项目，并限制 Runtime 所用系统账号的权限。
 
-## Authentication and administrator initialization
+## 报告安全问题
 
-- User passwords are bcrypt-hashed (cost 12); passwords must be 12–72 UTF-8 bytes.
-- `ADMIN_EMAIL` is reserved and **never** elevated through public registration. The Docker Compose entrypoint automatically initializes the first administrator after applying DB migrations; `pnpm admin:init` remains available for local development.
-- The initializer takes an advisory MySQL lock, checks existing administrators and email conflicts, and prints a random temporary password **once** to the first deployment log.
-- For the internal development deployment, the initial credential is intentionally printed in Dokploy logs. Restrict deployment-log access and retention, avoid third-party log forwarding, and rotate the password at first login. Already captured logs are not automatically erased by password rotation.
-- Administrators initialized by the command have `password_change_required=true`. Until changed, normal authenticated API routes reject access. The Console provides a forced password-change form; all sessions are revoked once the password is changed.
-- Production must enforce HTTPS at the reverse proxy. Secure CSRF, cookie and CORS behavior depends on correct `PUBLIC_URL` / `CONSOLE_URL` values.
+请勿通过公开 Issue、Pull Request 或日志附件披露尚未修复漏洞的利用细节、访问令牌、配对凭据或用户文件内容。
 
-## Dokploy deployments and migration discipline
+优先使用仓库 **Security → Advisories → Report a vulnerability** 的私密报告入口。若该入口不可用，请通过 [维护者 GitHub 主页](https://github.com/aysirui) 提供的公开联系方式请求私下沟通渠道；公开讨论仅说明需要安全联系，不附利用细节。
 
-- Drizzle migration SQL, snapshots and `meta/_journal.json` are generated **locally**, reviewed and committed to Git together with `apps/server/src/infrastructure/database/schema.ts`.
-- The Server image includes committed `apps/server/drizzle/` files. On deployment, the entrypoint fails closed if the migration journal is absent, then runs `drizzle-kit migrate`, initializes the first administrator if necessary, and starts NestJS only after those steps succeed.
-- **Never run `drizzle-kit generate` inside the deployment container.** There is no `drizzle_history` persistent volume; only MySQL data is persisted. Drizzle records applied migrations in the database.
-- Run one migration executor at a time. This entrypoint is intended for a single Server instance; scale-out deployments need a dedicated migration job before starting application replicas.
-- The first successful deployment prints initial admin credentials in Server logs; no bootstrap file or volume is used. Subsequent deployments do not print credentials or reset the administrator password.
-- Restrict access to these logs and rotate the initial password at first login.
+报告中建议包含受影响版本或提交、部署方式、操作系统、最小复现步骤、预期与实际权限边界，以及已脱敏的相关日志。请使用测试账号和临时工作区验证，避免访问他人数据。
 
-## Local Runtime and filesystem boundaries
+安全修复优先面向主分支，历史版本不提供长期维护承诺。部署者应关注安全更新，并核对所用提交及依赖版本。
 
-### 本次安全加固与兼容性变化
+## 身份与授权边界
 
-- 本地管理路由统一校验 Bearer Token；URL 大小写变化不能跳过鉴权，Host/Origin 校验仍然生效。
-- 所有 Git 工具拒绝有效配置中的外部 filter（包括 include 配置），Git 子进程只继承白名单环境变量。使用 Git LFS 等 filter 的仓库将被拒绝，不能退回不受保护的执行路径。
-- 文件读取、搜索、写入、移动、删除和 Git 暂存拒绝多重硬链接；Git diff 也校验候选工作树路径。二进制 Git 暂存仍保留原始字节。
-- `.remote-code-mcp` 及内部子目录禁止远程访问；自定义 `RUNTIME_DATA_DIR` 按配置路径和真实路径同时保护，包括配置备份。禁止将数据目录作为工作区。
-- `command.run` 默认通过本机进程后端执行，不要求隔离环境。内置/登记命令受本地 Command 策略控制；临时程序及参数在 approval/allow 下必须单次本机审批，deny 下直接拒绝。审批展示完整程序、参数、工作目录与风险，指纹绑定执行内容，批准后不会自动登记。命令具备 Runtime 账号权限，可访问项目外文件、网络和凭据；没有 CPU/内存硬限制。超时及进程树清理属于尽力措施。
-- 有界读取及读取后复核缩小了文件增长和路径替换的影响，但不能消除原生文件系统接口缺失造成的父目录替换竞态。部署时仍须用专用系统账号、ACL 或容器限制 Runtime 的操作系统权限；不得声称应用层路径检查构成完整沙箱。
-- 生产依赖已升级至安全公告修复范围，`pnpm-lock.yaml` 固定完整依赖树；CI/部署使用 `pnpm install --frozen-lockfile`。
+- Server 校验 OAuth 身份和设备、工作区归属；管理员不具有通过 MCP 读取其他用户代码的特殊权限。
+- Runtime 使用设备凭据建立出站 WSS 连接，独立核验本地工作区授权、启用状态、读写权限及 File / Git / Command 策略。
+- 工作区权限在 Runtime 本机配置，Console 展示同步快照。禁用账号、撤销设备或授权后，后续请求必须失效。
+- OAuth 使用授权码 + PKCE S256，Refresh Token 一次性轮换并检测重放。完整互操作和对抗测试仍需在目标环境执行。
+- Console 使用 Session Cookie 和 CSRF 校验；正确的 HTTPS、`PUBLIC_URL` 和 `CONSOLE_URL` 是部署安全的一部分。进程内限速不能代替分布式限流及滥用监控。
 
-- Run Runtime as an ordinary, dedicated OS account with access only to intended workspace directories. Never run it as root or an administrator. Node.js path checks are **not a substitute for OS-level sandboxing**.
-- The runtime rejects absolute paths, `..`, symlinks visible during validation, hardlinks, common secret files, and policy-denied writes. Existing file replacements require the current SHA-256, and write via a same-directory temporary file and rename.
-- Race conditions against **parent directory replacement** cannot be fully eliminated using portable Node.js `realpath` and `O_NOFOLLOW`; use OS-level containment (container, sandbox, ACL, mount namespaces, dedicated account), and test on each supported OS.
-- Never authorize a workspace root containing credentials, private keys, production data, the user's entire home folder, or other broad filesystem trees.
-- The local management API is loopback-only and requires an in-memory Bearer token. Do not reverse-proxy its port or expose its token.
-- Local configuration includes a device credential. Protect it with filesystem ACLs/permissions; Windows secure-store integration remains a further hardening item.
+## 数据与日志
 
-## OAuth and device security
+工作区绝对路径、文件正文、命令完整参数、审批详情和 AI 对话不作为 Server / Console 的持久化业务数据。Gateway 会转发必要的 RPC 数据，因此可以接触转发内容；这不是端到端加密的代码存储方案。
 
-- OAuth uses authorization code + PKCE S256. Consent parameters are bound with an APP_SECRET HMAC, and code redemption uses a database transaction/row lock.
-- Device pairing approval and token retrieval use database transactions/row locks to guard state transitions.
-- Only HTTPS remote gateways are accepted for device connectivity. Loopback HTTP is supported for local development.
-- The supplied OAuth implementation is custom code. **Full interoperability and adversarial OAuth testing are still required before claiming standards compliance**. Refresh tokens use rotation and replay revocation.
-- Administrators should disable compromised accounts and revoke devices and OAuth grants promptly.
+审计仅保存允许的脱敏元数据。已开始执行的命令可以记录白名单处理后的命令摘要，不保存命令输出或工作目录。反向代理、APM、调试中间件等外部组件也应避免记录请求正文和凭据。
 
-## Validation before deployment
+Runtime 本地配置包含设备凭据及本地路径。请保护 `~/.remote-code-mcp` 或自定义 `RUNTIME_DATA_DIR` 的访问权限；不要把配置、备份、包含 token 的本地管理链接上传到公开仓库。
 
-From the repository root:
+## 文件和 Git
 
-```sh
-pnpm install
-pnpm typecheck
-pnpm build
-pnpm test
-pnpm check
-docker compose build
-```
+文件工具会检查授权根目录、路径穿越、符号链接、多重硬链接和敏感路径；已有文件覆盖需要 SHA-256 版本校验。高危递归删除、Git 暂存和提交保留本机审批，不能通过自动允许策略绕过。
 
-Additionally verify:
+这些应用层检查不能完全消除父目录被并发替换等文件系统竞态。请勿将用户主目录、凭据目录、生产数据或整个磁盘授权为工作区。Git 工具拒绝包含有效外部 filter 配置的仓库，包括使用此类 filter 的 Git LFS 仓库。
 
-1. User A cannot operate User B's workspace ID or device ID.
-2. 本地停用的工作区在重连后仍保持停用，云端只展示 Runtime 同步的权限与策略。
-3. A revoked device's old WebSocket cannot send a valid response for a new connection.
-4. Simultaneous OAuth code redemption succeeds only once.
-5. Simultaneous pairing approvals and completion each succeed only once.
-6. Missing/invalid CSRF tokens and unrelated Origin/Host headers are denied.
-7. Traversal, links, sensitive files and stale SHA-256 writes are denied.
-8. Git diff/status cannot expose secret contents or run externally configured commands.
-9. The service fails safely if the database or secure upstream is unavailable.
+## 命令执行不是 OS 沙箱
 
-## Known remaining work
+`command_run` 使用普通本机子进程执行后端，以 Runtime 账号权限运行。File 工具的路径保护不约束命令子进程；命令可能访问工作区外文件、网络及该账号可读的凭据，没有文件系统、网络或 CPU / 内存硬隔离。
 
-- Cross-platform adversarial filesystem race testing and OS-level sandboxing.
-- 工作区权限和工具策略由 Runtime 本地统一管理，云端只保存同步快照。审批请求五分钟后过期；高危递归删除和 Git 写操作仍需本机强制审批。
-- Verified email ownership, account recovery, multi-factor authentication, durable distributed rate limiting and abuse monitoring.
-- Dedicated OAuth conformance testing, key rotation, and token/authorization-record retention cleanup.
-- End-to-end test run and production deployment review: these cannot be established by source inspection alone.
+登记命令遵循本机 Command 策略。临时程序及参数始终需要本机单次审批；`deny` 策略下直接拒绝。审批绑定执行内容，但不能保证批准后项目脚本和依赖文件没有变化。超时、输出截断及进程树清理仅提供有界输出和尽力清理能力。
+
+请用普通、专用系统账号运行 Runtime，需要更强隔离时由部署者配置容器、ACL 等操作系统边界。不要以 root 或管理员身份运行 Runtime。
+
+## 本地管理与部署
+
+- 本地 API 只监听回环地址，校验 Bearer Token、Host / Origin；不要反向代理或公开此端口。管理凭据每次启动重新生成。
+- 公网 Gateway 必须启用 HTTPS；Runtime 仅允许回环地址使用开发用 HTTP。
+- Docker 首次部署日志会显示一次管理员临时密码。限制日志访问和保留期限，首次登录及时改密；改密不会删除已经采集的日志。
+- 部署只执行已提交的 Drizzle 迁移，不在容器中生成迁移。当前启动流程适用于单 Server 实例；多副本需要独立迁移任务和连接路由设计。
+
+## 部署验证与已知限制
+
+部署环境、操作系统和 MCP 客户端会影响实际行为。上线前请按 [部署验证清单](docs/deployment.md#部署后验证) 检查，重点覆盖：
+
+- 真实 MySQL 并发下的 OAuth 兑换、刷新、设备撤销和工作区同步验证。
+- Runtime ↔ Gateway 的重连、连接替换、解绑和授权失效端到端验证。
+- 各目标操作系统的文件系统竞态、进程清理及权限验证。
+- MCP Inspector 和目标 MCP 客户端的 OAuth / MCP 互操作验证。
+
+本项目不提供账号自助找回、多因素认证、系统凭据库集成或分布式限流。部署者需自行安排密钥轮换、历史记录保留和令牌记录清理，并根据使用场景配置额外的系统与网络防护。

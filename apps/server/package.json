@@ -1,6 +1,17 @@
 {
   "name": "@rcm/server",
   "version": "0.1.0",
+  "description": "Remote Code MCP 的账号、OAuth、设备连接与 MCP Gateway",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aysirui/remote-code-mcp.git",
+    "directory": "apps/server"
+  },
+  "homepage": "https://github.com/aysirui/remote-code-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/aysirui/remote-code-mcp/issues"
+  },
   "private": true,
   "scripts": {
     "dev": "node scripts/dev.mjs",

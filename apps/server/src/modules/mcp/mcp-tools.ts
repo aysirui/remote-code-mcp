@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { McpToolInputs, McpToolOutputs } from '@rcm/protocol'
 import { DeviceHub } from '../device/device-hub'
 import { Store } from '../../infrastructure/database/store'
 import { createMcpToolRegistrar } from './mcp-tool-registration'
@@ -14,13 +15,18 @@ export function registerMcpTools(
   clientId: string,
 ) {
   const simple = createMcpToolRegistrar(server)
-  simple('device_list', 'List your devices and their online status', {}, async () =>
-    listMcpDevices(store, hub, userId),
+  simple(
+    'device_list',
+    '列出当前用户的设备及其在线状态',
+    McpToolInputs.device_list,
+    McpToolOutputs.device_list,
+    async () => listMcpDevices(store, hub, userId),
   )
   simple(
     'workspace_list',
-    'List authorized workspaces; choose workspaceId for other tools',
-    {},
+    '列出已授权工作区及其权限、策略和在线状态；调用其他工具时使用返回的 workspaceId',
+    McpToolInputs.workspace_list,
+    McpToolOutputs.workspace_list,
     async () => listMcpWorkspaces(store, hub, userId),
   )
   registerMcpOperationTools(simple, hub, userId, clientId)

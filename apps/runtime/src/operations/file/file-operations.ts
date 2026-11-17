@@ -67,6 +67,61 @@ export async function readChecked(w: LocalWorkspace, relative: string, maxSize =
 }
 
 /**
+ * 在已授权工作区内按区分大小写的文本包含规则搜索，返回相对路径、行号和匹配文本。
+ * @param w 已通过请求访问权限校验的本机工作区；路径与文件读取仍执行安全检查。
+ * @param relative 搜索起点相对于工作区根目录的路径，可为文件或目录。
+ * @param query 要匹配的原始文本，不解释为正则表达式。
+ * @returns 最多 100 条匹配，每条文本最多 250 个字符；最多访问 2000 个路径，单文件限 256 KiB。
+ */
+export async function searchChecked(w: LocalWorkspace, relative: string, query: string) {
+  await resolveSafe(w, relative)
+  const matches: Array<{
+    /** 匹配文件相对于工作区根目录的路径。 */
+    path: string
+    /** 从 1 开始的匹配行号。 */
+    line: number
+    /** 匹配行的前 250 个字符。 */
+    text: string
+  }> = []
+  const visited = new Set<string>()
+  let count = 0
+  /** 遍历工作区相对路径，跳过不允许读取的文件并遵守搜索数量限制。 */
+  async function visit(relative: string) {
+    if (++count > 2000 || matches.length >= 100) return
+    let current: string
+    try {
+      current = await resolveSafe(w, relative)
+    } catch {
+      return
+    }
+    if (visited.has(current)) return
+    visited.add(current)
+    const stat = await fs.lstat(current)
+    if (stat.isFile()) {
+      let source: string
+      try {
+        source = await readChecked(w, relative, 256 * 1024)
+      } catch {
+        return
+      }
+      for (const [i, line] of source.split('\n').entries()) {
+        if (line.includes(query))
+          matches.push({ path: relative, line: i + 1, text: line.slice(0, 250) })
+        if (matches.length >= 100) break
+      }
+    } else if (stat.isDirectory()) {
+      for (const child of await fs.readdir(current, { withFileTypes: true })) {
+        if (isSensitive(child.name) || child.isSymbolicLink()) continue
+        await visit(path.posix.join(relative, child.name))
+        if (matches.length >= 100 || count > 2000) break
+      }
+    }
+  }
+  await visit(relative)
+  return matches
+}
+
+/**
  * 通过预期内容 Hash 防止覆盖旧版本，再写入临时文件并原子替换。
  * 不允许无 Hash 覆盖现有文件。
  */

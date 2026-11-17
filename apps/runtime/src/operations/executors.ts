@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises'
-import path from 'node:path'
 import {
   ToolInputs,
+  ToolOutputs,
+  type ToolOutput,
   operationRequiresWrite,
   type RpcRequest,
   type CommandAudit,
@@ -10,6 +11,7 @@ import { policyForOperation, type LocalWorkspace } from '../workspace/state'
 import { resolveSafe, isSensitive, assertSafeRelativePath } from './file/path-safety'
 import {
   readChecked,
+  searchChecked,
   writeChecked,
   mkdirChecked,
   moveChecked,
@@ -126,123 +128,115 @@ export async function validateOperationSafety(w: LocalWorkspace, req: RpcRequest
   }
 }
 
-/** Runtime 工具调度。
+/** Runtime 工具调度，使用共享输入契约校验请求，并在返回前校验原始操作结果。
  * 每次请求先校验工作区 ID、截止时间、读写授权及 Zod 参数，
  * 再调用文件/Git/Command 各自的领域执行器；拒绝任意 Shell。
+ * @param w 本机已授权工作区，提供路径、权限及策略。
+ * @param req 待执行的 RPC 请求，包含工作区标识、操作、参数和截止时间。
+ * @param approvalResourceHash 本机审批绑定的资源指纹，用于执行前检查资源是否变化。
+ * @param onCommandExecution 命令实际执行时接收脱敏审计元数据的回调。
+ * @returns 符合对应 ToolOutputs 契约的原始业务结果，不含 MCP 包装。
  */
 export async function execute(
   w: LocalWorkspace,
   req: RpcRequest,
   approvalResourceHash?: string,
   onCommandExecution?: (command: CommandAudit) => void,
-) {
+): Promise<ToolOutput> {
   assertRequestAccess(w, req)
   await validateOperationSafety(w, req)
+  let data: unknown
   switch (req.operation) {
     case 'file.list': {
       const payload = ToolInputs['file.list'].parse(req.payload)
       const filename = await resolveSafe(w, payload.path)
       const stat = await fs.lstat(filename)
       if (!stat.isDirectory()) throw Error('NOT_DIRECTORY')
-      return (await fs.readdir(filename, { withFileTypes: true }))
+      data = (await fs.readdir(filename, { withFileTypes: true }))
         .filter((e) => !isSensitive(e.name) && !e.isSymbolicLink())
         .slice(0, 500)
         .map((e) => ({ name: e.name, type: e.isDirectory() ? 'directory' : 'file' }))
+      break
     }
     case 'file.read': {
       const payload = ToolInputs['file.read'].parse(req.payload)
       const content = await readChecked(w, payload.path)
-      return { content, sha256: sha(content) }
+      data = { content, sha256: sha(content) }
+      break
     }
     case 'file.search': {
       const payload = ToolInputs['file.search'].parse(req.payload)
-      await resolveSafe(w, payload.path)
-      const matches: Array<{ path: string; line: number; text: string }> = []
-      const visited = new Set<string>()
-      let count = 0
-      async function visit(relative: string) {
-        if (++count > 2000 || matches.length >= 100) return
-        let current: string
-        try {
-          current = await resolveSafe(w, relative)
-        } catch {
-          return
-        }
-        if (visited.has(current)) return
-        visited.add(current)
-        const stat = await fs.lstat(current)
-        if (stat.isFile()) {
-          let source: string
-          try {
-            source = await readChecked(w, relative, 256 * 1024)
-          } catch {
-            return
-          }
-          for (const [i, line] of source.split('\n').entries()) {
-            if (line.includes(payload.query))
-              matches.push({ path: relative, line: i + 1, text: line.slice(0, 250) })
-            if (matches.length >= 100) break
-          }
-        } else if (stat.isDirectory()) {
-          for (const child of await fs.readdir(current, { withFileTypes: true })) {
-            if (isSensitive(child.name) || child.isSymbolicLink()) continue
-            await visit(path.posix.join(relative, child.name))
-            if (matches.length >= 100 || count > 2000) break
-          }
-        }
-      }
-      await visit(payload.path)
-      return matches
+      data = await searchChecked(w, payload.path, payload.query)
+      break
     }
     case 'file.write': {
       const payload = ToolInputs['file.write'].parse(req.payload)
-      return writeChecked(w, payload.path, payload.content, payload.expectedSha256)
+      data = await writeChecked(w, payload.path, payload.content, payload.expectedSha256)
+      break
     }
     case 'file.mkdir': {
       const payload = ToolInputs['file.mkdir'].parse(req.payload)
-      return mkdirChecked(w, payload.path, payload.recursive)
+      data = await mkdirChecked(w, payload.path, payload.recursive)
+      break
     }
     case 'file.move': {
       const payload = ToolInputs['file.move'].parse(req.payload)
-      return moveChecked(w, payload.from, payload.to)
+      data = await moveChecked(w, payload.from, payload.to)
+      break
     }
     case 'file.delete': {
       const payload = ToolInputs['file.delete'].parse(req.payload)
-      return deleteChecked(
+      data = await deleteChecked(
         w,
         payload.path,
         payload.recursive,
         payload.expectedSha256,
         approvalResourceHash,
       )
+      break
     }
     case 'git.status':
       ToolInputs['git.status'].parse(req.payload)
-      return gitStatus(w)
+      data = await gitStatus(w)
+      break
     case 'git.log': {
       const payload = ToolInputs['git.log'].parse(req.payload)
-      return gitLog(w, payload.limit)
+      data = await gitLog(w, payload.limit)
+      break
     }
     case 'git.diff':
       ToolInputs['git.diff'].parse(req.payload)
-      return gitDiff(w)
+      data = await gitDiff(w)
+      break
     case 'git.add': {
       const payload = ToolInputs['git.add'].parse(req.payload)
-      return gitAdd(w, payload.paths, approvalResourceHash)
+      data = await gitAdd(w, payload.paths, approvalResourceHash)
+      break
     }
     case 'git.commit': {
       const payload = ToolInputs['git.commit'].parse(req.payload)
-      return gitCommit(w, payload.message, approvalResourceHash)
+      data = await gitCommit(w, payload.message, approvalResourceHash)
+      break
     }
     case 'command.list':
       ToolInputs['command.list'].parse(req.payload)
       // 只暴露本机登记命令的名称和 ID；可执行程序及固定参数仅在 Runtime 本地审批界面展示。
-      return listCommands(w).map(({ id, name }) => ({ id, name }))
+      data = listCommands(w).map(({ id, name }) => ({ id, name }))
+      break
     case 'command.run': {
       const payload = ToolInputs['command.run'].parse(req.payload)
-      return runCheckedCommand(w, payload, approvalResourceHash, undefined, onCommandExecution)
+      data = await runCheckedCommand(
+        w,
+        payload,
+        approvalResourceHash,
+        undefined,
+        onCommandExecution,
+      )
+      break
     }
     default:
       throw Error('UNSUPPORTED_OPERATION')
   }
+  // 在 RPC 返回边界按操作校验原始结果，MCP 包装复用同一份输出字段定义。
+  return ToolOutputs[req.operation].parse(data)
 }

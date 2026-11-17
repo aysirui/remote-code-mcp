@@ -11,6 +11,7 @@ import {
   Refresh,
   Lock,
   SwitchButton,
+  Reading,
 } from '@element-plus/icons-vue'
 import { useConsole } from './composables/use-console'
 import { pagePaths } from './router'
@@ -100,6 +101,11 @@ const pageDescription = computed(() => descriptions[page.value] || '管理设备
           <el-icon><component :is="item.icon" /></el-icon>
           <span class="label">{{ item.name }}</span>
         </router-link>
+        <!-- 文档是独立静态站点，使用普通链接离开 Console 路由。 -->
+        <a href="/docs/" title="使用文档">
+          <el-icon><Reading /></el-icon>
+          <span class="label">使用文档</span>
+        </a>
       </nav>
       <div class="sidebar-footer">
         <span class="security-dot"></span>

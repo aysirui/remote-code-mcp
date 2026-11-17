@@ -1,6 +1,6 @@
 # 部署指南
 
-本指南面向单 Gateway 实例部署。项目阶段和信任边界见 [README](../README.md) 与 [SECURITY.md](../SECURITY.md)。
+本指南面向单 Gateway 实例部署。项目阶段和信任边界见 [README](https://github.com/aysirui/remote-code-mcp/blob/main/README.md) 与 [SECURITY.md](https://github.com/aysirui/remote-code-mcp/blob/main/SECURITY.md)。
 
 ## 环境配置
 
@@ -58,6 +58,18 @@ Server 容器启动顺序：
 
 持久化并备份 `mysql_data` 数据卷，不要在重部署时删除。迁移 SQL、快照及 `meta/_journal.json` 随源码和镜像分发，无需单独挂载迁移目录。更新前备份数据库，核对目标提交及迁移；多副本部署需要改为单独执行迁移任务，当前方案不提供多实例 WSS 路由。
 
+## 在线文档
+
+Console 镜像同时构建管理台和 VitePress 文档，文档产物位于镜像内的 `/usr/share/nginx/html/docs/`。部署后访问 `CONSOLE_URL` 所在域名的 `/docs/`，例如 `https://console.example.com/docs/`。文档公开访问，无需登录；不需要额外服务、端口或环境变量。
+
+反向代理应将 `/docs` 和 `/docs/` 下的请求原样转发给 Console 服务（端口 80）。镜像内 Nginx 会将 `/docs` 重定向至 `/docs/`，独立处理文档页面和资源；缺失文档返回 HTTP 404，不回退到管理台。
+
+修改 `docs/*.md` 后重新构建并发布 Console 镜像，即可更新在线文档。文档与管理台使用同一次构建的源码，不需要挂载 Markdown 文件，也不在运行时解析文档。
+
+本地编写时运行 `pnpm docs:dev`，访问 `http://127.0.0.1:5174/docs/`；同时运行 `pnpm dev:console` 后，管理台的“使用文档”入口会代理到该文档服务。文档开发服务固定使用 5174 端口，启动前请确保端口空闲。
+
+单独检查发布产物时，先运行 `pnpm docs:build`，再运行 `pnpm docs:preview`，访问同一预览地址。根目录 `pnpm build` 也会构建文档；生成目录 `docs/.vitepress/dist/` 和开发缓存无需提交。
+
 ## 数据库迁移
 
 首次安装及部署只执行已提交的迁移。开发中修改数据库结构时：
@@ -80,6 +92,7 @@ Server 容器启动顺序：
 在独立测试环境验证，避免对生产库或私人工作区执行破坏性测试：
 
 - `GET /health` 返回健康状态；OAuth 两个 `.well-known` 元数据入口可用。
+- Console 域名下 `/docs` 跳转至 `/docs/`；未登录时可阅读文档、搜索并直接刷新文档页面，未知文档路径返回 HTTP 404；管理台登录和原有页面仍可访问。
 - 未授权访问 `/mcp` 返回 401 和 `WWW-Authenticate`，OAuth 授权、刷新、重放拒绝及撤销符合预期。
 - 两个用户只能访问自己的设备和工作区，管理员也不能通过 MCP 跨用户读文件。
 - Runtime 离线、设备撤销、工作区停用、连接替换及断线重连后权限仍正确，旧凭据失效。

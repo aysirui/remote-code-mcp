@@ -105,6 +105,10 @@ MCP 接入地址为 `https://你的服务器域名/mcp`，使用平台账号进�
 
 ## 文档与贡献
 
+Console 部署后可通过同域名的 `/docs/` 公开访问在线文档，登录页面和控制台侧栏均提供“使用文档”入口。文档随 Console 镜像构建和发布，修改 `docs/*.md` 后重新构建镜像即可更新。
+
+本地运行 `pnpm docs:dev` 后访问 `http://127.0.0.1:5174/docs/`；与 `pnpm dev:console` 同时运行时，Console 的文档入口也可用。单独构建与预览使用 `pnpm docs:build` 和 `pnpm docs:preview`；根目录 `pnpm build` 已包含文档构建。
+
 - [使用指南](docs/usage.md)：配对、工作区、审批、命令和 OAuth 排查。
 - [部署指南](docs/deployment.md)：环境配置、Docker Compose / Dokploy、迁移和上线验证。
 - [贡献指南](CONTRIBUTING.md)：开发流程、检查命令及提交要求。

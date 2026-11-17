@@ -1,6 +1,6 @@
 # 使用指南
 
-先按 [README](../README.md#快速开始) 启动 Gateway、Console 和 Runtime。
+先按 [README](https://github.com/aysirui/remote-code-mcp/blob/main/README.md#快速开始) 启动 Gateway、Console 和 Runtime。
 
 ## Runtime 配置
 
@@ -84,4 +84,4 @@ Console 操作记录详情会展示已开始执行的 `command_run` 脱敏命令
 - 无 Token 请求 `/mcp` 应返回 401 和 `WWW-Authenticate`。
 - 完成 DCR → Authorization Code + PKCE → Token，使用 Bearer Token 调用 `device_list`、`workspace_list`、`file_read` 和 `git_status`。
 
-工具返回文本及 `structuredContent`，并声明输出 Schema；输入输出字段以 [共享协议](../packages/protocol/src/mcp-tools.ts) 为准。
+工具返回文本及 `structuredContent`，并声明输出 Schema；输入输出字段以 [共享协议](https://github.com/aysirui/remote-code-mcp/blob/main/packages/protocol/src/mcp-tools.ts) 为准。

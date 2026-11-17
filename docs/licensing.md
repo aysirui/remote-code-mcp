@@ -1,6 +1,6 @@
 # 许可证与版权说明
 
-Remote Code MCP 采用 [GNU Affero General Public License 第 3 版，仅此版本（AGPL-3.0-only）](../LICENSE)。以下说明概述常见使用场景，完整许可条款以 `LICENSE` 为准。
+Remote Code MCP 采用 [GNU Affero General Public License 第 3 版，仅此版本（AGPL-3.0-only）](https://github.com/aysirui/remote-code-mcp/blob/main/LICENSE)。以下说明概述常见使用场景，完整许可条款以 `LICENSE` 为准。
 
 ## 版权与标识
 
@@ -35,7 +35,7 @@ AGPL 不会仅因程序部署在同一服务器上，就要求公开所有无关
 
 ## 贡献与许可延续
 
-外部贡献按 [贡献指南](../CONTRIBUTING.md) 以 AGPL-3.0-only 提供。除另有有效约定外，贡献的版权仍归原权利人，不因合入本项目而自动转让。
+外部贡献按 [贡献指南](https://github.com/aysirui/remote-code-mcp/blob/main/CONTRIBUTING.md) 以 AGPL-3.0-only 提供。除另有有效约定外，贡献的版权仍归原权利人，不因合入本项目而自动转让。
 
 只要持续遵守许可证条件，使用者对已获得版本享有的 AGPL 权利，不会因后续版本的许可调整或本仓库停止维护而被撤回。
 

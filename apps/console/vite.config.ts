@@ -24,6 +24,8 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       proxy: {
+        // 在线文档由独立的 VitePress 开发服务提供，保留 /docs/ 路径。
+        '/docs': { target: 'http://127.0.0.1:5174' },
         '/api': proxy,
         '/oauth': proxy,
         '/.well-known': proxy,

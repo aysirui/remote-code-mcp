@@ -11,6 +11,7 @@
 **/*.tsbuildinfo
 .git
 output
+docs/.vitepress/cache
 .runtime-data
 **/.remote-code-mcp
 # 本机日志、私钥和凭据存储文件不进入构建上下文。

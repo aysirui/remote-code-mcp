@@ -4,6 +4,7 @@ coverage
 .output
 .generated
 .git
+docs/.vitepress/cache
 
 pnpm-lock.yaml
 

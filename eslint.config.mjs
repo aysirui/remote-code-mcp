@@ -10,6 +10,8 @@ export default tseslint.config(
     ignores: [
       '**/node_modules/**',
       '**/dist/**',
+      // VitePress 开发缓存是自动生成的编译结果。
+      'docs/.vitepress/cache/**',
       '**/coverage/**',
       '**/.output/**',
       '**/.generated/**',

@@ -10,11 +10,15 @@ COPY packages/protocol/package.json packages/protocol/package.json
 RUN pnpm install --frozen-lockfile
 COPY apps/console apps/console
 COPY apps/ui apps/ui
+COPY docs docs
 ARG VITE_API_URL
 ENV VITE_API_URL=$VITE_API_URL
 RUN pnpm --filter @rcm/console build
+# 文档与 Console 使用同一份源码构建，产物独立部署到 /docs/。
+RUN pnpm docs:build
 FROM nginx:alpine
 COPY LICENSE /usr/share/doc/remote-code-mcp/LICENSE
 COPY --from=builder /app/apps/console/dist /usr/share/nginx/html
+COPY --from=builder /app/docs/.vitepress/dist /usr/share/nginx/html/docs
 COPY docker/nginx.console.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80

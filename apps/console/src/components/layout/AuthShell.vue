@@ -1,6 +1,8 @@
 <script setup lang="ts">
 defineProps<{
+  /** 登录或注册页面的介绍标题。 */
   headline: string
+  /** 当前账号操作的补充说明。 */
   description: string
 }>()
 </script>
@@ -26,6 +28,8 @@ defineProps<{
     <section class="auth-form">
       <div class="auth-box">
         <slot />
+        <!-- 文档公开访问，未登录用户也可查看部署和使用说明。 -->
+        <p class="muted"><a href="/docs/">使用文档</a></p>
       </div>
     </section>
   </div>

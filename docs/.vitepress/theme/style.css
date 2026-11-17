@@ -1,0 +1,29 @@
+/* 控制台入口沿用默认主题字号和颜色，在桌面和窄屏导航中均可访问。 */
+.console-link {
+  flex-shrink: 0;
+  margin-left: 16px;
+  color: var(--vp-c-text-1);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.console-link:hover {
+  color: var(--vp-c-brand-1);
+}
+
+.console-link:focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 4px;
+}
+
+.console-link-mobile {
+  display: block;
+  margin: 0;
+  padding: 12px 0;
+}
+
+@media (max-width: 767px) {
+  .console-link-desktop {
+    display: none;
+  }
+}

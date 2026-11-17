@@ -28,7 +28,8 @@
     "jose": "^6.0.0",
     "cookie-parser": "^1.4.7",
     "express": "^5.1.0",
-    "dotenv": "^17.2.0"
+    "dotenv": "^17.2.0",
+    "nodemailer": "^10.6.0"
   },
   "devDependencies": {
     "@types/node": "catalog:",
@@ -40,6 +41,7 @@
     "jest": "catalog:",
     "ts-jest": "catalog:",
     "typescript": "catalog:",
-    "drizzle-kit": "^0.31.0"
+    "drizzle-kit": "^0.31.0",
+    "@types/nodemailer": "^8.0.2"
   }
 }

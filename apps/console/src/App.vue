@@ -49,7 +49,8 @@ const descriptions: Record<string, string> = {
 const pageDescription = computed(() => descriptions[page.value] || '管理设备与 AI 工具授权')
 </script>
 <template>
-  <div v-if="loading" class="loading-screen">
+  <router-view v-if="$route.name === 'activate-email'" />
+  <div v-else-if="loading" class="loading-screen">
     <el-icon class="is-loading" size="30"><Refresh /></el-icon>
   </div>
   <AuthPage v-else-if="!me" />

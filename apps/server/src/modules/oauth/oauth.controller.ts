@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Req, Res, Body, Query } from '@nestjs/common'
+import { Controller, Get, Post, Req, Res, Body, Query, HttpCode } from '@nestjs/common'
 import type { Request, Response } from 'express'
 import { createHash } from 'node:crypto'
 import { Identity } from '../core/identity'
@@ -181,12 +181,10 @@ export class OAuthController {
     // POST/Redirect/GET：303 明确要求浏览器以 GET 打开客户端回调，避免转发 POST 表单数据。
     res.redirect(303, dest.toString())
   }
-  /** 单次授权可签发 access/refresh；refresh 使用事务行锁与一次性旋转。 */
-  @Post('oauth/token') async token(
-    @Req() req: Request,
-    @Res() res: Response,
-    @Body() b: Record<string, string>,
-  ) {
+  /** 授权码兑换与刷新成功均返回 OAuth 规定的 200；刷新使用事务行锁与一次性旋转。 */
+  @Post('oauth/token')
+  @HttpCode(200)
+  async token(@Req() req: Request, @Res() res: Response, @Body() b: Record<string, string>) {
     res.set('Cache-Control', 'no-store')
     res.set('Pragma', 'no-cache')
     const requestId = b.grant_type === 'refresh_token' ? trackOAuthRefresh(req, res, b) : undefined

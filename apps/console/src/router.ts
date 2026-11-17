@@ -14,6 +14,11 @@ export { pagePaths } from './page-paths'
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
+    {
+      path: '/activate-email',
+      name: 'activate-email',
+      component: () => import('./views/activate-email/index.vue'),
+    },
     { path: '/', redirect: '/console' },
     { path: '/console', name: 'overview', component: OverviewPage },
     { path: '/console/devices', name: 'devices', component: DevicesPage },

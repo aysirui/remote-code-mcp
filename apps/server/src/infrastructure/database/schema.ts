@@ -13,11 +13,24 @@ const id = () => varchar('id', { length: 48 }).primaryKey()
 export const users = mysqlTable('users', {
   id: id(),
   email: varchar('email', { length: 255 }).notNull().unique(),
+  /** 邮箱验证标记：默认 true 兼容存量账号；公开注册必须显式写入 false。 */
+  emailVerified: boolean('email_verified').notNull().default(true),
   passwordHash: varchar('password_hash', { length: 255 }).notNull(),
   passwordChangeRequired: boolean('password_change_required').notNull().default(false),
   role: varchar('role', { length: 20 }).notNull().default('user'),
   status: varchar('status', { length: 20 }).notNull().default('active'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
+})
+/** 每用户一条邮箱激活记录；仅保存令牌摘要，重发替换旧令牌。 */
+export const emailActivations = mysqlTable('email_activations', {
+  /** 用户 ID，同时保证每用户仅有一条激活记录。 */
+  userId: varchar('user_id', { length: 48 }).primaryKey(),
+  /** 随机激活令牌的 SHA-256 摘要，不保存邮件中的明文。 */
+  tokenHash: varchar('token_hash', { length: 128 }).notNull().unique(),
+  /** 链接有效期截止时间，发送后 24 小时。 */
+  expiresAt: timestamp('expires_at').notNull(),
+  /** 最近一次发送尝试时间，用于跨进程限制 60 秒冷却。 */
+  sentAt: timestamp('sent_at').notNull(),
 })
 /** 服务器 Session 的 SHA-256 摘要及到期时间，不保存明文 Session Cookie。 */
 export const sessions = mysqlTable(

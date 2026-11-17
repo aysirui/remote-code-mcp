@@ -23,6 +23,7 @@ describe('administrator initialization boundary', () => {
     jest.spyOn(identity, 'userBySession').mockResolvedValue({
       id: 'user-id',
       status: 'active',
+      emailVerified: true,
       passwordChangeRequired: true,
     } as Awaited<ReturnType<Identity['userBySession']>>)
     await expect(

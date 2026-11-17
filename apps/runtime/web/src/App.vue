@@ -55,6 +55,12 @@ const { token, authorizationExpired, status, writeApprovals, refresh } = ctx
           </strong>
         </div>
         <div class="runtime-header-actions">
+          <el-button
+            v-if="token"
+            :disabled="!ctx.notificationSupported || ctx.notificationPermission.value !== 'default'"
+            @click="ctx.enableNotifications">
+            {{ ctx.notificationLabel.value }}
+          </el-button>
           <el-tag v-if="token" :type="status.online ? 'success' : 'info'" effect="plain">
             {{
               status.paused

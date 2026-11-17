@@ -29,6 +29,13 @@
       "when": 1794816880363,
       "tag": "0003_smooth_domino",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1794896709055,
+      "tag": "0004_talented_wallop",
+      "breakpoints": true
     }
   ]
 }

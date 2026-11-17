@@ -38,10 +38,11 @@ export class Identity {
       this.store.db.select().from(S.users).where(eq(S.users.id, s.userId)).limit(1),
     )
   }
-  /** 验证当前账户有效且已完成首次密码修改。 */
+  /** 验证当前账号有效、邮箱已验证且已完成首次密码修改。 */
   async requireUser(req: Request) {
     const u = await this.userBySession(req)
-    if (!u || u.status !== 'active') throw new UnauthorizedException('Login required')
+    if (!u || u.status !== 'active' || !u.emailVerified)
+      throw new UnauthorizedException('Login required')
     if (u.passwordChangeRequired) throw new ForbiddenException('PASSWORD_CHANGE_REQUIRED')
     return u
   }
@@ -51,7 +52,7 @@ export class Identity {
     if (!['admin', 'super_admin'].includes(u.role)) throw new ForbiddenException()
     return u
   }
-  /** 普通用户注册；保留 ADMIN_EMAIL，不允许公开注册提权。 */
+  /** 创建未验证邮箱的普通账号；保留 ADMIN_EMAIL，不允许公开注册提权。 */
   async register(email: string, password: string) {
     email = email.trim().toLowerCase()
     if (
@@ -60,7 +61,7 @@ export class Identity {
       Buffer.byteLength(password, 'utf8') > 72
     )
       throw new BadRequestException('Valid email and password (12–72 UTF-8 bytes) required')
-    // ADMIN_EMAIL is reserved for the out-of-band administrator initializer.
+    // 管理员邮箱仅由受控的管理员初始化流程使用。
     if (email === env.adminEmail) throw new ForbiddenException('Reserved administrator address')
     const user = {
       id: uid(),
@@ -68,15 +69,20 @@ export class Identity {
       passwordHash: await bcrypt.hash(password, 12),
       role: 'user',
       status: 'active',
+      emailVerified: false,
     }
     try {
       await this.store.db.insert(S.users).values(user)
-    } catch {
-      throw new BadRequestException('Account already exists')
+    } catch (error) {
+      const cause =
+        (error as { cause?: { code?: string }; code?: string }).cause ??
+        (error as { code?: string })
+      if (cause.code !== 'ER_DUP_ENTRY') throw error
+      throw new BadRequestException('账号已存在，请登录或重发激活邮件')
     }
     return user
   }
-  /** 使用 bcrypt 校验密码并创建服务器 Session；客户端只收到随机 Cookie。 */
+  /** 校验密码与邮箱激活状态后创建 Session；未激活账号不能获得 Cookie。 */
   async login(email: string, password: string) {
     const user = await this.store.one(
       this.store.db
@@ -87,6 +93,8 @@ export class Identity {
     )
     if (!user || user.status !== 'active' || !(await bcrypt.compare(password, user.passwordHash)))
       throw new UnauthorizedException('Invalid credentials')
+    if (!user.emailVerified)
+      throw new ForbiddenException({ code: 'EMAIL_NOT_VERIFIED', message: '请先激活邮箱后再登录' })
     const raw = secret()
     await this.store.db
       .insert(S.sessions)
@@ -96,7 +104,8 @@ export class Identity {
   /** 校验旧密码并更新 Hash；撤销该用户全部 Session。 */
   async changePassword(req: Request, currentPassword: string, nextPassword: string) {
     const user = await this.userBySession(req)
-    if (!user || user.status !== 'active') throw new UnauthorizedException('Login required')
+    if (!user || user.status !== 'active' || !user.emailVerified)
+      throw new UnauthorizedException('Login required')
     if (!(await bcrypt.compare(currentPassword, user.passwordHash)))
       throw new UnauthorizedException('Invalid current password')
     const bytes = Buffer.byteLength(nextPassword, 'utf8')
@@ -108,7 +117,7 @@ export class Identity {
       .set({ passwordHash, passwordChangeRequired: false })
       .where(eq(S.users.id, user.id))
     await this.store.db.delete(S.sessions).where(eq(S.sessions.userId, user.id))
-    // Force reauthentication after credential rotation.
+    // 密码变更后强制重新登录，旧会话立即失效。
     return { ok: true }
   }
 

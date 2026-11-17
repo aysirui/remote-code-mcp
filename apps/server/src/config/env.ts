@@ -7,6 +7,22 @@ const envFiles = [
   path.resolve(__dirname, '../../../../.env'),
 ]
 
+/** SMTP 发送配置，服务启动、注册和重发时校验完整性。 */
+export interface MailConfig {
+  /** 邮件服务器主机名。 */
+  host: string
+  /** SMTP 端口，默认 587。 */
+  port: number
+  /** 认证账号，通常为完整邮箱地址。 */
+  user: string
+  /** SMTP 密码或服务商授权码，不得输出日志。 */
+  password: string
+  /** 服务商允许的发件地址，默认使用认证账号。 */
+  from: string
+  /** true 使用隐式 TLS；false 必须升级 STARTTLS。 */
+  secure: boolean
+}
+
 /** 统一配置入口：进程环境变量 > Server 本地 .env > 仓库根目录 .env > 默认值。 */
 export class Env {
   constructor(
@@ -53,11 +69,29 @@ export class Env {
     return value
   }
 
-  /** 启动服务时完整校验；迁移和管理员初始化只校验各自需要的配置。 */
+  /** SMTP 配置：465 使用直接 TLS，其他端口强制 STARTTLS；启动时及发送前校验。 */
+  get mail(): MailConfig {
+    const host = this.source.SMTP_HOST || ''
+    const user = this.source.SMTP_USER || ''
+    const password = this.source.SMTP_PASSWORD || ''
+    const from = this.source.MAIL_FROM || user
+    const port = Number(this.source.SMTP_PORT || 587)
+    const secureValue = this.source.SMTP_SECURE || (port === 465 ? 'true' : 'false')
+    if (!host || !user || !password || !from)
+      throw new Error('必须配置 SMTP_HOST、SMTP_USER、SMTP_PASSWORD 和发件地址')
+    if (!Number.isInteger(port) || port < 1 || port > 65535)
+      throw new Error('SMTP_PORT 必须为有效端口')
+    if (!['true', 'false'].includes(secureValue))
+      throw new Error('SMTP_SECURE 必须为 true 或 false')
+    return { host, port, user, password, from, secure: secureValue === 'true' }
+  }
+
+  /** 启动服务时校验基础与邮件配置；迁移和管理员初始化只校验各自所需配置。 */
   validateServer(): void {
     void this.databaseUrl
     void this.appSecret
     void this.port
+    void this.mail
   }
 }
 

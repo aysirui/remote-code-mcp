@@ -34,12 +34,36 @@ async function getCsrf(): Promise<string> {
   return csrfLoading
 }
 
+/** 请求错误只暴露用户消息、业务码和重试秒数，不携带请求密码或配置。 */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    /** 服务端稳定业务码，用于识别可恢复的注册发信失败。 */
+    public readonly code?: string,
+    /** 服务端建议的重试等待秒数。 */
+    public readonly retryAfter?: number,
+  ) {
+    super(message)
+  }
+}
+
 /** 将 Axios 错误转换成 UI 可展示的信息，不暴露请求配置。 */
 function toError(error: unknown): Error {
   if (!axios.isAxiosError(error)) return error instanceof Error ? error : Error('请求失败')
-  const response = (error as AxiosError<{ message?: string | string[]; error?: string }>).response
+  const response = (
+    error as AxiosError<{
+      message?: string | string[]
+      error?: string
+      code?: string
+      retryAfter?: number
+    }>
+  ).response
   const message = response?.data?.message ?? response?.data?.error
-  return Error(Array.isArray(message) ? message.join('; ') : message || '网络请求失败')
+  return new ApiError(
+    Array.isArray(message) ? message.join('; ') : message || '网络请求失败',
+    response?.data?.code,
+    response?.data?.retryAfter,
+  )
 }
 
 /** 统一的业务请求入口；所有会修改服务端状态的请求必须先取得 CSRF Token。 */

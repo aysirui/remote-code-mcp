@@ -30,13 +30,13 @@ corepack enable
 cp .env.example .env
 cp apps/server/.env.example apps/server/.env
 cp apps/console/.env.example apps/console/.env.local
-# 修改 apps/server/.env 的 APP_SECRET、DATABASE_URL、ADMIN_EMAIL
+# 修改 apps/server/.env 的 APP_SECRET、DATABASE_URL、ADMIN_EMAIL 和 SMTP 配置
 pnpm install
 ```
 
-Server 配置统一通过 `apps/server/src/env.ts` 的 `env` 访问，优先级为：**系统环境变量 → `apps/server/.env` → 仓库根目录 `.env` → 默认值**。已有环境变量不会被 `.env` 覆盖；文件路径以模块位置解析，从仓库根目录启动或直接运行构建产物均可加载。仅使用系统环境变量时无需创建 `.env`。
+Server 配置统一通过 `apps/server/src/config/env.ts` 的 `env` 访问，优先级为：**系统环境变量 → `apps/server/.env` → 仓库根目录 `.env` → 默认值**。已有环境变量不会被 `.env` 覆盖；文件路径以模块位置解析，从仓库根目录启动或直接运行构建产物均可加载。仅使用系统环境变量时无需创建 `.env`。
 
-本地开发可在 `apps/server/.env` 中将 `DATABASE_URL` 指向测试数据库。服务启动、`db:generate`、`db:migrate` 和 `admin:init` 共用该配置；数据库操作前请确认目标库。`.env` 不会提交 Git，示例模板位于 `apps/server/.env.example`。服务启动时校验必填的 `DATABASE_URL`、至少 32 字符的 `APP_SECRET` 和端口范围；数据库命令只要求数据库配置，管理员初始化还要求有效的 `ADMIN_EMAIL`。
+本地开发可在 `apps/server/.env` 中将 `DATABASE_URL` 指向测试数据库。服务启动、`db:generate`、`db:migrate` 和 `admin:init` 共用该配置；数据库操作前请确认目标库。`.env` 不会提交 Git，示例模板位于 `apps/server/.env.example`。服务启动时校验必填的 `DATABASE_URL`、至少 32 字符的 `APP_SECRET`、端口范围和 SMTP 配置；数据库命令只要求数据库配置，管理员初始化还要求有效的 `ADMIN_EMAIL`。
 
 启动 MySQL：
 
@@ -71,6 +71,20 @@ pnpm admin:init
 ```
 
 初始化脚本创建一个 `super_admin`，生成随机临时密码，使用 bcrypt 存入数据库；临时密码只会在该交互式终端显示一次，不会写入普通服务日志。非交互式容器启动同样会将临时密码输出到首次部署日志中。管理员首次登录 Console 会被要求修改密码，随后需重新登录。重复执行不重置现有管理员。普通注册永远不能凭 `ADMIN_EMAIL` 提权，且该邮箱禁止普通注册。
+
+### 注册与邮箱激活
+
+新注册账号必须验证真实邮箱后才能登录。请配置 Server 的 `SMTP_HOST`、`SMTP_PORT`（默认 587）、`SMTP_SECURE`（默认 false，465 默认 true）、`SMTP_USER`、`SMTP_PASSWORD` 和可选 `MAIL_FROM`（默认 SMTP_USER）。465 使用隐式 TLS，587 配置 `SMTP_SECURE=false` 并强制 STARTTLS，不关闭证书校验。`CONSOLE_URL` 必须是用户可访问的控制台地址，用于生成邮件链接。服务启动时校验 SMTP 配置完整性，但不连接邮箱服务器；数据库命令和管理员初始化无需 SMTP 配置。
+
+注册后前往邮箱打开链接，点击“激活账号”，再返回登录页登录。链接 24 小时有效、只能使用一次；登录页可填写邮箱和密码重发，间隔 60 秒，重发后旧链接失效。发送失败时账号仍保留，可稍后重发；SMTP 接受邮件并不保证到达收件箱，可检查垃圾邮件和供应商投递状态。已有账号及初始化管理员无需补充激活。邮箱验证和管理员禁用相互独立，激活不能解除禁用。
+
+部署前执行已提交的数据库迁移以新增邮箱验证字段和激活记录表；迁移会为已有账号保留已验证状态。开发时通过 `pnpm db:generate` 生成迁移，部署只执行已提交的迁移。
+
+### Runtime 审批通知
+
+在 Runtime 页面点击“开启浏览器通知”，允许后新审批会触发系统弹窗；拒绝时可在浏览器站点设置中修改。页面需保持打开并具备有效的本地管理凭据，使用受支持的桌面浏览器和安全来源（回环地址或 HTTPS）。通知仅显示待审批数量，点击后进入审批页，不会自动批准操作。
+
+存在待审批操作时，标签页显示红点和待审批数量，处理完成或请求过期后恢复。支持 Web Locks 的浏览器由一个标签页发送通知，其他标签页更新角标；不支持时通过稳定通知 tag 合并相同审批。页面关闭后不保证继续通知。Node 可通过平台组件（如 node-notifier）发送系统通知，但依赖桌面会话和系统支持，本版本未集成。
 
 ### Runtime 配对
 
@@ -162,6 +176,8 @@ Dokploy 对 Compose 环境变量的处理是：Environment 面板的变量会供
 MCP 返回同时具有 TextContent 和（对于对象数据）structuredContent，不声明 outputSchema，以提高不同 MCP Host 的兼容性。
 
 ## 5.1 OAuth 客户端授权与刷新令牌
+
+- `/oauth/token` 的授权码兑换和刷新成功均返回 HTTP 200（RFC 6749 §5.1），失败返回对应 OAuth 错误状态；`/oauth/register` 注册成功返回 HTTP 201。令牌端点不能沿用 NestJS POST 默认的 201，部分客户端会将其判为刷新失败。
 
 - OAuth 授权关系保存在 `oauth_grants`，与一小时有效期的 Access Token 独立；Console 的“已授权 AI 客户端”不再因 Access Token 过期而隐藏。
 - 授权码 + PKCE 成功兑换后返回 `access_token`（3600 秒）和 `refresh_token`（最长 30 天）；支持 `POST /oauth/token` 使用 `grant_type=refresh_token`、`refresh_token` 换取新的 Access Token 和 Refresh Token。公共客户端刷新时 `client_id` 可省略（RFC 6749 §6）；提供时必须与令牌归属一致。刷新不要求携带 `resource` 或 `scope`，签发结果沿用原授权的资源与权限。

@@ -27,6 +27,22 @@ export class AuthController {
     csrf(req)
     return this.auth.register(String(b.email || ''), String(b.password || ''))
   }
+  /** 验证 CSRF 后消费邮箱激活令牌，不创建登录会话。 */
+  @Post('auth/activate-email') async activateEmail(
+    @Req() req: Request,
+    @Body() b: Record<string, unknown>,
+  ) {
+    csrf(req)
+    return this.auth.activateEmail(String(b.token || ''))
+  }
+  /** 验证账号凭据并按冷却期重发激活邮件。 */
+  @Post('auth/resend-activation') async resendActivation(
+    @Req() req: Request,
+    @Body() b: Record<string, unknown>,
+  ) {
+    csrf(req)
+    return this.auth.resendActivation(String(b.email || ''), String(b.password || ''))
+  }
   /** 服务端验证密码后写入 HttpOnly Session Cookie。 */
   @Post('auth/login') async login(
     @Req() req: Request,

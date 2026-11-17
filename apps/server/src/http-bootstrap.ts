@@ -25,7 +25,11 @@ export function configureHttp(app: INestApplication) {
   // 进程内限流仅作为轻量保护；生产部署应配合共享限流或 WAF。
   const hits = new Map<string, { n: number; until: number }>()
   app.use((req: Request, res: Response, next: NextFunction) => {
-    if (!/\/api\/(auth\/(login|register)|device\/pairing)|\/oauth\/(register|token)/.test(req.path))
+    if (
+      !/\/api\/(auth\/(login|register|resend-activation|activate-email)|device\/pairing)|\/oauth\/(register|token)/.test(
+        req.path,
+      )
+    )
       return next()
     if (hits.size >= 10000) {
       const now = Date.now()

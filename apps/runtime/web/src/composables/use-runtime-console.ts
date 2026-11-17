@@ -1,4 +1,5 @@
-import { ref } from 'vue'
+import { useApprovalNotifications } from './use-approval-notifications'
+import { ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { LocalAuthorizationError } from '../local-auth'
 import { useWriteApprovals } from './use-write-approvals'
@@ -40,6 +41,11 @@ export function useRuntimeConsole() {
   })
   const workspaces = ref<WorkspaceView[]>([])
   const writeApprovals = ref<WriteApprovalView[]>([])
+  const notifications = useApprovalNotifications(
+    writeApprovals,
+    computed(() => status.value.serverId),
+    computed(() => Boolean(token.value) && status.value.online),
+  )
   const pairing = ref<PairingRequest | null>(null)
   const code = ref('')
 
@@ -53,6 +59,7 @@ export function useRuntimeConsole() {
       showAdd.value = false
     }
     status.value = next
+    if (!next.online) writeApprovals.value = []
   }
 
   /** 新启动链接可以在同一标签页恢复会话，不必再重启进程。 */
@@ -216,6 +223,7 @@ export function useRuntimeConsole() {
   }
 
   return {
+    ...notifications,
     browserWindow,
     token,
     authorizationExpired,

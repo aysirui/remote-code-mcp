@@ -3,7 +3,8 @@ import { inject } from 'vue'
 import type { ConsoleContext } from '../../composables/use-console'
 import AuthShell from '../../components/layout/AuthShell.vue'
 
-const { registering, email, password, signIn } = inject<ConsoleContext>('console')!
+const { registering, email, password, signIn, resendBusy, resendSeconds, resendActivation } =
+  inject<ConsoleContext>('console')!
 </script>
 
 <template>
@@ -40,6 +41,15 @@ const { registering, email, password, signIn } = inject<ConsoleContext>('console
         size="large"
         :disabled="!email.trim() || !password">
         {{ registering ? '注册账号' : '登录' }}
+      </el-button>
+      <el-button
+        v-if="!registering"
+        link
+        type="primary"
+        :loading="resendBusy"
+        :disabled="!email.trim() || !password || resendSeconds > 0"
+        @click="resendActivation">
+        {{ resendSeconds > 0 ? `${resendSeconds} 秒后可重发` : '重发激活邮件' }}
       </el-button>
     </el-form>
     <div class="auth-switch">

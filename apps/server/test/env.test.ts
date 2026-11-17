@@ -41,10 +41,16 @@ describe('Server 环境配置', () => {
   })
 
   test('仅使用环境变量即可启动，无需创建 .env 文件', () => {
-    const config = new Env({ DATABASE_URL: 'mysql://system/test', APP_SECRET: 's'.repeat(32) }, [
-      localFile,
-      rootFile,
-    ])
+    const config = new Env(
+      {
+        DATABASE_URL: 'mysql://system/test',
+        APP_SECRET: 's'.repeat(32),
+        SMTP_HOST: 'smtp.example.com',
+        SMTP_USER: 'sender@example.com',
+        SMTP_PASSWORD: 'password',
+      },
+      [localFile, rootFile],
+    )
     expect(() => config.validateServer()).not.toThrow()
     expect(config.publicUrl).toBe('http://localhost:3000')
     expect(config.consoleUrl).toBe('http://localhost:5173')
@@ -80,4 +86,21 @@ describe('Server 环境配置', () => {
   test.each(['1', '65535'])('接受有效端口边界 %s', (port) => {
     expect(new Env({ PORT: port }, []).port).toBe(Number(port))
   })
+})
+
+test('启动必须具备 SMTP 配置，默认 587 使用 STARTTLS 且允许显式发件地址', () => {
+  const base = { DATABASE_URL: 'mysql://system/test', APP_SECRET: 's'.repeat(32) }
+  expect(() => new Env(base, []).validateServer()).toThrow('SMTP_HOST')
+  const config = new Env(
+    {
+      ...base,
+      SMTP_HOST: 'smtp.example.com',
+      SMTP_USER: 'user@example.com',
+      SMTP_PASSWORD: 'password',
+      MAIL_FROM: 'noreply@example.com',
+    },
+    [],
+  )
+  expect(() => config.validateServer()).not.toThrow()
+  expect(config.mail).toMatchObject({ port: 587, secure: false, from: 'noreply@example.com' })
 })

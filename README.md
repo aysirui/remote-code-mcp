@@ -109,6 +109,8 @@ MCP 接入地址为 `https://你的服务器域名/mcp`，使用平台账号进�
 
 官网使用独立的 Astro 静态构建，在线文档使用独立的 VitePress 静态构建；两者与 Console 分开发布。官网提供 GitHub、文档和控制台入口，控制台的“使用文档”链接由公开文档地址配置。
 
+Docker 部署提供两种独立编排：通用的 `docker-compose.yml` 不绑定路由规则；`docker-compose.traefik.yml` 包含 Host/Path Traefik Labels，适用于已有 Traefik 的环境。两者不要合并叠加，具体配置见 [部署指南](docs/deployment.md)。
+
 官网开发运行 `pnpm dev:website`，文档开发运行 `pnpm docs:dev` 后访问 `http://127.0.0.1:5174/docs/`；与 `pnpm dev:console` 同时运行时，Console 开发环境可代理文档路径。单独构建与预览使用 `pnpm docs:build` 和 `pnpm docs:preview`；根目录 `pnpm build` 已包含文档构建。
 
 - [使用指南](docs/usage.md)：配对、工作区、审批、命令和 OAuth 排查。

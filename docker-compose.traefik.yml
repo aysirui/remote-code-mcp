@@ -1,0 +1,118 @@
+# Traefik Labels 部署示例：服务配置与通用 docker-compose.yml 保持一致。
+# 仅额外增加 Traefik 路由 Labels 和代理接入网络；不改变应用间内部网络。
+# 运行前：先创建 TRAEFIK_NETWORK 指向的 Docker 网络，并确保 Traefik 已连接该网络。
+# 入口默认为 web（HTTP）；由上游代理负责 HTTPS 时可保持默认。
+# 若 Traefik 自行终止 TLS，请按实际配置改为 websecure，并另配 TLS/证书解析器。
+services:
+  # MySQL 仅加入业务私有网络；不要暴露数据库端口。
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: remote_code_mcp
+      MYSQL_USER: rcm
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD}
+    volumes: [mysql_data:/var/lib/mysql]
+    healthcheck:
+      test: ['CMD-SHELL', 'mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent']
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks: [internal]
+
+  # RCM Server 提供 MCP、API、OAuth 和设备 WebSocket；独立域名承载所有后端路径。
+  server:
+    build: { context: ., dockerfile: docker/Dockerfile.server }
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: mysql://rcm:${MYSQL_PASSWORD}@mysql:3306/remote_code_mcp
+      APP_SECRET: ${APP_SECRET:?Set APP_SECRET}
+      PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL}
+      CONSOLE_URL: ${CONSOLE_URL:?Set CONSOLE_URL}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL}
+      PORT: 3000
+      SMTP_HOST: ${SMTP_HOST:?Set SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:?Set SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:?Set SMTP_PASSWORD}
+      MAIL_FROM: ${MAIL_FROM:-}
+    depends_on:
+      mysql: { condition: service_healthy }
+    expose: ['3000']
+    networks: [internal, proxy]
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.docker.network=${TRAEFIK_NETWORK:-traefik-public}'
+      - 'traefik.http.routers.rcm-server.rule=Host(`${SERVER_HOST:?Set SERVER_HOST}`)'
+      - 'traefik.http.routers.rcm-server.entrypoints=${TRAEFIK_ENTRYPOINT:-web}'
+      - 'traefik.http.routers.rcm-server.service=rcm-server'
+      - 'traefik.http.services.rcm-server.loadbalancer.server.port=3000'
+
+  # 管理控制台；保留通用编排的内部网络，额外连接代理网络用于路由。
+  console:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.console
+      args:
+        VITE_API_URL: '${PUBLIC_URL}'
+        VITE_DOCS_URL: '${DOCS_URL:-${WEBSITE_URL:-${PUBLIC_URL}}/docs/}'
+    restart: unless-stopped
+    expose: ['80']
+    networks: [internal, proxy]
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.docker.network=${TRAEFIK_NETWORK:-traefik-public}'
+      - 'traefik.http.routers.rcm-console.rule=Host(`${CONSOLE_HOST:?Set CONSOLE_HOST}`)'
+      - 'traefik.http.routers.rcm-console.entrypoints=${TRAEFIK_ENTRYPOINT:-web}'
+      - 'traefik.http.routers.rcm-console.service=rcm-console'
+      - 'traefik.http.services.rcm-console.loadbalancer.server.port=80'
+
+  # 官网与文档共享网站域名，服务网络与通用编排一致，仅额外加入代理网络。
+  website:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.website
+      args:
+        PUBLIC_SITE_URL: '${WEBSITE_URL:-${PUBLIC_URL}}'
+        PUBLIC_CONSOLE_URL: '${CONSOLE_URL}'
+    restart: unless-stopped
+    expose: ['80']
+    networks: [internal, proxy]
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.docker.network=${TRAEFIK_NETWORK:-traefik-public}'
+      - 'traefik.http.routers.rcm-website.rule=Host(`${WEBSITE_HOST:?Set WEBSITE_HOST}`)'
+      - 'traefik.http.routers.rcm-website.entrypoints=${TRAEFIK_ENTRYPOINT:-web}'
+      - 'traefik.http.routers.rcm-website.priority=10'
+      - 'traefik.http.routers.rcm-website.service=rcm-website'
+      - 'traefik.http.services.rcm-website.loadbalancer.server.port=80'
+
+  # 文档保持内网可达，同时通过代理发布；保留 /docs/ 前缀，不使用 StripPrefix。
+  docs:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.docs
+    restart: unless-stopped
+    expose: ['80']
+    networks: [internal, proxy]
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.docker.network=${TRAEFIK_NETWORK:-traefik-public}'
+      - 'traefik.http.routers.rcm-docs.rule=Host(`${WEBSITE_HOST:?Set WEBSITE_HOST}`) && (Path(`/docs`) || PathPrefix(`/docs/`))'
+      - 'traefik.http.routers.rcm-docs.entrypoints=${TRAEFIK_ENTRYPOINT:-web}'
+      - 'traefik.http.routers.rcm-docs.priority=100'
+      - 'traefik.http.routers.rcm-docs.service=rcm-docs'
+      - 'traefik.http.services.rcm-docs.loadbalancer.server.port=80'
+
+volumes:
+  mysql_data:
+
+networks:
+  # 与通用 Compose 相同：五个服务均加入内部网络，MySQL 不连接代理网络。
+  internal:
+  # 已存在的、供 Traefik 与业务容器通信的外部网络。
+  proxy:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik-public}

@@ -48,7 +48,7 @@ services:
       dockerfile: docker/Dockerfile.console
       args:
         VITE_API_URL: '${PUBLIC_URL}'
-        VITE_DOCS_URL: '${DOCS_URL:-${PUBLIC_URL}/docs/}'
+        VITE_DOCS_URL: '${DOCS_URL:-${WEBSITE_URL:-${PUBLIC_URL}}/docs/}'
     restart: unless-stopped
     expose: ['80']
     networks: [internal]

@@ -8,23 +8,23 @@
 
 Server 环境变量优先级为：系统环境变量 → `apps/server/.env` → 根目录 `.env` → 默认值。服务、迁移及管理员初始化统一使用 `apps/server/src/config/env.ts`；执行数据库命令前务必确认目标库。
 
-| 变量                                      | 用途及默认行为                                                         |
-| ----------------------------------------- | ---------------------------------------------------------------------- |
-| `DATABASE_URL`                            | Server 数据库连接；Compose 根据 MySQL 配置构造                         |
-| `APP_SECRET`                              | 必填，至少 32 字符的随机密钥                                           |
-| `PUBLIC_URL`                              | Gateway 外部地址；本地默认 `http://localhost:3000`                     |
-| `CONSOLE_URL`                             | Console 外部地址，也用于邮箱激活链接；本地默认 `http://localhost:5173` |
-| `ADMIN_EMAIL`                             | 首个管理员邮箱；该地址不能通过公开注册获得管理员权限                   |
-| `PORT`                                    | Server 端口，默认 3000；Compose 固定为 3000                            |
-| `SMTP_HOST`、`SMTP_USER`、`SMTP_PASSWORD` | 注册激活邮件所需的 SMTP 地址、账号和密码 / 授权码                      |
-| `SMTP_PORT`、`SMTP_SECURE`                | 默认 587 / false，强制 STARTTLS；465 使用 true，启用隐式 TLS           |
-| `MAIL_FROM`                               | 可选，默认使用 `SMTP_USER`，须为服务商允许的发件地址                   |
-| `MYSQL_PASSWORD`、`MYSQL_ROOT_PASSWORD`   | Compose 必填的数据库密码，使用不同的强密码                             |
-| `VITE_API_URL`                            | Console 构建时使用的 API 地址；Compose 自动使用 `PUBLIC_URL`           |
-| `WEBSITE_URL`                             | 官网公开 URL，供 Astro 生成规范地址；默认使用 `PUBLIC_URL`             |
-| `DOCS_URL`                                | 在线文档完整 URL，供 Console 导航使用；默认 `PUBLIC_URL/docs/`         |
-| `VITE_DOCS_URL`                           | Console 构建期文档地址，Compose 从 `DOCS_URL` 自动传入                 |
-| `PUBLIC_SITE_URL`、`PUBLIC_CONSOLE_URL`   | Astro 构建期官网和控制台地址，由 Compose 自动注入                      |
+| 变量                                      | 用途及默认行为                                                                    |
+| ----------------------------------------- | --------------------------------------------------------------------------------- |
+| `DATABASE_URL`                            | Server 数据库连接；Compose 根据 MySQL 配置构造                                    |
+| `APP_SECRET`                              | 必填，至少 32 字符的随机密钥                                                      |
+| `PUBLIC_URL`                              | Gateway 外部地址；本地默认 `http://localhost:3000`                                |
+| `CONSOLE_URL`                             | Console 外部地址，也用于邮箱激活链接；本地默认 `http://localhost:5173`            |
+| `ADMIN_EMAIL`                             | 首个管理员邮箱；该地址不能通过公开注册获得管理员权限                              |
+| `PORT`                                    | Server 端口，默认 3000；Compose 固定为 3000                                       |
+| `SMTP_HOST`、`SMTP_USER`、`SMTP_PASSWORD` | 注册激活邮件所需的 SMTP 地址、账号和密码 / 授权码                                 |
+| `SMTP_PORT`、`SMTP_SECURE`                | 默认 587 / false，强制 STARTTLS；465 使用 true，启用隐式 TLS                      |
+| `MAIL_FROM`                               | 可选，默认使用 `SMTP_USER`，须为服务商允许的发件地址                              |
+| `MYSQL_PASSWORD`、`MYSQL_ROOT_PASSWORD`   | Compose 必填的数据库密码，使用不同的强密码                                        |
+| `VITE_API_URL`                            | Console 构建时使用的 API 地址；Compose 自动使用 `PUBLIC_URL`                      |
+| `WEBSITE_URL`                             | 官网公开 URL，供 Astro 生成规范地址；默认使用 `PUBLIC_URL`                        |
+| `DOCS_URL`                                | 在线文档完整 URL，供 Console 导航使用；默认 `${WEBSITE_URL:-${PUBLIC_URL}}/docs/` |
+| `VITE_DOCS_URL`                           | Console 构建期文档地址，Compose 从 `DOCS_URL` 自动传入                            |
+| `PUBLIC_SITE_URL`、`PUBLIC_CONSOLE_URL`   | Astro 构建期官网和控制台地址，由 Compose 自动注入                                 |
 
 若数据库密码含 URL 保留字符，`DATABASE_URL` 中的密码段需要 URL 编码。当前 Compose 直接插值 `MYSQL_PASSWORD` 构造连接串，应使用足够长且无需 URL 编码的随机密码，或自行调整连接串配置。
 
@@ -49,6 +49,30 @@ docker compose up -d --build
 在 Dokploy 中选择 **Docker Compose 应用**，连接仓库并使用根目录 `docker-compose.yml`。Environment 中按 `docker/env.example` 的说明配置全部必填变量，包括 SMTP；这些变量通过 Compose 显式传入容器。
 
 在 Domains 中为 `server`（端口 3000）、`console`、`website`、`docs`（均为端口 80）配置公开入口。一个域名承载多个服务时，应按 Host 和路径匹配，确保 API、OAuth、MCP、WebSocket 以及文档路径不会被官网根路由覆盖。路由及 TLS 的具体实现由部署环境决定，对应 `PUBLIC_URL`、`CONSOLE_URL`。反向代理必须保留 `/agent/connect` 的 WebSocket Upgrade，允许 `/mcp` 的流式 HTTP 响应。推荐启用 Dokploy 的 Isolated Deployments，由其管理路由与网络。
+
+### Traefik Labels 版本
+
+仓库额外提供 **`docker-compose.traefik.yml`**，是一份完整的替代编排文件，与不包含路由 Labels 的 `docker-compose.yml` 二选一使用，**不要同时通过多个 `-f` 叠加这两个文件**。
+
+此版本面向已有 Traefik 的自托管环境。**两份文件使用相同的运行参数、构建参数、默认值、数据库卷和五个服务共享的 `internal` 网络；Traefik 版仅为四个 Web 服务额外连接 `proxy` 网络并添加 Host、Path Labels。** 不提供或假设任何固定的反向代理拓扑：
+
+- `SERVER_HOST`：RCM Server 域名，对应 `PUBLIC_URL` 的 Host；后端 `server:3000` 处理 MCP、OAuth、API、健康检查和 `/agent/connect` WebSocket。
+- `CONSOLE_HOST`：Console 域名，对应 `CONSOLE_URL` 的 Host；代理到 `console:80`。
+- `WEBSITE_HOST`：官网域名，对应 `WEBSITE_URL` 的 Host；`/docs` 和 `/docs/*` 优先交给 `docs:80`，其他官网路径交给 `website:80`，**不剥离 `/docs/` 前缀**。
+- `TRAEFIK_NETWORK`：Traefik 和四个 Web 服务额外加入的**已存在外部 Docker 网络**，默认 `traefik-public`；五个服务仍保留相同的 `internal` 内网，MySQL 不加入 `proxy`。
+- `TRAEFIK_ENTRYPOINT`：已有 Traefik 入口名，默认 `web`（HTTP）。此示例**不自动申请证书、不开启 TLS 也不配置 HTTPS 跳转**。如果由 Traefik 自行终止 HTTPS，应把入口改为正确的 TLS 入口，并按部署环境增加 Router TLS/证书配置；如果由上游网关终止 HTTPS，则应按实际上游与 Traefik 的安全边界配置。
+
+`PUBLIC_URL`、`CONSOLE_URL`、`WEBSITE_URL`、`DOCS_URL` 是应用使用的**完整公开 URL**；`SERVER_HOST`、`CONSOLE_HOST`、`WEBSITE_HOST` 只填写**域名**（不含协议、端口或路径）。每一项 Host 与其对应的 URL 主机名必须一致；此示例要求 Server、Console、Website 使用互不相同的主机名，避免 Server 的全路径 Router 与官网冲突。官网与文档使用相同域名，`DOCS_URL` 应为 `${WEBSITE_URL}/docs/`。两套 Compose 中 Console 的 `VITE_DOCS_URL` 均默认使用 `DOCS_URL`，没有配置时依次回退 `WEBSITE_URL/docs/`、`PUBLIC_URL/docs/`；Website 的 `PUBLIC_SITE_URL` 均默认回退 `PUBLIC_URL`。实际独立域名部署请显式设置 `WEBSITE_URL` 和 `DOCS_URL`。
+
+启动前创建/确认 Traefik 共享网络，确保 Traefik 自身已连接，并在 `.env` 中设置这些变量：
+
+```sh
+docker network create traefik-public
+docker compose -f docker-compose.traefik.yml config
+docker compose -f docker-compose.traefik.yml up -d --build
+```
+
+如果网络已存在，跳过 `docker network create`；自定义 `TRAEFIK_NETWORK` 时替换上述网络名。先检查 `config` 输出的 Host 匹配、端口和网络，再部署。示例不发布宿主机端口，不包含 Traefik 容器，也不应与部署平台自动生成的同名路由重复配置；已有路由应先统一归属，避免冲突。
 
 Server 容器启动顺序：
 

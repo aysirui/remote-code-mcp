@@ -13,8 +13,7 @@ COPY packages/protocol/package.json packages/protocol/package.json
 RUN pnpm --filter @rcm/website... install --frozen-lockfile
 # 官网只读取自身源码；公开站点 URL 用于生成 canonical 元数据。
 COPY apps/website apps/website
-# 共用控制台现有 Logo 源文件，避免生成两份品牌资源。
-COPY apps/console/public/remote-code-logo.png apps/console/public/remote-code-logo.png
+# 官网的 favicon.svg 和 logo-square.svg 已位于 apps/website/public，由上方 COPY 一并复制。
 ARG PUBLIC_SITE_URL
 ENV PUBLIC_SITE_URL=${PUBLIC_SITE_URL}
 ARG PUBLIC_CONSOLE_URL

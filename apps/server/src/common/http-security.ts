@@ -2,7 +2,7 @@ import { env } from '../config/env'
 import type { Request, Response } from 'express'
 import { ForbiddenException } from '@nestjs/common'
 
-/** Gateway 的公网地址，用于安全 Cookie 与 Origin 校验。 */
+/** Server 的公网地址，用于安全 Cookie 与 Origin 校验。 */
 export const base = () => env.publicUrl
 
 /** 用户 Console 的公网地址；OAuth 和配对流程使用此地址。 */

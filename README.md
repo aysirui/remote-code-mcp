@@ -1,10 +1,10 @@
 # Remote Code MCP
 
-让 MCP 客户端在你授权的范围内，通过远程 Gateway 访问本机代码工作区。
+让 MCP 客户端在你授权的范围内，通过远程 Server 访问本机代码工作区。
 
-Remote Code MCP（RCM）是一个可自行部署的 TypeScript monorepo，包含云端 Gateway、产品官网、在线文档、Web Console、本机 Runtime 和共享协议。Runtime 主动建立出站 WebSocket 连接，无需将本机工作区的服务端口暴露到公网。
+Remote Code MCP（RCM）是一个可自行部署的 TypeScript monorepo，包含云端 Server、产品官网、在线文档、Web Console、本机 Runtime 和共享协议。Runtime 主动建立出站 WebSocket 连接，无需将本机工作区的服务端口暴露到公网。
 
-**项目处于早期开发阶段。** 支持源码构建和单 Gateway 实例的 Docker Compose 部署。部署前请按 [部署指南](docs/deployment.md) 验证目标环境及 MCP 客户端兼容性，并了解 [安全边界与已知限制](SECURITY.md)。
+**项目处于早期开发阶段。** 支持源码构建和单 Server 实例的 Docker Compose 部署。部署前请按 [部署指南](docs/deployment.md) 验证目标环境及 MCP 客户端兼容性，并了解 [安全边界与已知限制](SECURITY.md)。
 
 ## 能做什么
 
@@ -22,7 +22,7 @@ Remote Code MCP（RCM）是一个可自行部署的 TypeScript monorepo，包含
 MCP 客户端
     │ HTTPS / MCP Streamable HTTP / OAuth 2.0
     ▼
-Server（NestJS Gateway） ── MySQL（Drizzle）
+Server（NestJS） ── MySQL（Drizzle）
     ▲          ▲
     │ WSS      │ HTTPS
     │          Console（Vue Web 管理台）
@@ -31,11 +31,11 @@ Runtime（本机 Node.js 服务）
     └── 已授权 Workspace → File / Git / Command
 ```
 
-Server 验证用户、设备及工作区归属，Runtime 再按本机授权核验请求。工作区绝对路径保留在本机；文件内容和操作参数经 Gateway 转发，不作为 Server / Console 的持久化业务数据。操作审计仅保存允许的脱敏元数据。Gateway 能接触转发内容，请只连接你信任的服务器。
+Server 验证用户、设备及工作区归属，Runtime 再按本机授权核验请求。工作区绝对路径保留在本机；文件内容和操作参数经 Server 转发，不作为 Server / Console 的持久化业务数据。操作审计仅保存允许的脱敏元数据。Server 能接触转发内容，请只连接你信任的服务器。
 
 | 目录                | 职责                                                     |
 | ------------------- | -------------------------------------------------------- |
-| `apps/server`       | NestJS Gateway、账号与 OAuth、设备连接、MCP 工具及数据库 |
+| `apps/server`       | NestJS 服务端、账号与 OAuth、设备连接、MCP 工具及数据库  |
 | `apps/console`      | Vue 管理台：账号、设备、工作区快照、客户端授权及管理功能 |
 | `apps/website`      | Astro 静态官网：产品介绍、功能展示和公共入口             |
 | `docs`              | VitePress 在线文档，独立构建发布                         |
@@ -71,7 +71,7 @@ pnpm --filter @rcm/protocol build
 分别在三个终端启动：
 
 ```sh
-# Gateway：http://localhost:3000
+# Server：http://localhost:3000
 pnpm dev:server
 ```
 
@@ -88,7 +88,7 @@ pnpm --filter @rcm/runtime start
 
 打开 Runtime 日志中的完整本地管理链接，添加服务器并完成设备配对，再授权一个测试工作区。具体流程、命令策略和多服务器管理见 [使用指南](docs/usage.md)。
 
-MCP 接入地址为 `https://你的服务器域名/mcp`，使用平台账号进行 OAuth 授权。公网 Gateway 必须使用 HTTPS，反向代理需支持 `/agent/connect` 的 WebSocket Upgrade。各客户端兼容性需要实测，建议先用 MCP Inspector 验证。
+MCP 接入地址为 `https://你的服务器域名/mcp`，使用平台账号进行 OAuth 授权。公网 Server 必须使用 HTTPS，反向代理需支持 `/agent/connect` 的 WebSocket Upgrade。各客户端兼容性需要实测，建议先用 MCP Inspector 验证。
 
 ## MCP 工具
 

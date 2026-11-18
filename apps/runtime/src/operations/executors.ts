@@ -20,6 +20,7 @@ import {
 } from './file/file-operations'
 import {
   runCheckedCommand,
+  CommandResultError,
   listCommands,
   resolveCommandRequest,
 } from './command/command-operations'
@@ -225,18 +226,28 @@ export async function execute(
       break
     case 'command.run': {
       const payload = ToolInputs['command.run'].parse(req.payload)
-      data = await runCheckedCommand(
+      const result = await runCheckedCommand(
         w,
         payload,
         approvalResourceHash,
         undefined,
         onCommandExecution,
       )
-      break
+      // 只向调用方返回已校验的业务字段；超时优先于进程给出的退出码。
+      const commandResult = ToolOutputs['command.run'].safeParse(result)
+      if (!commandResult.success) throw Error('INVALID_TOOL_RESULT')
+      if (result.timedOut) throw new CommandResultError('COMMAND_TIMEOUT', commandResult.data)
+      if (result.exitCode === null)
+        throw new CommandResultError('COMMAND_PROCESS_TERMINATED', commandResult.data)
+      if (result.exitCode !== 0)
+        throw new CommandResultError('COMMAND_EXIT_NONZERO', commandResult.data)
+      return commandResult.data
     }
     default:
       throw Error('UNSUPPORTED_OPERATION')
   }
   // 在 RPC 返回边界按操作校验原始结果，MCP 包装复用同一份输出字段定义。
-  return ToolOutputs[req.operation].parse(data)
+  const result = ToolOutputs[req.operation].safeParse(data)
+  if (!result.success) throw Error('INVALID_TOOL_RESULT')
+  return result.data
 }

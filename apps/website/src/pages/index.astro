@@ -36,7 +36,7 @@ const capabilities = [
   },
 ]
 const steps = [
-  { n: '01', title: '部署并登录', detail: '自行部署 Gateway 与 Console，管理账号和设备授权。' },
+  { n: '01', title: '部署并登录', detail: '自行部署 Server 与 Console，管理账号和设备授权。' },
   { n: '02', title: '连接本地设备', detail: '启动 Runtime，完成配对并选择允许访问的工作区。' },
   { n: '03', title: '连接 AI 客户端', detail: '通过 MCP 和 OAuth 授权，在 AI 对话中调用开发工具。' },
 ]
@@ -82,7 +82,7 @@ const steps = [
             </div>
             <div class="hero-meta"><span><i></i> 本地执行</span><span><i></i> 显式授权</span><span><i></i> 可自行部署</span></div>
           </div>
-          <div class="product-visual" aria-label="AI 客户端通过 RCM Gateway 与本地 Runtime 交互的示意图">
+          <div class="product-visual" aria-label="AI 客户端通过 RCM Server 与本地 Runtime 交互的示意图">
             <div class="visual-top"><div class="visual-dots" aria-hidden="true"><i></i><i></i><i></i></div><span>REMOTE CODE / CONNECTION</span><span class="visual-online"><span></span> ONLINE</span></div>
             <div class="visual-body">
               <div class="visual-intro"><div><span class="visual-eyebrow">WORKSPACE SESSION</span><strong>连接你的开发环境</strong></div><span class="visual-tag">AUTHORIZED</span></div>
@@ -92,7 +92,7 @@ const steps = [
                 <span class="agent-state">已授权</span>
               </div>
               <div class="visual-connector"><span></span><em>OAuth 2.0 / MCP</em><span></span></div>
-              <div class="visual-gateway"><span class="gateway-symbol">◇</span><div><small>REMOTE GATEWAY</small><strong>RCM Server</strong></div><span class="gateway-status">●</span></div>
+              <div class="visual-gateway"><span class="gateway-symbol">◇</span><div><small>REMOTE SERVER</small><strong>RCM Server</strong></div><span class="gateway-status">●</span></div>
               <div class="visual-connector"><span></span><em>Outbound WebSocket</em><span></span></div>
               <div class="visual-runtime"><div class="runtime-icon">▣</div><div><small>YOUR LOCAL DEVICE</small><strong>Local Runtime</strong></div><span class="runtime-check">✓</span></div>
               <div class="visual-tools"><span><b>↳</b> file.read</span><span><b>⌁</b> git.diff</span><span><b>›_</b> command.run</span></div>
@@ -129,14 +129,14 @@ const steps = [
 
       <section class="section workflow" id="workflow">
         <div class="container workflow-grid">
-          <div class="workflow-copy"><span class="eyeline"><span class="eyeline-mark"></span> HOW IT WORKS</span><h2>简单连接。<br /><span>始终可控。</span></h2><p>Runtime 主动与 Gateway 建立出站连接，本地工作区不需要开放入站端口。远程身份验证和本地授权检查相互配合。</p><a class="text-link" href={docsUrl}>查看完整接入指南 <span aria-hidden="true">↗</span></a></div>
+          <div class="workflow-copy"><span class="eyeline"><span class="eyeline-mark"></span> HOW IT WORKS</span><h2>简单连接。<br /><span>始终可控。</span></h2><p>Runtime 主动与 Server 建立出站连接，本地工作区不需要开放入站端口。远程身份验证和本地授权检查相互配合。</p><a class="text-link" href={docsUrl}>查看完整接入指南 <span aria-hidden="true">↗</span></a></div>
           <div class="step-list">{steps.map((step) => <article class="step"><span class="step-index">{step.n}</span><div><h3>{step.title}</h3><p>{step.detail}</p></div><span class="step-arrow" aria-hidden="true">↗</span></article>)}</div>
         </div>
       </section>
 
       <section class="section security" id="security">
         <div class="container">
-          <div class="security-panel"><div class="security-symbol" aria-hidden="true">◎</div><div class="security-main"><span class="eyeline">DESIGNED FOR CONTROL</span><h2>每一次访问，<br />都有明确的边界。</h2><p>Gateway 验证用户、设备和工作区归属；本地 Runtime 再执行读写权限、工具策略与审批规则。文件内容不会作为云端业务数据持久化。</p><p class="security-caution">安全说明：Gateway 可以接触转发内容；命令按 Runtime 进程账号权限执行，审批不等同于操作系统沙箱。</p><a class="security-link" href={docsUrl}>了解使用与安全说明 <span aria-hidden="true">↗</span></a></div><div class="security-decoration" aria-hidden="true"><div class="shield-rings"><div><span>✓</span></div></div><span>AUTHENTICATE → AUTHORIZE → EXECUTE</span></div></div>
+          <div class="security-panel"><div class="security-symbol" aria-hidden="true">◎</div><div class="security-main"><span class="eyeline">DESIGNED FOR CONTROL</span><h2>每一次访问，<br />都有明确的边界。</h2><p>Server 验证用户、设备和工作区归属；本地 Runtime 再执行读写权限、工具策略与审批规则。文件内容不会作为云端业务数据持久化。</p><p class="security-caution">安全说明：Server 可以接触转发内容；命令按 Runtime 进程账号权限执行，审批不等同于操作系统沙箱。</p><a class="security-link" href={docsUrl}>了解使用与安全说明 <span aria-hidden="true">↗</span></a></div><div class="security-decoration" aria-hidden="true"><div class="shield-rings"><div><span>✓</span></div></div><span>AUTHENTICATE → AUTHORIZE → EXECUTE</span></div></div>
         </div>
       </section>
 

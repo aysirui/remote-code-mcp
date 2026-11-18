@@ -9,7 +9,7 @@ import { WebSocketServer, type WebSocket } from 'ws'
 import type { RpcResponse } from '@rcm/protocol'
 import type { WriteApprovalInfo } from '../src/requests/write-approvals'
 
-/** 启动真正的 Runtime，用临时 Gateway 与本机审批 API 验证完整执行路径。 */
+/** 启动真正的 Runtime，用临时 Server 与本机审批 API 验证完整执行路径。 */
 test('远程临时命令必须经本机审批；拒绝、过期和权限撤销均不执行', async () => {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'rcm-command-flow-'))
   const root = path.join(base, 'project')
@@ -49,7 +49,7 @@ test('远程临时命令必须经本机审批；拒绝、过期和权限撤销�
       servers: [
         {
           id: serverId,
-          name: '测试 Gateway',
+          name: '测试 Server',
           gateway: `http://127.0.0.1:${(gateway.address() as { port: number }).port}`,
           deviceId: randomUUID(),
           deviceToken: 'test-device-token',
@@ -159,7 +159,7 @@ test('远程临时命令必须经本机审批；拒绝、过期和权限撤销�
     await api('write-approvals/' + (await approval()).id, { approve: false })
     expect(await waitFor(() => responses.get(deniedId))).toMatchObject({
       success: false,
-      error: { message: 'APPROVAL_DENIED_OR_EXPIRED' },
+      error: { message: 'APPROVAL_DENIED' },
     })
     const expiredId = send(payload('expired.txt'), 150)
     const expiring = await approval()

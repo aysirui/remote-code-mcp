@@ -5,9 +5,13 @@ import type { LocalCommand, LocalWorkspace } from '../../workspace/state'
 import { commandExecutionProvider } from './command-provider'
 import {
   CommandRunInputSchema,
+  COMMAND_MAX_TIMEOUT_MS,
+  COMMAND_OUTPUT_LIMIT_BYTES,
   sanitizeCommandAudit,
   type CommandAudit,
+  type CommandResultErrorCode,
   type CommandRunInput,
+  type ToolOutput,
 } from '@rcm/protocol'
 import { policyForOperation } from '../../workspace/state'
 
@@ -18,21 +22,21 @@ const builtins: Record<string, LocalCommand> = {
     name: '类型检查',
     executable: 'pnpm',
     args: ['run', 'typecheck'],
-    timeoutMs: 120_000,
+    timeoutMs: 600_000,
   },
   test: {
     id: 'test',
     name: '运行测试',
     executable: 'pnpm',
     args: ['run', 'test'],
-    timeoutMs: 180_000,
+    timeoutMs: 600_000,
   },
   build: {
     id: 'build',
     name: '项目构建',
     executable: 'pnpm',
     args: ['run', 'build'],
-    timeoutMs: 180_000,
+    timeoutMs: 600_000,
   },
   format: {
     id: 'format',
@@ -66,7 +70,7 @@ export function validateLocalCommand(input: unknown): LocalCommand {
     (timeoutMs !== undefined &&
       (!Number.isSafeInteger(timeoutMs) ||
         (timeoutMs as number) < 1000 ||
-        (timeoutMs as number) > 240_000)) ||
+        (timeoutMs as number) > COMMAND_MAX_TIMEOUT_MS)) ||
     !Array.isArray(args) ||
     args.length > 20 ||
     !args.every((arg) => typeof arg === 'string' && arg.length <= 500 && !/[\r\n\0]/.test(arg))
@@ -128,11 +132,19 @@ export function commandFingerprint(command: LocalCommand): string {
   return createHash('sha256').update(JSON.stringify(command)).digest('hex')
 }
 
-/** 普通命令默认 20 秒；已登记的构建/测试命令可配置更长时间（最长 4 分钟）。 */
-export const COMMAND_TIMEOUT_MS = 20_000
+/** 未设置独立超时的登记项及临时命令默认执行 60 秒。 */
+export const COMMAND_TIMEOUT_MS = 60_000
 
-/** 命令输出最多保留 48 KiB，避免大量日志占用 Runtime 内存或返回过大 RPC 响应。 */
-const COMMAND_OUTPUT_LIMIT_BYTES = 48 * 1024
+/** 已启动命令失败，可保留执行结果以回复发起调用的客户端，不用于日志。 */
+export class CommandResultError extends Error {
+  /** @param code 稳定失败码。 @param result 已校验的、限长的命令结果。 */
+  constructor(
+    code: CommandResultErrorCode,
+    readonly result: ToolOutput<'command.run'>,
+  ) {
+    super(code)
+  }
+}
 
 /**
  * 以 Runtime 账号权限执行登记命令或经过单次审批的临时命令，不提供 OS 隔离。
@@ -141,6 +153,8 @@ const COMMAND_OUTPUT_LIMIT_BYTES = 48 * 1024
  * @param input 登记命令 ID 或临时程序及参数
  * @param approvalResourceHash 本机审批生成的命令指纹，不接受远程传入
  * @param timeoutMs 内部测试可覆盖超时；生产优先使用本机登记项的 timeoutMs
+ * @param onExecution 执行前接收脱敏审计元数据，不包含命令输出
+ * @returns 退出码、限长输出及供 RPC 层区分失败原因的超时状态
  */
 export async function runCheckedCommand(
   w: LocalWorkspace,
@@ -158,7 +172,7 @@ export async function runCheckedCommand(
   if (
     !Number.isSafeInteger(effectiveTimeoutMs) ||
     effectiveTimeoutMs <= 0 ||
-    effectiveTimeoutMs > 240_000
+    effectiveTimeoutMs > COMMAND_MAX_TIMEOUT_MS
   )
     throw Error('INVALID_COMMAND_TIMEOUT')
   const root = await fs.realpath(w.root)
@@ -177,18 +191,23 @@ export async function runCheckedCommand(
     GIT_PAGER: 'cat',
   }
   onExecution?.(sanitizeCommandAudit(selected))
-  const result = await commandExecutionProvider.run({
-    executable: selected.executable,
-    args: selected.args,
-    cwd: root,
-    env,
-    timeoutMs: effectiveTimeoutMs,
-    outputLimitBytes: COMMAND_OUTPUT_LIMIT_BYTES,
-  })
+  const result = await commandExecutionProvider
+    .run({
+      executable: selected.executable,
+      args: selected.args,
+      cwd: root,
+      env,
+      timeoutMs: effectiveTimeoutMs,
+      outputLimitBytes: COMMAND_OUTPUT_LIMIT_BYTES,
+    })
+    .catch((cause: unknown) => {
+      throw Error('COMMAND_START_FAILED', { cause })
+    })
   return {
     command: 'command' in input ? input.command : selected.executable,
     exitCode: result.exitCode,
-    output: result.timedOut ? result.output + '\nCOMMAND_TIMEOUT' : result.output,
+    output: result.output,
     truncated: result.truncated,
+    timedOut: result.timedOut,
   }
 }

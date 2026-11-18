@@ -1,6 +1,6 @@
 # 部署指南
 
-本指南面向单 Gateway 实例部署。项目阶段和信任边界见 [README](https://github.com/aysirui/remote-code-mcp/blob/main/README.md) 与 [SECURITY.md](https://github.com/aysirui/remote-code-mcp/blob/main/SECURITY.md)。
+本指南面向单 Server 实例部署。项目阶段和信任边界见 [README](https://github.com/aysirui/remote-code-mcp/blob/main/README.md) 与 [SECURITY.md](https://github.com/aysirui/remote-code-mcp/blob/main/SECURITY.md)。
 
 ## 环境配置
 
@@ -12,7 +12,7 @@ Server 环境变量优先级为：系统环境变量 → `apps/server/.env` → 
 | ----------------------------------------- | --------------------------------------------------------------------------------- |
 | `DATABASE_URL`                            | Server 数据库连接；Compose 根据 MySQL 配置构造                                    |
 | `APP_SECRET`                              | 必填，至少 32 字符的随机密钥                                                      |
-| `PUBLIC_URL`                              | Gateway 外部地址；本地默认 `http://localhost:3000`                                |
+| `PUBLIC_URL`                              | Server 外部地址；本地默认 `http://localhost:3000`                                 |
 | `CONSOLE_URL`                             | Console 外部地址，也用于邮箱激活链接；本地默认 `http://localhost:5173`            |
 | `ADMIN_EMAIL`                             | 首个管理员邮箱；该地址不能通过公开注册获得管理员权限                              |
 | `PORT`                                    | Server 端口，默认 3000；Compose 固定为 3000                                       |
@@ -93,6 +93,8 @@ Server 容器启动顺序：
 构建时可通过 `WEBSITE_URL` 配置官网公开地址，`DOCS_URL` 配置控制台导航使用的在线文档绝对地址。官网控制台按钮使用 `CONSOLE_URL`，文档默认公共路径为 `/docs/`。请设置公开访问地址，不要填写容器内部地址或密钥。
 
 建议的公开路径为：官网 `/`、文档 `/docs/`、MCP `/mcp`、REST API `/api/*`、OAuth `/oauth/*`，Console 使用独立域名。代理层需要保留 OAuth 元数据发现路径、健康检查和 WebSocket Upgrade，同时支持 MCP 流式响应。
+
+长命令和细分错误码建议先升级 Server，再升级 Runtime；旧 Runtime 的成功响应不会被重新解读为失败。要支持最长命令及审批，检查 MCP 客户端、反向代理和上游网关对 `/mcp` 的等待限制是否能覆盖 Server 的 25 分钟 15 秒预算及网络余量。若调用仍在约 30 秒中断，分别检查客户端和代理，不要仅提高 Runtime 的命令超时。
 
 本地运行 `pnpm dev:website` 开发官网，`pnpm docs:dev` 开发文档。运行 `pnpm docs:build` 生成文档；根目录 `pnpm build` 同时包含官网与文档构建。
 

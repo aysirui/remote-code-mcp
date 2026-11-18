@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
+import { StringDecoder } from 'node:string_decoder'
 
 /** 保留参数数组语义，并处理 Windows 的 pnpm.cmd 等命令启动器。 */
 const spawnCommand = createRequire(__filename)('cross-spawn') as typeof spawn
@@ -16,9 +17,13 @@ export interface CommandExecutionRequest {
 
 /** 执行结果只返回有限长度的合并输出，不暴露子进程对象或本地运行环境。 */
 export interface CommandExecutionResult {
+  /** 进程退出码，信号终止或无法取得退出码时为 null。 */
   exitCode: number | null
+  /** 已收集的标准输出和标准错误，UTF-8 字节数不超过请求上限。 */
   output: string
+  /** 输出是否因大小限制而截断。 */
   truncated: boolean
+  /** 进程是否在执行时限内未退出；优先于退出码解释结果。 */
   timedOut: boolean
 }
 
@@ -85,40 +90,64 @@ export class SpawnCommandExecutionProvider implements CommandExecutionProvider {
         detached: process.platform !== 'win32',
         windowsHide: true,
       })
-      let output = ''
+      const chunks: Buffer[] = []
+      let collectedBytes = 0
       let truncated = false
       const collect = (chunk: Buffer) => {
-        const remaining = request.outputLimitBytes - Buffer.byteLength(output, 'utf8')
-        if (remaining <= 0) {
-          truncated = true
-          return
+        const remaining = request.outputLimitBytes - collectedBytes
+        if (chunk.length > remaining) truncated = true
+        if (remaining > 0) {
+          const collected = chunk.subarray(0, remaining)
+          chunks.push(collected)
+          collectedBytes += collected.length
         }
-        const bytes = Buffer.from(chunk)
-        if (bytes.length > remaining) truncated = true
-        output += bytes.subarray(0, remaining).toString('utf8')
       }
       child.stdout?.on('data', collect)
       child.stderr?.on('data', collect)
 
       let timedOut = false
       let forceTimer: ReturnType<typeof setTimeout> | undefined
-      // 超时先发送 TERM，留出清理时间后再发送 KILL；子进程退出时清除两个计时器。
+      let cleanupTimer: ReturnType<typeof setTimeout> | undefined
+      // 先尝试结束进程树，再强制结束；子进程继承的管道仍不关闭时也要及时返回超时结果。
       const timer = setTimeout(() => {
         timedOut = true
         terminateProcessTree(child)
-        forceTimer = setTimeout(() => terminateProcessTree(child, true), 1500)
+        forceTimer = setTimeout(() => {
+          terminateProcessTree(child, true)
+          cleanupTimer = setTimeout(() => {
+            child.off('close', finish)
+            child.stdout?.destroy()
+            child.stderr?.destroy()
+            child.unref()
+            finish(child.exitCode)
+          }, 1500)
+        }, 1500)
       }, request.timeoutMs)
 
-      child.on('error', (error) => {
+      /** 统一释放等待计时器，保留结束前已收集的输出。 */
+      function finish(code: number | null) {
         clearTimeout(timer)
         if (forceTimer) clearTimeout(forceTimer)
+        if (cleanupTimer) clearTimeout(cleanupTimer)
+        const decoded = Buffer.from(Buffer.concat(chunks, collectedBytes).toString('utf8'))
+        // 不完整或非法的 UTF-8 字节可能扩展成替代字符；再次按字节限长，不切断字符。
+        const output = new StringDecoder('utf8').write(
+          decoded.subarray(0, request.outputLimitBytes),
+        )
+        resolve({
+          exitCode: code,
+          output,
+          truncated: truncated || decoded.length > request.outputLimitBytes,
+          timedOut,
+        })
+      }
+
+      child.on('error', (error) => {
+        if (timedOut) return
+        clearTimeout(timer)
         reject(error)
       })
-      child.on('close', (code) => {
-        clearTimeout(timer)
-        if (forceTimer) clearTimeout(forceTimer)
-        resolve({ exitCode: code, output, truncated, timedOut })
-      })
+      child.on('close', finish)
     })
   }
 }

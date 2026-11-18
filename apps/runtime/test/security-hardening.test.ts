@@ -16,6 +16,7 @@ import { LocalEvents } from '../src/local/local-events'
 import { WriteApprovalQueue } from '../src/requests/write-approvals'
 import type { LocalWorkspace } from '../src/workspace/state'
 import type { RpcRequest } from '@rcm/protocol'
+import { logger } from '../src/logger'
 
 let base: string
 let root: string
@@ -75,13 +76,17 @@ test('本地管理 API 的大小写变体均不能绕过令牌，写入审批也
     workspace(),
   )
   const approval = approvals.list()[0]
+  let statusError = false
   const server = startLocalServer({
     port: 0,
     localKey: 'test-local-key',
     config: { version: 2, name: '测试', activeServerId: 'server', servers: [], workspaces: [] },
     approvals,
     events: new LocalEvents(),
-    status: () => ({ private: 'status' }),
+    status: () => {
+      if (statusError) throw Error('private-status-value')
+      return { private: 'status' }
+    },
     disconnect: () => {},
     connect: () => {},
     sync: async () => {},
@@ -110,6 +115,7 @@ test('本地管理 API 的大小写变体均不能绕过令牌，写入审批也
       req.on('error', reject)
       req.end(post ? JSON.stringify({ approve: true }) : undefined)
     })
+  const logs = jest.spyOn(logger, 'error').mockImplementation(() => undefined)
   try {
     for (const prefix of ['/local/api', '/LOCAL/API', '/Local/Api']) {
       expect(await request(prefix + '/status')).toBe(401)
@@ -118,7 +124,22 @@ test('本地管理 API 的大小写变体均不能绕过令牌，写入审批也
     expect(approvals.list()).toHaveLength(1)
     expect(await request('/local/api/status', 'wrong-key')).toBe(401)
     expect(await request('/local/api/status', 'test-local-key')).toBe(200)
+    statusError = true
+    expect(await request('/local/api/status?token=private-query', 'test-local-key')).toBe(500)
+    expect(logs).toHaveBeenCalledWith(
+      'local.request.exception',
+      expect.objectContaining({
+        code: 'LOCAL_INTERNAL_ERROR',
+        err: expect.objectContaining({ message: 'private-status-value' }),
+      }),
+    )
+    expect(logs).toHaveBeenCalledWith(
+      'local.request.failed',
+      expect.objectContaining({ httpStatus: 500, route: '/status', method: 'GET' }),
+    )
+    expect(JSON.stringify(logs.mock.calls)).not.toMatch(/private-query|test-local-key/)
   } finally {
+    logs.mockRestore()
     approvals.cancelAll()
     await pending
     await new Promise<void>((resolve) => server.close(() => resolve()))

@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
+import { DeviceRpcError } from '../device/device-rpc-pending'
 
 /**
  * 统一包装 MCP 工具的文本结果、结构化结果和异常响应，保持现有协议格式。
@@ -32,11 +33,19 @@ export function createMcpToolRegistrar(server: McpServer) {
             structuredContent: objectData ?? { value: data },
           }
         } catch (error: unknown) {
+          const code =
+            error instanceof DeviceRpcError
+              ? error.message
+              : error instanceof z.ZodError
+                ? 'INVALID_TOOL_ARGUMENTS'
+                : 'TOOL_EXECUTION_FAILED'
+          const result = error instanceof DeviceRpcError ? error.commandResult : undefined
           return {
             content: [
               {
                 type: 'text' as const,
-                text: error instanceof Error ? error.message : String(error),
+                // 命令失败仍回传已校验的结果，仅供本次调用读取；其他异常只回传公开错误码。
+                text: result ? JSON.stringify({ code, ...result }) : code,
               },
             ],
             isError: true,

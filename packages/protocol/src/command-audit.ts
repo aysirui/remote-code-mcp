@@ -62,7 +62,7 @@ export interface CommandAudit {
   args: string[]
 }
 
-/** Runtime 在发送前脱敏，Gateway 持久化前再次调用；重复脱敏不会恢复任何原值。 */
+/** Runtime 在发送前脱敏，Server 持久化前再次调用；重复脱敏不会恢复任何原值。 */
 export function sanitizeCommandAudit(command: CommandAudit): CommandAudit {
   const base =
     command.executable

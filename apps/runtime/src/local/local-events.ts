@@ -5,7 +5,7 @@ export type LocalEventName = 'status' | 'workspaces' | 'write-approvals'
 
 /**
  * Runtime 与本地管理页面之间的事件总线。
- * 由 SSE 订阅者监听；事件只通知已授权的本地浏览器，不转发到 Gateway。
+ * 由 SSE 订阅者监听；事件只通知已授权的本地浏览器，不转发到 Server。
  */
 export class LocalEvents {
   private readonly emitter = new EventEmitter()

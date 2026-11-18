@@ -13,7 +13,7 @@ export function isStaleDeviceCredentialResponse(
 }
 
 /**
- * Runtime 发往云端 Gateway 的受控 HTTP 客户端。
+ * Runtime 发往云端 Server 的受控 HTTP 客户端。
  * 设备配对仅使用明确的服务端地址，远程连接一律要求 HTTPS；
  * 本机开发可使用 localhost / 127.0.0.1 的 HTTP。
  */
@@ -28,7 +28,7 @@ export async function postGateway<T = unknown>(
     gateway.protocol !== 'https:' &&
     !(gateway.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(gateway.hostname))
   )
-    throw Error('HTTPS gateway required')
+    throw Error('远程服务器必须使用 HTTPS')
   if (
     !endpoint.startsWith('/api/device/pairing/') &&
     !(endpoint === '/api/device/unpair' && deviceToken)
@@ -65,20 +65,20 @@ export async function postGateway<T = unknown>(
       }
 
       const reason = status
-        ? 'Gateway HTTP ' + status + (detail ? ': ' + detail : '')
+        ? '服务器返回 HTTP ' + status + (detail ? ': ' + detail : '')
         : error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT'
-          ? 'Gateway 请求超时'
+          ? '服务器 请求超时'
           : error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN'
-            ? 'Gateway DNS 解析失败'
+            ? '服务器 DNS 解析失败'
             : error.code === 'ECONNREFUSED'
-              ? 'Gateway 连接被拒绝'
+              ? '服务器 连接被拒绝'
               : error.code === 'ECONNRESET'
-                ? 'Gateway 连接被重置'
+                ? '服务器 连接被重置'
                 : error.code?.startsWith('ERR_TLS_') ||
                     error.code?.startsWith('CERT_') ||
                     error.code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE'
-                  ? 'Gateway TLS 证书校验失败'
-                  : 'Gateway 网络请求失败' + (error.code ? ' (' + error.code + ')' : '')
+                  ? '服务器 TLS 证书校验失败'
+                  : '服务器 网络请求失败' + (error.code ? ' (' + error.code + ')' : '')
       throw new Error(reason, { cause: error })
     }
     throw error

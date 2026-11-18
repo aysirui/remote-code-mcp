@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { randomUUID } from 'node:crypto'
+import { logger } from '../logger'
 import type { WorkspacePublic, WorkspacePolicies, AccessPolicy } from '@rcm/protocol'
 
 /** 仅由本地用户配置的固定可执行命令，不同步给云端设备元数据。 */
@@ -10,11 +11,11 @@ export interface LocalCommand {
   name: string
   executable: string
   args: string[]
-  /** 本机登记命令的最长运行时间（毫秒），不接受远程请求覆盖。 */
+  /** 本机登记命令的执行时限（1,000–1,200,000 毫秒）；不接受远程覆盖。 */
   timeoutMs?: number
 }
 
-/** 本机工作区模型包含 root 绝对路径；该字段仅供 Runtime 使用，禁止同步至 Gateway。 */
+/** 本机工作区模型包含 root 绝对路径；该字段仅供 Runtime 使用，禁止同步至 Server。 */
 export type LocalWorkspace = WorkspacePublic & {
   root: string
   policies: WorkspacePolicies
@@ -272,6 +273,7 @@ export async function load(): Promise<Config> {
       workspaces: [],
     }
     config.activeServerId = addServer(config, process.env.GATEWAY_URL || 'http://localhost:3000').id
+    logger.debug('runtime.config.defaulted')
     return config
   }
   const raw = JSON.parse(text)
@@ -286,6 +288,7 @@ export async function load(): Promise<Config> {
       if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error
     }
     await save(config)
+    logger.info('runtime.config.migrated')
   }
   return config
 }

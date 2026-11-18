@@ -57,7 +57,7 @@ test('审批等待上限为五分钟', () => {
 test('审批详情只在待处理期间存在，结束后立即从队列移除', async () => {
   const queue = new WriteApprovalQueue()
   const pending = queue.request(
-    request,
+    { ...request, deadlineAt: Date.now() + WRITE_APPROVAL_TIMEOUT_MS + 2000 },
     workspace({ file: 'approval', git: 'allow', command: 'approval' }),
   )
   const [approval] = queue.list()
@@ -65,8 +65,27 @@ test('审批详情只在待处理期间存在，结束后立即从队列移除',
   expect(approval.path).toBe('README.md')
   expect(approval.workspaceName).toBe('demo')
   queue.answer(approval.id, false)
-  await expect(pending).resolves.toMatchObject({ approved: false, requestHash: expect.any(String) })
+  await expect(pending).resolves.toMatchObject({
+    approved: false,
+    errorCode: 'APPROVAL_DENIED',
+    requestHash: expect.any(String),
+  })
   expect(queue.list()).toHaveLength(0)
+})
+
+test('普通工具在 Server 等待超时前返回审批过期', async () => {
+  jest.useFakeTimers()
+  try {
+    const queue = new WriteApprovalQueue()
+    const deadlineAt = Date.now() + WRITE_APPROVAL_TIMEOUT_MS
+    const pending = queue.request({ ...request, deadlineAt }, workspace())
+    expect(queue.list()[0].expiresAt).toBe(deadlineAt - 1000)
+    jest.advanceTimersByTime(WRITE_APPROVAL_TIMEOUT_MS - 1000)
+    await expect(pending).resolves.toMatchObject({ approved: false, errorCode: 'APPROVAL_EXPIRED' })
+    expect(queue.list()).toHaveLength(0)
+  } finally {
+    jest.useRealTimers()
+  }
 })
 
 test('切换写入策略时可立即取消旧的人工审批请求', async () => {

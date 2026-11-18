@@ -26,6 +26,7 @@
     "@rcm/protocol": "workspace:*",
     "cross-spawn": "7.0.6",
     "express": "^5.1.0",
+    "pino": "^10.4.0",
     "ws": "catalog:",
     "zod": "catalog:",
     "vue": "catalog:",

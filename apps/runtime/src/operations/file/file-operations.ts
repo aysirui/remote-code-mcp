@@ -3,6 +3,7 @@ import path from 'node:path'
 import { constants } from 'node:fs'
 import { randomUUID, createHash } from 'node:crypto'
 import type { LocalWorkspace } from '../../workspace/state'
+import { logger } from '../../logger'
 import {
   resolveSafe,
   isSensitive,
@@ -139,9 +140,9 @@ export async function writeChecked(
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
   }
-  if (previous === undefined && expected) throw Error('FILE_CONFLICT: file absent')
+  if (previous === undefined && expected) throw Error('FILE_CONFLICT')
   if (previous !== undefined && (!expected || sha(previous) !== expected))
-    throw Error('FILE_CONFLICT: expectedSha256 required for replacement')
+    throw Error('FILE_CONFLICT')
 
   const temporary = path.join(path.dirname(target), '.rcm-' + randomUUID() + '.tmp')
   const fd = await fs.open(
@@ -164,14 +165,19 @@ export async function writeChecked(
     } else {
       try {
         await fs.lstat(target)
-        throw Error('FILE_CONFLICT: file appeared')
+        throw Error('FILE_CONFLICT')
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
       }
     }
     await fs.rename(temporary, target)
   } finally {
-    await fs.rm(temporary, { force: true }).catch(() => {})
+    await fs.rm(temporary, { force: true }).catch((error: unknown) => {
+      logger.error('file.temporary.cleanup_failed', {
+        code: 'FILE_TEMP_CLEANUP_FAILED',
+        err: error,
+      })
+    })
   }
   return { path: relative, sha256: sha(content), written: true }
 }

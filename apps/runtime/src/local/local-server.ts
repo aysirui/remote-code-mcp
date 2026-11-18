@@ -1,4 +1,4 @@
-import express from 'express'
+import express, { type ErrorRequestHandler } from 'express'
 import { registerWorkspaceRoutes } from './workspace-routes'
 import { registerServerRoutes } from './server-routes'
 import { registerEventsRoutes } from './events-routes'
@@ -6,6 +6,7 @@ import path from 'node:path'
 import type { Config } from '../workspace/state'
 import type { WriteApprovalQueue } from '../requests/write-approvals'
 import type { LocalEvents } from './local-events'
+import { logger } from '../logger'
 
 /** 本地管理 HTTP Server 的外部依赖，由 Runtime 主入口注入以避免全局状态耦合。 */
 export interface LocalServerOptions {
@@ -30,6 +31,25 @@ export function startLocalServer(options: LocalServerOptions) {
   const app = express()
   app.enable('case sensitive routing')
   app.disable('x-powered-by')
+  app.use((req, res, next) => {
+    if (/^\/local\/api(?:\/|$)/i.test(req.path)) {
+      const startedAt = Date.now()
+      res.once('finish', () => {
+        // 仅使用 Express 的注册模板，不输出路径参数或查询字符串。
+        const route: unknown = req.route?.path
+        const details = {
+          method: req.method,
+          route: typeof route === 'string' ? route : undefined,
+          httpStatus: res.statusCode,
+          durationMs: Date.now() - startedAt,
+          err: res.locals.diagnosticError as unknown,
+        }
+        if (res.statusCode >= 400) logger.error('local.request.failed', details)
+        else logger.debug('local.request.completed', details)
+      })
+    }
+    next()
+  })
   app.use(express.json({ limit: '1mb' }))
 
   /** 同源检查必须优先于 API 路由处理；Token 不得被转发至外部域名。 */
@@ -114,7 +134,27 @@ export function startLocalServer(options: LocalServerOptions) {
   app.use(express.static(ui))
   app.get('/{*splat}', (_req, res) => res.sendFile(path.join(ui, 'index.html')))
 
+  /** Express 捕获的异常不属于进程崩溃；只返回固定错误码，不把异常栈写入 HTTP 响应。 */
+  const handleLocalError: ErrorRequestHandler = (error: unknown, _req, res, _next) => {
+    const status =
+      error && typeof error === 'object' && 'status' in error ? error.status : undefined
+    const httpStatus =
+      typeof status === 'number' && Number.isInteger(status) && status >= 400 && status < 600
+        ? status
+        : 500
+    const code = httpStatus >= 500 ? 'LOCAL_INTERNAL_ERROR' : 'LOCAL_REQUEST_INVALID'
+    logger.error('local.request.exception', { code, httpStatus, err: error })
+    if (res.headersSent) res.destroy()
+    else
+      res
+        .status(httpStatus)
+        .json({ code, error: httpStatus >= 500 ? '本地服务内部错误' : '本地请求无效' })
+  }
+  app.use(handleLocalError)
+
   return app.listen(port, '127.0.0.1', () => {
+    logger.info('runtime.local_server.listening', { port })
+    // 凭据仅通过现有本机启动提示交付，不进入诊断日志。
     console.log(`Local UI: http://127.0.0.1:${port}/#token=${localKey}`)
     console.log('This URL is private; do not share its token.')
   })

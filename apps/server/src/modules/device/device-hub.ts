@@ -1,6 +1,6 @@
 import {
   Injectable,
-  BadRequestException,
+  HttpException,
   Optional,
   type OnApplicationBootstrap,
   type OnApplicationShutdown,
@@ -9,17 +9,19 @@ import { HttpAdapterHost } from '@nestjs/core'
 import { WebSocketServer, WebSocket } from 'ws'
 import type { Server as HttpServer, IncomingMessage } from 'node:http'
 import { URL } from 'node:url'
-import type { RpcRequest } from '@rcm/protocol'
-import { type CommandAudit } from '@rcm/protocol'
+import {
+  COMMAND_RPC_TIMEOUT_MS,
+  RPC_APPROVAL_TIMEOUT_MS,
+  type RpcRequest,
+  type CommandAudit,
+} from '@rcm/protocol'
 import { Store } from '../../infrastructure/database/store'
 import { uid } from '../../common/security'
 import { authenticateDevice } from './device-auth'
 import { authorizeDeviceRpc } from './device-rpc-authorization'
 import { synchronizeDeviceHello, StaleDeviceConnectionError } from './device-workspace-sync'
-import { DeviceRpcPending } from './device-rpc-pending'
+import { DeviceRpcError, DeviceRpcPending } from './device-rpc-pending'
 import { recordDeviceOperation } from './device-operation-audit'
-
-const RPC_TIMEOUT_MS = 5 * 60 * 1000
 
 /** 设备通道与 RPC 路由服务；不持久化任何工具参数或执行结果正文。 */
 @Injectable()
@@ -181,7 +183,9 @@ export class DeviceHub implements OnApplicationBootstrap, OnApplicationShutdown 
       deviceId = await authorizeDeviceRpc(this.store, userId, workspaceId, operation)
       const socket = this.sockets.get(deviceId)
       if (!socket || socket.readyState !== WebSocket.OPEN)
-        throw new BadRequestException('DEVICE_OFFLINE')
+        throw new DeviceRpcError('DEVICE_OFFLINE')
+      const timeoutMs =
+        operation === 'command.run' ? COMMAND_RPC_TIMEOUT_MS : RPC_APPROVAL_TIMEOUT_MS
       const request: RpcRequest = {
         kind: 'request',
         version: 1,
@@ -189,17 +193,23 @@ export class DeviceHub implements OnApplicationBootstrap, OnApplicationShutdown 
         workspaceId,
         operation,
         payload,
-        deadlineAt: Date.now() + RPC_TIMEOUT_MS,
+        deadlineAt: Date.now() + timeoutMs,
       }
-      const result = await this.rpc.send(socket, deviceId, request, RPC_TIMEOUT_MS, (command) => {
+      const result = await this.rpc.send(socket, deviceId, request, timeoutMs, (command) => {
         if (operation === 'command.run') commandAudit = command
       })
       status = 'success'
       return result
     } catch (error) {
-      const candidate = error instanceof Error ? error.message : ''
-      errorCode = /^[A-Z][A-Z0-9_]{1,63}$/.test(candidate) ? candidate : 'EXECUTION_FAILED'
-      throw error
+      if (error instanceof DeviceRpcError) {
+        errorCode = error.message
+        throw error
+      }
+      const candidate = error instanceof HttpException ? error.message : ''
+      errorCode = ['WORKSPACE_NOT_FOUND', 'PERMISSION_DENIED', 'DEVICE_REVOKED'].includes(candidate)
+        ? candidate
+        : 'EXECUTION_FAILED'
+      throw new DeviceRpcError(errorCode)
     } finally {
       // 保留在响应前等待一次审计写入的既有行为。
       await recordDeviceOperation(this.store, {

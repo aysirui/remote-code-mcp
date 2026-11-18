@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import type { WebSocket } from 'ws'
-import type { RpcRequest } from '@rcm/protocol'
+import { COMMAND_OUTPUT_LIMIT_BYTES, type RpcRequest } from '@rcm/protocol'
 import { DeviceRpcPending } from '../src/modules/device/device-rpc-pending'
 
 /** 模拟 WebSocket 发送与重连，确保请求只由对应连接完成。 */
@@ -105,6 +105,47 @@ describe('DeviceRpcPending 请求生命周期', () => {
       expect(audit).not.toHaveBeenCalled()
     } finally {
       jest.useRealTimers()
+    }
+  })
+
+  test('仅转发匹配的 command.run 失败中的有效限长结果', async () => {
+    const pending = new DeviceRpcPending()
+    const ws = socket()
+    const data = { command: 'build', exitCode: null, output: '部分输出', truncated: false }
+    for (const [operation, code, result] of [
+      ['command.run', 'COMMAND_TIMEOUT', { ...data, privateField: '不属于结果' }],
+      ['file.read', 'COMMAND_TIMEOUT', data],
+      ['command.run', 'COMMAND_START_FAILED', data],
+      [
+        'command.run',
+        'COMMAND_TIMEOUT',
+        { ...data, output: '中'.repeat(COMMAND_OUTPUT_LIMIT_BYTES) },
+      ],
+      ['command.run', 'COMMAND_TIMEOUT', { ...data, exitCode: 'null' }],
+    ] as const) {
+      const response = pending.send(
+        ws,
+        'device-1',
+        { ...request('cmd'), operation },
+        1000,
+        jest.fn(),
+      )
+      const rejection = expect(response).rejects.toMatchObject({
+        message: code,
+        commandResult: 'privateField' in result ? data : undefined,
+      })
+      pending.accept(
+        {
+          kind: 'response',
+          id: 'cmd',
+          success: false,
+          data: result,
+          error: { code, message: '原始异常不应回传' },
+        },
+        'device-1',
+        ws,
+      )
+      await rejection
     }
   })
 })

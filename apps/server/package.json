@@ -1,7 +1,7 @@
 {
   "name": "@rcm/server",
   "version": "0.1.0",
-  "description": "Remote Code MCP 的账号、OAuth、设备连接与 MCP Gateway",
+  "description": "Remote Code MCP 的账号、OAuth、设备连接及 MCP 服务端",
   "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",

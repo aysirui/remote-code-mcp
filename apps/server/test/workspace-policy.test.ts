@@ -4,7 +4,7 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { WebSocket } from 'ws'
 import type { Request } from 'express'
-import type { RpcRequest } from '@rcm/protocol'
+import { COMMAND_RPC_TIMEOUT_MS, RPC_APPROVAL_TIMEOUT_MS, type RpcRequest } from '@rcm/protocol'
 import { NestFactory } from '@nestjs/core'
 import { AccountController } from '../src/modules/account/account.controller'
 import { AccountService } from '../src/modules/account/account.service'
@@ -110,7 +110,7 @@ test('云端工作区接口只读，修改策略或停用的请求返回 404', a
   }
 })
 
-test('Gateway 转发工具请求不附加云端审批，本地只读权限仍生效', async () => {
+test('Server 转发工具请求不附加云端审批，本地只读权限仍生效', async () => {
   const device = { id: 'device', userId: 'owner', status: 'active' }
   const store = {
     db: database(),
@@ -133,20 +133,28 @@ test('Gateway 转发工具请求不附加云端审批，本地只读权限仍生
   try {
     await once(client, 'open')
     const requests: RpcRequest[] = []
+    const commandResult = {
+      command: 'build',
+      exitCode: null,
+      output: '不可入库的命令输出',
+      truncated: true,
+    }
     client.on('message', (raw) => {
       const request = JSON.parse(raw.toString()) as RpcRequest
       requests.push(request)
+      const command = request.operation === 'command.run'
       client.send(
         JSON.stringify({
           kind: 'response',
           id: request.id,
-          success: true,
-          data: { done: true },
+          success: !command,
+          data: command ? commandResult : { done: true },
+          error: command ? { code: 'COMMAND_TIMEOUT', message: '不可入库的原始异常' } : undefined,
           commandAudit: { executable: 'pnpm', args: ['run', 'build'] },
         }),
       )
     })
-    // 三档策略都交给 Runtime 判断，Gateway 不另设审批或拒绝策略。
+    // 三档策略都交给 Runtime 判断，Server 不另设审批或拒绝策略。
     for (const policy of ['allow', 'approval', 'deny']) {
       store.one
         .mockResolvedValueOnce({ ...workspace, localFilePolicy: policy })
@@ -163,16 +171,29 @@ test('Gateway 转发工具请求不附加云端审批，本地只读权限仍生
       expect(record.commandAudit).toBeUndefined()
     }
     store.one.mockResolvedValueOnce(workspace).mockResolvedValueOnce(device)
-    await hub.execute('owner', 'ai-client', workspace.id, 'command.run', { command: 'build' })
+    const beforeCommand = Date.now()
+    await expect(
+      hub.execute('owner', 'ai-client', workspace.id, 'command.run', { command: 'build' }),
+    ).rejects.toMatchObject({
+      message: 'COMMAND_TIMEOUT',
+      commandResult,
+    })
+    const commandRequest = requests[3]
+    expect(commandRequest.deadlineAt).toBeGreaterThanOrEqual(beforeCommand + COMMAND_RPC_TIMEOUT_MS)
     expect(store.logOperation).toHaveBeenLastCalledWith(
       expect.objectContaining({
+        operationId: commandRequest.id,
         toolName: 'command_run',
+        status: 'failed',
+        errorCode: 'COMMAND_TIMEOUT',
         commandAudit: { executable: 'pnpm', args: ['run', 'build'] },
       }),
     )
+    expect(JSON.stringify(store.logOperation.mock.calls)).not.toContain('不可入库')
     for (const request of requests.slice(0, 3)) {
       expect(request).not.toHaveProperty('approvalRequired')
       expect(request).toMatchObject({ workspaceId: workspace.id, operation: 'file.write' })
+      expect(request.deadlineAt).toBeLessThanOrEqual(beforeCommand + RPC_APPROVAL_TIMEOUT_MS)
     }
     store.one.mockResolvedValueOnce({ ...workspace, localWrite: false })
     await expect(hub.execute('owner', 'ai-client', workspace.id, 'file.write', {})).rejects.toThrow(

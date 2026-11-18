@@ -7,6 +7,7 @@ import {
   resolveCommandRequest,
   validateLocalCommand,
   runCheckedCommand,
+  COMMAND_TIMEOUT_MS,
 } from '../src/operations/command/command-operations'
 import { execute } from '../src/operations/executors'
 import type { LocalWorkspace } from '../src/workspace/state'
@@ -210,20 +211,22 @@ test('内置 pnpm 命令可以启动项目脚本，包括 Windows 命令启动�
 })
 
 /** 长任务使用本地登记的超时，远程 command.run 不允许任意指定超时。 */
-test('内置构建和测试具有独立超时，自定义命令限制在四分钟以内', () => {
-  expect(resolveCommandRequest(workspace(), { command: 'build' }).command.timeoutMs).toBe(180_000)
-  expect(resolveCommandRequest(workspace(), { command: 'test' }).command.timeoutMs).toBe(180_000)
+test('普通命令默认一分钟，项目长任务使用独立时限', () => {
+  expect(COMMAND_TIMEOUT_MS).toBe(60_000)
+  for (const command of ['build', 'typecheck', 'test'])
+    expect(resolveCommandRequest(workspace(), { command }).command.timeoutMs).toBe(600_000)
+  expect(resolveCommandRequest(workspace(), { command: 'format' }).command.timeoutMs).toBe(120_000)
   expect(
     resolveCommandRequest(workspace(), { command: registered.id }).command.timeoutMs,
   ).toBeUndefined()
-  expect(validateLocalCommand({ ...registered, timeoutMs: 90_000 }).timeoutMs).toBe(90_000)
-  for (const timeoutMs of [0, 999, 240_001, -1, 1.5, '90000']) {
+  expect(validateLocalCommand({ ...registered, timeoutMs: 1_200_000 }).timeoutMs).toBe(1_200_000)
+  for (const timeoutMs of [0, 999, 1_200_001, -1, 1.5, '90000']) {
     expect(() => validateLocalCommand({ ...registered, timeoutMs })).toThrow('INVALID_COMMAND')
   }
   expect(() => CommandRunInputSchema.parse({ command: 'build', timeoutMs: 900_000 })).toThrow()
 })
 
-test('执行器实际使用登记超时，而不是强制 20 秒', async () => {
+test('执行器可运行设置独立时限的登记命令', async () => {
   const w = workspace()
   w.commands = [
     {

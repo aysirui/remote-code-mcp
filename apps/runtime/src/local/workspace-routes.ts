@@ -31,7 +31,7 @@ export interface WorkspaceRoutesContext {
 /** 注册工作区、命令清单和本地目录浏览路由。 */
 export function registerWorkspaceRoutes(context: WorkspaceRoutesContext) {
   const { api, config, approvals, events, sync, requireActiveServer, publishConfig, fail } = context
-  /** 仅在本地展示目录供用户选择工作区，绝对路径不发送到 Gateway。 */
+  /** 仅在本地展示目录供用户选择工作区，绝对路径不发送到 Server。 */
   api.get('/browse', async (req, res) => {
     try {
       const dir = await fs.realpath(String(req.query.path || os.homedir()))

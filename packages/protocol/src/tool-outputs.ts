@@ -1,4 +1,7 @@
 import { z } from 'zod'
+
+/** 命令合并输出的 UTF-8 字节上限，不包含响应的其他字段。 */
+export const COMMAND_OUTPUT_LIMIT_BYTES = 48 * 1024
 import type { Operation } from './operations'
 
 /** Server 与 Runtime 共享的原始操作结果；MCP 的 value 包装由 MCP 契约派生。 */
@@ -72,7 +75,7 @@ export const ToolOutputs = {
   'command.run': z.object({
     command: z.string().describe('登记命令 ID 或临时命令的可执行程序'),
     exitCode: z.number().int().nullable().describe('进程退出码；进程因信号终止等情况可能为 null'),
-    output: z.string().describe('标准输出与标准错误的合并文本；超时时附带 COMMAND_TIMEOUT 标记'),
+    output: z.string().describe('标准输出与标准错误的合并文本，最多 48 KiB；超时由错误码表示'),
     truncated: z.boolean().describe('输出是否因达到大小限制而截断'),
   }),
 } satisfies Record<Operation, z.ZodType>

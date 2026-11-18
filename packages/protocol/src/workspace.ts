@@ -14,7 +14,7 @@ export const PermissionSchema = z.object({
   write: z.boolean(),
 })
 
-/** 设备同步到 Gateway 的最小工作区公开信息，不包含任何本地路径或项目结构。 */
+/** 设备同步到 Server 的最小工作区公开信息，不包含任何本地路径或项目结构。 */
 export const WorkspacePublicSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1).max(128),

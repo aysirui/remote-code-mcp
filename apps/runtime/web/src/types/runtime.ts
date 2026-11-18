@@ -14,7 +14,7 @@ export interface WriteApprovalView {
   expiresAt: number
 }
 
-/** Gateway 配置的本地展示摘要，不包含设备凭据。 */
+/** Server 配置的本地展示摘要，不包含设备凭据。 */
 export interface ServerView {
   id: string
   name: string
@@ -54,7 +54,7 @@ export interface CommandView {
   executable: string
   args: string[]
 }
-/** 本地工作区视图包含 root 绝对路径，仅供 Runtime 页面使用，不进入 Gateway 同步模型。 */
+/** 本地工作区视图包含 root 绝对路径，仅供 Runtime 页面使用，不进入 Server 同步模型。 */
 export interface WorkspaceView {
   serverId: string
   authorized: boolean

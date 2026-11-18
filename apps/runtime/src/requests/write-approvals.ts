@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { ToolInputs, type RpcRequest } from '@rcm/protocol'
+import { RPC_APPROVAL_TIMEOUT_MS, ToolInputs, type RpcRequest } from '@rcm/protocol'
 import type { LocalWorkspace } from '../workspace/state'
 import { resolveCommandRequest, commandFingerprint } from '../operations/command/command-operations'
 import { gitApprovalContext } from '../operations/git/git-operations'
@@ -25,13 +25,19 @@ export interface WriteApprovalInfo {
   expiresAt: number
 }
 
+/** 终止审批的明确原因，不对外暴露本地审批详情。 */
+type ApprovalErrorCode =
+  'APPROVAL_DENIED' | 'APPROVAL_EXPIRED' | 'CONNECTION_REPLACED' | 'WORKSPACE_PERMISSION_REVOKED'
+
 interface ApprovalDecision {
   approved: boolean
+  /** 未通过时用于区分用户拒绝、超时和授权失效。 */
+  errorCode?: ApprovalErrorCode
   requestHash: string
   resourceHash?: string
 }
 
-/** 队列内部状态：保存一次性参数指纹和 Promise 回调，不会序列化到磁盘或发送到 Gateway。 */
+/** 队列内部状态：保存一次性参数指纹和 Promise 回调，不会序列化到磁盘或发送到 Server。 */
 interface PendingApproval extends WriteApprovalInfo {
   requestHash: string
   resourceHash?: string
@@ -40,9 +46,9 @@ interface PendingApproval extends WriteApprovalInfo {
 }
 
 /** 单次审批最多等待五分钟；审批上下文只在本机内存短暂展示。 */
-export const WRITE_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
+export const WRITE_APPROVAL_TIMEOUT_MS = RPC_APPROVAL_TIMEOUT_MS
 
-/** 审批上下文不传到 Gateway，不写入数据库；断线、撤销或超时后立即清理。 */
+/** 审批上下文不传到 Server，不写入数据库；断线、撤销或超时后立即清理。 */
 export class WriteApprovalQueue {
   private readonly pending = new Map<string, PendingApproval>()
 
@@ -182,13 +188,14 @@ export class WriteApprovalQueue {
       )
       .digest('hex')
     const createdAt = Date.now()
-    const expiresAt = createdAt + WRITE_APPROVAL_TIMEOUT_MS
+    // 普通 RPC 与审批共享等待预算，预留一秒回传审批超时；命令 RPC 已单独预留回传时间。
+    const waitMs =
+      req.operation === 'command.run'
+        ? WRITE_APPROVAL_TIMEOUT_MS
+        : Math.min(WRITE_APPROVAL_TIMEOUT_MS, Math.max(0, req.deadlineAt - createdAt - 1000))
+    const expiresAt = createdAt + waitMs
     return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        this.pending.delete(id)
-        this.notify()
-        resolve({ approved: false, requestHash })
-      }, WRITE_APPROVAL_TIMEOUT_MS)
+      const timeout = setTimeout(() => this.complete(id, 'APPROVAL_EXPIRED'), waitMs)
       this.pending.set(id, {
         id,
         workspaceId: workspace.id,
@@ -213,13 +220,20 @@ export class WriteApprovalQueue {
 
   /** 接收本地用户的明确决定；任务只允许完成一次。 */
   answer(id: string, approved: boolean): boolean {
+    return this.complete(id, approved ? undefined : 'APPROVAL_DENIED')
+  }
+
+  /** 完成指定审批并清理计时器；无错误码表示批准，返回值表明任务是否仍在队列。 */
+  private complete(id: string, errorCode?: ApprovalErrorCode): boolean {
     const approval = this.pending.get(id)
     if (!approval) return false
+    const approved = errorCode === undefined
     this.pending.delete(id)
     clearTimeout(approval.timeout)
     this.notify()
     approval.resolve({
       approved,
+      errorCode,
       requestHash: approval.requestHash,
       resourceHash: approved ? approval.resourceHash : undefined,
     })
@@ -229,12 +243,13 @@ export class WriteApprovalQueue {
   /** 用户移除工作区时拒绝对应任务，防止旧授权继续生效。 */
   rejectWorkspace(workspaceId: string): void {
     for (const approval of this.pending.values()) {
-      if (approval.workspaceId === workspaceId) this.answer(approval.id, false)
+      if (approval.workspaceId === workspaceId)
+        this.complete(approval.id, 'WORKSPACE_PERMISSION_REVOKED')
     }
   }
 
   /** 设备断开时取消所有未完成的审批。 */
   cancelAll(): void {
-    for (const id of [...this.pending.keys()]) this.answer(id, false)
+    for (const id of this.pending.keys()) this.complete(id, 'CONNECTION_REPLACED')
   }
 }

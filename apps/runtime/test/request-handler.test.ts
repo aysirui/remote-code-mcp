@@ -7,6 +7,13 @@ import { handleGatewayMessage, type RequestContext } from '../src/requests/reque
 import { activeServer, migrateConfig } from '../src/workspace/state'
 import { WriteApprovalQueue } from '../src/requests/write-approvals'
 import { LocalEvents } from '../src/local/local-events'
+import { logger } from '../src/logger'
+import { commandExecutionProvider } from '../src/operations/command/command-provider'
+import {
+  COMMAND_MAX_TIMEOUT_MS,
+  COMMAND_RPC_TIMEOUT_MS,
+  RPC_APPROVAL_TIMEOUT_MS,
+} from '@rcm/protocol'
 
 let dir: string
 let workspaceId: string
@@ -39,7 +46,7 @@ beforeEach(async () => {
 })
 afterEach(async () => {
   context.approvals.cancelAll()
-  await rm(dir, { recursive: true, force: true })
+  await rm(dir, { recursive: true, force: true, maxRetries: 3 })
 })
 
 const rpc = (operation: string, payload: unknown) =>
@@ -204,7 +211,7 @@ test('RPC 拒绝权限和未知异常只返回安全错误码，不回传本机�
   )
   expect(unknown).toMatchObject({
     success: false,
-    error: { code: 'EXECUTION_FAILED', message: 'EXECUTION_FAILED' },
+    error: { code: 'FILE_OPERATION_FAILED', message: 'FILE_OPERATION_FAILED' },
   })
   expect(JSON.stringify(unknown)).not.toContain(dir)
 })
@@ -221,7 +228,165 @@ test('审批明确拒绝时传递安全业务错误码，文件保持原样', as
   context.approvals.answer(context.approvals.list()[0].id, false)
   expect(await pending).toMatchObject({
     success: false,
-    error: { code: 'APPROVAL_DENIED_OR_EXPIRED', message: 'APPROVAL_DENIED_OR_EXPIRED' },
+    error: { code: 'APPROVAL_DENIED', message: 'APPROVAL_DENIED' },
   })
   expect(await readFile(path.join(dir, 'README.md'), 'utf8')).toBe('before')
+})
+
+test.each([
+  [{ exitCode: 2, timedOut: false }, 'COMMAND_EXIT_NONZERO'],
+  [{ exitCode: null, timedOut: false }, 'COMMAND_PROCESS_TERMINATED'],
+  [{ exitCode: 0, timedOut: true }, 'COMMAND_TIMEOUT'],
+] as const)('区分已启动的命令失败并保留部分结果：%s => %s', async (state, code) => {
+  const provider = jest.spyOn(commandExecutionProvider, 'run').mockResolvedValue({
+    ...state,
+    output: '私有输出',
+    truncated: true,
+  })
+  try {
+    const response = await handleGatewayMessage(rpc('command.run', { command: 'build' }), context)
+    expect(response).toMatchObject({
+      success: false,
+      error: { code, message: code },
+      data: { command: 'build', output: '私有输出', truncated: true, exitCode: state.exitCode },
+      commandAudit: { executable: 'pnpm', args: ['run', 'build'] },
+    })
+    expect(response?.data).not.toHaveProperty('timedOut')
+  } finally {
+    provider.mockRestore()
+  }
+})
+
+test('命令启动失败在本地记录原始原因，RPC 只返回稳定错误码', async () => {
+  const debug = jest.spyOn(logger, 'debug').mockImplementation(() => undefined)
+  const stderr = jest.spyOn(process.stderr, 'write').mockReturnValue(true)
+  const provider = jest
+    .spyOn(commandExecutionProvider, 'run')
+    .mockRejectedValue(Error('private-token ' + dir))
+  try {
+    const request = rpc('command.run', { command: 'build' })
+    const { id } = JSON.parse(request)
+    const response = await handleGatewayMessage(request, context)
+    expect(response).toMatchObject({ success: false, error: { code: 'COMMAND_START_FAILED' } })
+    expect(response).not.toHaveProperty('data')
+    expect(debug).toHaveBeenCalledWith('rpc.received', expect.objectContaining({ requestId: id }))
+    expect(debug).toHaveBeenCalledWith(
+      'rpc.execution.started',
+      expect.objectContaining({ requestId: id }),
+    )
+    expect(JSON.parse(String(stderr.mock.calls[0][0]))).toMatchObject({
+      level: 'error',
+      event: 'rpc.failed',
+      requestId: id,
+      stage: 'execution',
+      code: 'COMMAND_START_FAILED',
+      durationMs: expect.any(Number),
+      err: {
+        message: expect.stringContaining('private-token ' + dir),
+        stack: expect.stringContaining('private-token ' + dir),
+      },
+    })
+    const serialized = JSON.stringify(response)
+    expect(serialized).not.toContain('private-token')
+    expect(serialized).not.toContain(JSON.stringify(dir).slice(1, -1))
+  } finally {
+    provider.mockRestore()
+    stderr.mockRestore()
+    debug.mockRestore()
+  }
+})
+
+test('参数无效、未知命令和领域执行错误使用不同的公开错误码', async () => {
+  await expect(
+    handleGatewayMessage(rpc('file.read', { path: 123 }), context),
+  ).resolves.toMatchObject({
+    error: { code: 'INVALID_TOOL_ARGUMENTS' },
+  })
+  await expect(
+    handleGatewayMessage(rpc('file.read', { path: 'missing.txt' }), context),
+  ).resolves.toMatchObject({
+    error: { code: 'FILE_OPERATION_FAILED' },
+  })
+  await expect(handleGatewayMessage(rpc('git.status', {}), context)).resolves.toMatchObject({
+    error: { code: 'GIT_OPERATION_FAILED' },
+  })
+  await expect(
+    handleGatewayMessage(rpc('command.run', { command: 'not-registered' }), context),
+  ).resolves.toMatchObject({
+    error: { code: 'COMMAND_NOT_ALLOWED' },
+  })
+})
+
+test('文件读取失败的绝对路径和系统错误只进入本地日志', async () => {
+  const stderr = jest.spyOn(process.stderr, 'write').mockReturnValue(true)
+  try {
+    const missing = path.join(dir, 'missing.txt')
+    const response = await handleGatewayMessage(rpc('file.read', { path: 'missing.txt' }), context)
+    const entry = JSON.parse(String(stderr.mock.calls[0][0]))
+    expect(entry).toMatchObject({
+      event: 'rpc.failed',
+      operation: 'file.read',
+      err: { code: 'ENOENT', path: missing, stack: expect.stringContaining('ENOENT') },
+    })
+    expect(response).toMatchObject({
+      success: false,
+      error: { code: 'FILE_OPERATION_FAILED', message: 'FILE_OPERATION_FAILED' },
+    })
+    expect(JSON.stringify(response)).not.toMatch(/missing\.txt|ENOENT|stack/)
+  } finally {
+    stderr.mockRestore()
+  }
+})
+
+test('接近审批期限批准后，本机登记命令仍有完整的二十分钟执行预算', async () => {
+  jest.useFakeTimers()
+  const provider = jest.spyOn(commandExecutionProvider, 'run')
+  try {
+    context.server.workspaces[0].policies.command = 'approval'
+    context.config.workspaces[0].commands = [
+      {
+        id: 'long-task',
+        name: '长任务',
+        executable: 'node',
+        args: ['--version'],
+        timeoutMs: COMMAND_MAX_TIMEOUT_MS,
+      },
+    ]
+    let notifyApproval!: () => void
+    const enqueued = new Promise<void>((resolve) => {
+      notifyApproval = resolve
+    })
+    context.approvals = new WriteApprovalQueue(notifyApproval)
+    let notifyExecution!: () => void
+    const running = new Promise<void>((resolve) => {
+      notifyExecution = resolve
+    })
+    provider.mockImplementation(
+      ({ timeoutMs }) =>
+        new Promise((resolve) => {
+          setTimeout(
+            () => resolve({ exitCode: 0, output: '完成', truncated: false, timedOut: false }),
+            timeoutMs - 1,
+          )
+          notifyExecution()
+        }),
+    )
+    const request = JSON.parse(rpc('command.run', { command: 'long-task' }))
+    request.deadlineAt = Date.now() + COMMAND_RPC_TIMEOUT_MS
+    const pending = handleGatewayMessage(JSON.stringify(request), context)
+    await enqueued
+    await jest.advanceTimersByTimeAsync(RPC_APPROVAL_TIMEOUT_MS - 1)
+    expect(provider).not.toHaveBeenCalled()
+    expect(context.approvals.answer(context.approvals.list()[0].id, true)).toBe(true)
+    await running
+    expect(provider).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: COMMAND_MAX_TIMEOUT_MS }),
+    )
+    await jest.advanceTimersByTimeAsync(COMMAND_MAX_TIMEOUT_MS - 1)
+    expect(Date.now()).toBeLessThan(request.deadlineAt)
+    await expect(pending).resolves.toMatchObject({ success: true, data: { exitCode: 0 } })
+  } finally {
+    provider.mockRestore()
+    jest.useRealTimers()
+  }
 })

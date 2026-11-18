@@ -1,6 +1,6 @@
 # Remote Code MCP 文档
 
-Remote Code MCP（RCM）让 MCP 客户端在你授权的范围内，通过远程 Gateway 访问本机代码工作区。
+Remote Code MCP（RCM）让 MCP 客户端在你授权的范围内，通过远程 Server 访问本机代码工作区。
 
 ## 从这里开始
 

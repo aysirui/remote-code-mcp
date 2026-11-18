@@ -172,7 +172,7 @@ test('已登记命令在 allow 下可以运行，并保留超时终止', async (
     undefined,
     150,
   )
-  expect(result.output).toContain('COMMAND_TIMEOUT')
+  expect(result.timedOut).toBe(true)
 })
 
 test('普通文件和小目录删除不达到高危阈值，批量目录删除超过 20 项触发高危判定', async () => {

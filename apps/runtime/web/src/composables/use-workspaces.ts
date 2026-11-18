@@ -43,7 +43,7 @@ export function useWorkspaces(
     }
   }
 
-  /** 在 Runtime 本机浏览目录；绝对路径只返回本地页面，不同步到 Gateway。 */
+  /** 在 Runtime 本机浏览目录；绝对路径只返回本地页面，不同步到 Server。 */
   async function openBrowse(p?: string) {
     try {
       browse.value = await api<DirectoryBrowser>(

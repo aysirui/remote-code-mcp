@@ -4,7 +4,7 @@
 
 ## 一、项目定位与架构
 
-Remote Code MCP（RCM）是基于 pnpm workspace 的 TypeScript monorepo。其目标是在用户授权下，让 ChatGPT 等 MCP 客户端通过远程 Gateway 安全调用用户本地工作区的文件、Git 和已登记命令。当前采用 **Server + Console + Website + Docs + Runtime + Protocol** 四部分，而非通用 OS 沙箱平台。
+Remote Code MCP（RCM）是基于 pnpm workspace 的 TypeScript monorepo。其目标是在用户授权下，让 ChatGPT 等 MCP 客户端通过远程 Server 安全调用用户本地工作区的文件、Git 和已登记命令。当前采用 **Server + Console + Website + Docs + Runtime + Protocol** 六部分，而非通用 OS 沙箱平台。
 
 主要调用链：
 
@@ -12,7 +12,7 @@ Remote Code MCP（RCM）是基于 pnpm workspace 的 TypeScript monorepo。其�
 MCP 客户端（ChatGPT 等）
     │ HTTPS / MCP Streamable HTTP / OAuth 2.0
     ▼
-apps/server（NestJS Gateway） ── MySQL（Drizzle）
+apps/server（NestJS Server） ── MySQL（Drizzle）
     │ WSS / 设备身份认证 / RPC
     ▼
 apps/runtime（本机 Node.js 服务）
@@ -33,7 +33,7 @@ packages/protocol（共享 RPC、Zod Schema、类型契约）
 - `apps/website/`：Astro 独立静态官网，负责公开产品展示、文档、控制台和代码仓库导航；不承载后端业务。
 - `docs/`：VitePress 独立文档产物，公共访问前缀为 `/docs/`。
 - `apps/console/src/`：Vue 3 + Vue Router + Pinia + Element Plus；页面在 `views/`，页面复用组件在 `components/`，界面业务状态在 `composables/`，API 请求在 `api/`。
-- `apps/runtime/src/connection/`：Gateway WebSocket 连接与重连；`workspace/`：本机目录定义、服务器配置、工作区授权及策略。
+- `apps/runtime/src/connection/`：Server WebSocket 连接与重连；`workspace/`：本机目录定义、服务器配置、工作区授权及策略。
 - `apps/runtime/src/requests/`：RPC 请求分发、审批策略、审批队列与资源核验。
 - `apps/runtime/src/operations/`：文件、Git、Command 领域执行器；Git 操作独立于 `command.run`。
 - `apps/runtime/src/local/`：只监听回环地址的本地管理服务及设备配对、工作区和审批 API。
@@ -42,12 +42,12 @@ packages/protocol（共享 RPC、Zod Schema、类型契约）
 
 ### 核心实现与业务边界
 
-1. **身份与授权**：MCP 客户端经 OAuth 2.0 授权访问 Gateway；Runtime 以设备凭据建立 WSS 出站连接。Server 校验用户、设备及工作区归属；Runtime 再按本机工作区授权、读写权限及 File/Git/Command 策略执行。
-2. **本地数据隐私**：工作区绝对路径、文件内容、命令参数、审批详情和 AI 对话不作为 Server/Console 的持久化业务数据。Gateway 仅转发必要的 RPC 数据；操作审计只记录允许的脱敏元数据。
+1. **身份与授权**：MCP 客户端经 OAuth 2.0 授权访问 Server；Runtime 以设备凭据建立 WSS 出站连接。Server 校验用户、设备及工作区归属；Runtime 再按本机工作区授权、读写权限及 File/Git/Command 策略执行。
+2. **本地数据隐私**：工作区绝对路径、文件内容、命令参数、审批详情和 AI 对话不作为 Server/Console 的持久化业务数据。Server 仅转发必要的 RPC 数据；操作审计只记录允许的脱敏元数据。
 3. **多服务器与工作区**：Runtime 可保存多个 Server 配置，同一时刻连接一个 Server；本地目录定义与各 Server 的工作区授权分离。设备或授权撤销必须使后续请求失效。
 4. **文件操作**：在授权工作区内执行读写、搜索、移动、删除；写入版本检查使用 SHA-256，危险删除遵循既定审批规则。
 5. **Git 操作**：使用独立的 Git 工具及对应权限策略，不通过临时 Shell 命令绕过。
-6. **命令执行**：`command.run` 接受本机登记命令 ID 或临时程序/参数；登记命令遵循本机策略，未登记命令必须审批。命令以 Runtime 进程账号权限运行，不宣称具有 OS 沙箱隔离。默认超时 20 秒；内置构建/测试等长任务和本地自定义登记命令可使用独立超时，远程请求不能自行提高超时。
+6. **命令执行**：`command.run` 接受本机登记命令 ID 或临时程序/参数；登记命令遵循本机策略，未登记命令必须审批。命令以 Runtime 进程账号权限运行，不宣称具有 OS 沙箱隔离。默认超时 60 秒；内置构建、测试、类型检查各 10 分钟，本地自定义登记命令最长 20 分钟，远程请求不能自行提高超时。
 7. **数据库**：Server 使用 Drizzle ORM 与 MySQL；Schema 是数据库结构变更的来源。部署执行已提交的迁移，不在部署环境自动生成迁移文件。
 
 ## 二、强制开发约束

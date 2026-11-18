@@ -33,7 +33,7 @@ export function useServers(
     }
   }
 
-  /** 添加新的 Gateway 配置；重复地址由状态层保留原有设备凭据。 */
+  /** 添加新的 Server 配置；重复地址由状态层保留原有设备凭据。 */
   async function addServer() {
     await manageServer(async () => {
       const server = await api<{ id: string }>('servers', 'POST', {
@@ -55,7 +55,7 @@ export function useServers(
     )
   }
 
-  /** 修改服务器本地显示名称，不改变 Gateway 地址或设备身份。 */
+  /** 修改服务器本地显示名称，不改变 Server 地址或设备身份。 */
   async function renameServer(server: ServerView) {
     try {
       const { value } = await ElMessageBox.prompt('服务器显示名称', '重命名服务器', {
@@ -93,7 +93,7 @@ export function useServers(
     )
   }
 
-  /** 向当前 Gateway 申请一次性设备配对码，配对密钥只在本机短暂展示。 */
+  /** 向当前 Server 申请一次性设备配对码，配对密钥只在本机短暂展示。 */
   async function startPair() {
     const serverId = status.value.serverId
     await manageServer(async () => {

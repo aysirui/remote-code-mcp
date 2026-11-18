@@ -83,7 +83,7 @@ function formatBytes(bytes: number) {
       <span class="connection-dot" :class="{ online: status.online }"></span>
       <div class="connection-copy">
         <strong>{{ status.serverName || '尚未选择服务器' }}</strong>
-        <span>{{ status.gateway || '未配置 Gateway' }}</span>
+        <span>{{ status.gateway || '未配置服务器' }}</span>
       </div>
       <span class="connection-state">{{ status.online ? '设备在线' : '设备离线' }}</span>
     </section>

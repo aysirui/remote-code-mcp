@@ -35,8 +35,11 @@ export function registerServerRoutes(context: ServerRoutesContext) {
     events.publish('status')
     events.publish('workspaces')
   }
-  const fail = (res: Response, error: unknown) =>
-    res.status(400).json({ error: error instanceof Error ? error.message : '操作失败' })
+  /** 保留本地页面的错误响应，并将原始异常交给本地请求日志。 */
+  const fail = (res: Response, error: unknown) => {
+    res.locals.diagnosticError = error
+    return res.status(400).json({ error: error instanceof Error ? error.message : '操作失败' })
+  }
   const switchServer = async (id: string) => {
     const target = requireServer(id)
     if (config.activeServerId !== id || target.paused) {

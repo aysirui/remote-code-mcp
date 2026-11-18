@@ -6,8 +6,9 @@ import {
 } from '../workspace/state'
 import type { WriteApprovalQueue } from './write-approvals'
 import type { LocalEvents } from '../local/local-events'
+import { logger } from '../logger'
 
-/** Gateway 撤销授权时只更新对应服务器的授权，保留本地目录定义。 */
+/** Server 撤销授权时只更新对应服务器的授权，保留本地目录定义。 */
 export async function handleWorkspaceRevocations(
   message: Record<string, unknown>,
   context: {
@@ -28,6 +29,7 @@ export async function handleWorkspaceRevocations(
   if (!removed.length) return
   for (const id of removed) context.approvals.rejectWorkspace(id)
   await save(context.config)
+  logger.info('workspace.revocations.applied', { workspaceCount: removed.length })
   context.events.publish('workspaces')
   context.events.publish('status')
 }

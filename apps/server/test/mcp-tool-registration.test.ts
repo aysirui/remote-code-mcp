@@ -6,6 +6,7 @@ import type { Store } from '../src/infrastructure/database/store'
 import type { DeviceHub } from '../src/modules/device/device-hub'
 import { createMcpToolRegistrar } from '../src/modules/mcp/mcp-tool-registration'
 import { registerMcpTools } from '../src/modules/mcp/mcp-tools'
+import { DeviceRpcError } from '../src/modules/device/device-rpc-pending'
 
 describe('MCP 工具结果包装', () => {
   test.each(['文件正文\n', '正文中已有\n\nSHA-256: 文件原文\n', ''])(
@@ -197,7 +198,7 @@ describe('MCP 输出契约', () => {
     expect(invalid.content).toEqual([
       { type: 'text', text: expect.stringContaining('Output validation error') },
     ])
-    execute.mockRejectedValueOnce(new Error('WORKSPACE_DISABLED'))
+    execute.mockRejectedValueOnce(new DeviceRpcError('WORKSPACE_DISABLED'))
     const failed = await client.callTool({
       name: 'file_read',
       arguments: { workspaceId: 'workspace-1', path: 'a.ts' },
@@ -207,6 +208,34 @@ describe('MCP 输出契约', () => {
       content: [{ type: 'text', text: 'WORKSPACE_DISABLED' }],
     })
     expect(failed.structuredContent).toBeUndefined()
+  })
+
+  test.each(['COMMAND_EXIT_NONZERO', 'COMMAND_PROCESS_TERMINATED', 'COMMAND_TIMEOUT'])(
+    '命令失败 %s 标记为 MCP 错误并保留输出',
+    async (code) => {
+      const data = {
+        command: 'build',
+        exitCode: code === 'COMMAND_EXIT_NONZERO' ? 2 : null,
+        output: '部分输出',
+        truncated: true,
+      }
+      execute.mockRejectedValueOnce(new DeviceRpcError(code, data))
+      const failed = await client.callTool({
+        name: 'command_run',
+        arguments: { workspaceId: 'workspace-1', command: 'build' },
+      })
+      expect(failed.isError).toBe(true)
+      expect(failed.content).toEqual([{ type: 'text', text: JSON.stringify({ code, ...data }) }])
+    },
+  )
+
+  test('未分类的工具异常只返回稳定错误码，不泄露内部异常内容', async () => {
+    where.mockRejectedValueOnce(new Error('数据库连接串不对外暴露'))
+    const failed = await client.callTool({ name: 'device_list' })
+    expect(failed).toMatchObject({
+      isError: true,
+      content: [{ type: 'text', text: 'TOOL_EXECUTION_FAILED' }],
+    })
   })
 
   test('MCP 使用共享输入限制，拒绝无效搜索与混用的命令参数且不转发设备', async () => {

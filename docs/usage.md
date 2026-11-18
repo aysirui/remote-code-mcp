@@ -1,6 +1,6 @@
 # 使用指南
 
-先按 [README](https://github.com/aysirui/remote-code-mcp/blob/main/README.md#快速开始) 启动 Gateway、Console 和 Runtime。
+先按 [README](https://github.com/aysirui/remote-code-mcp/blob/main/README.md#快速开始) 启动 Server、Console 和 Runtime。
 
 ## Runtime 配置
 
@@ -16,7 +16,7 @@ Runtime 默认保存配置到 `~/.remote-code-mcp/config.json`。可通过进程
 
 1. 打开启动日志打印的本地 UI URL，例如 `http://127.0.0.1:18787/#token=...`，**不要分享其中的 token**。
    本地管理凭据每次启动都会重新生成。若页面提示凭据失效，请重新打开当前启动日志中的完整链接；找不到链接时，请重启 Runtime 并打开新打印的链接。刷新旧页面无法恢复，设备绑定和工作区授权不受影响。
-2. 在本地 UI 确定 Gateway URL（本机可用 `http://localhost:3000`；公网必须 `https://...`）。
+2. 在本地 UI 确定 Server 地址（本机可用 `http://localhost:3000`；公网必须 `https://...`）。
 3. 点击 **生成配对码**，获得临时配对码。
 4. 点击“打开平台授权页面”（本地开发为 `http://localhost:5173/activate`），用平台账号登录，输入配对码并确认。
 5. 返回本地 UI 点击“我已确认，完成绑定”。
@@ -45,7 +45,17 @@ Runtime 默认保存配置到 `~/.remote-code-mcp/config.json`。可通过进程
 
 审批展示完整程序、参数、工作目录及风险。命令以 Runtime 账号权限执行，没有文件系统、网络或 CPU / 内存隔离；审批不能保证项目脚本和依赖内容不变。Git 操作使用独立工具，不通过 `command_run` 执行。
 
-普通命令默认超时 20 秒。内置 `typecheck`、`format` 为 120 秒，`test`、`build` 为 180 秒；本地登记项可配置 `timeoutMs`（1～240 秒），远程请求不能提高超时。输出最多 48 KiB，超时后的进程树清理属于尽力措施。
+普通登记命令和临时命令默认执行时限为 60 秒。内置 `build`、`typecheck`、`test` 各 10 分钟，`format` 为 2 分钟。通过 Runtime 本地管理 API 登记自定义命令时可设置 `timeoutMs`（1,000～1,200,000 毫秒），远程请求不能覆盖。执行计时从启动子进程开始，不包含本机审批等待。命令 RPC 最多等待 25 分钟 15 秒；其他工具仍为 5 分钟。
+
+Console 将命令无法启动（`COMMAND_START_FAILED`）、非零退出（`COMMAND_EXIT_NONZERO`）、异常终止（`COMMAND_PROCESS_TERMINATED`）和本机执行超时（`COMMAND_TIMEOUT`）记为失败，与 Server 无响应超时（`EXECUTION_TIMEOUT`）分开。审批拒绝和过期分别显示 `APPROVAL_DENIED`、`APPROVAL_EXPIRED`。对于已经启动但未成功完成的命令，MCP 返回 `isError: true`，文本内容为包含 `code`、`command`、`exitCode`、`output` 和 `truncated` 的 JSON。输出最多 48 KiB，只返回给发起调用的客户端；进程树清理是尽力措施。
+
+### Runtime 终端日志
+
+Runtime 通过项目内的 `logger.debug()`、`logger.info()`、`logger.error()` 统一输出，业务代码不直接依赖 Pino。调试和运行信息写入标准输出，故障写入标准错误。
+
+启动 Runtime 前设置 `RUNTIME_LOG_LEVEL`：`info`（默认）记录启动、连接与 RPC 结果；`debug` 额外记录本地 API 成功请求、授权、审批、执行与重连；`error` 仅输出故障。日志为逐行 JSON，包含时间、事件及适用的请求 ID、执行阶段、错误码与耗时。`requestId` 对应 Server 审计记录的 `operationId`。有原始异常时，失败日志记录其消息、堆栈、原因链及可用的系统错误码和文件路径，无需启用 `debug`。本地 API 日志使用注册路由模板，不主动记录实际 URL、查询或请求体。
+
+启动失败、未捕获异常和未处理的 Promise 拒绝会输出一条 `runtime.fatal` 日志并以退出码 1 停止进程。原始异常只在本地输出，不上传 Server；RPC 错误仍使用公开错误码，Server/Console 审计仍只保存脱敏元数据。异常文本可能含绝对路径或其他私密信息，分享前请检查；不要分享含本机会话令牌的管理链接。
 
 ## Runtime 多服务器配置
 
@@ -77,7 +87,7 @@ Console 操作记录详情会展示已开始执行的 `command_run` 脱敏命令
 
 ## MCP 接入验证
 
-将公网 Gateway 的 `https://你的服务器域名/mcp` 配置到支持 OAuth 的 MCP 客户端，并使用同一平台账号授权。先用 MCP Inspector 检查元数据、授权与工具调用，再验证目标客户端；不保证所有客户端版本都能自动刷新令牌。
+将公网 Server 的 `https://你的服务器域名/mcp` 配置到支持 OAuth 的 MCP 客户端，并使用同一平台账号授权。先用 MCP Inspector 检查元数据、授权与工具调用，再验证目标客户端；不保证所有客户端版本都能自动刷新令牌。
 
 - `GET /health` 应返回 `{ok:true}`。
 - `GET /.well-known/oauth-protected-resource` 和 `GET /.well-known/oauth-authorization-server` 应返回元数据。

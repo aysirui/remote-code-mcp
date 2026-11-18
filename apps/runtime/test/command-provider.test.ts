@@ -55,9 +55,19 @@ test('限制合并输出长度并标记截断', async () => {
 
 test('超时后终止命令并返回超时标记', async () => {
   const result = await provider.run(
-    request(['-e', 'setTimeout(() => process.stdout.write("late"), 5000)'], {
-      timeoutMs: 100,
+    request(['-e', 'process.stdout.write("before-timeout"); setTimeout(() => {}, 5000)'], {
+      timeoutMs: 1000,
     }),
   )
   expect(result.timedOut).toBe(true)
+  expect(result.output).toBe('before-timeout')
+})
+
+test('多字节命令输出按 UTF-8 字节限制，截断时不切开字符', async () => {
+  const result = await provider.run(
+    request(['-e', 'process.stdout.write(String.fromCodePoint(0x4e2d).repeat(50))'], {
+      outputLimitBytes: 8,
+    }),
+  )
+  expect(result).toMatchObject({ output: '中中', truncated: true })
 })

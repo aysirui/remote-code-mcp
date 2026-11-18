@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 import { sha } from '../src/operations/file/file-operations'
 import path from 'node:path'
 import { handleGatewayMessage, type RequestContext } from '../src/requests/request-handler'
@@ -142,4 +142,86 @@ test('审批期间修改目标文件，批准后不能覆盖新内容', async ()
   context.approvals.answer(context.approvals.list()[0].id, true)
   expect(await pending).toMatchObject({ success: false })
   expect(await readFile(path.join(dir, 'README.md'), 'utf8')).toBe('changed-during-approval')
+})
+
+/** 二进制删除使用原始字节摘要，且无需对普通单文件执行逐次审批。 */
+test('二进制文件可使用 SHA-256 删除，缺失和过期摘要均被拒绝', async () => {
+  const filename = path.join(dir, 'icon.png')
+  const buffer = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 255, 128, 42])
+  await writeFile(filename, buffer)
+  const hash = createHash('sha256').update(buffer).digest('hex')
+
+  const missing = await handleGatewayMessage(rpc('file.delete', { path: 'icon.png' }), context)
+  expect(missing).toMatchObject({
+    success: false,
+    error: { code: 'EXPECTED_SHA256_REQUIRED', message: 'EXPECTED_SHA256_REQUIRED' },
+  })
+  const conflict = await handleGatewayMessage(
+    rpc('file.delete', { path: 'icon.png', expectedSha256: 'a'.repeat(64) }),
+    context,
+  )
+  expect(conflict).toMatchObject({ success: false, error: { code: 'FILE_CONFLICT' } })
+  expect(await readFile(filename)).toEqual(buffer)
+
+  const deleted = await handleGatewayMessage(
+    rpc('file.delete', { path: 'icon.png', expectedSha256: hash }),
+    context,
+  )
+  expect(deleted).toMatchObject({ success: true, data: { deleted: true } })
+  await expect(readFile(filename)).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(context.approvals.list()).toHaveLength(0)
+})
+
+test('大于文本工具限制的二进制文件仍可以通过内容摘要安全删除', async () => {
+  const filename = path.join(dir, 'image.bin')
+  const buffer = Buffer.alloc(600 * 1024, 255)
+  await writeFile(filename, buffer)
+  const deleted = await handleGatewayMessage(
+    rpc('file.delete', {
+      path: 'image.bin',
+      expectedSha256: createHash('sha256').update(buffer).digest('hex'),
+    }),
+    context,
+  )
+  expect(deleted).toMatchObject({ success: true })
+  await expect(readFile(filename)).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+test('RPC 拒绝权限和未知异常只返回安全错误码，不回传本机路径', async () => {
+  context.server.workspaces[0].permissions.write = false
+  const denied = await handleGatewayMessage(
+    rpc('file.delete', { path: 'README.md', expectedSha256: sha('before') }),
+    context,
+  )
+  expect(denied).toMatchObject({
+    success: false,
+    error: { code: 'PERMISSION_DENIED', message: 'PERMISSION_DENIED' },
+  })
+  context.server.workspaces[0].permissions.write = true
+  const unknown = await handleGatewayMessage(
+    rpc('file.delete', { path: 'absent.png', expectedSha256: 'a'.repeat(64) }),
+    context,
+  )
+  expect(unknown).toMatchObject({
+    success: false,
+    error: { code: 'EXECUTION_FAILED', message: 'EXECUTION_FAILED' },
+  })
+  expect(JSON.stringify(unknown)).not.toContain(dir)
+})
+
+test('审批明确拒绝时传递安全业务错误码，文件保持原样', async () => {
+  context.server.workspaces[0].policies.file = 'approval'
+  const pending = handleGatewayMessage(
+    rpc('file.delete', { path: 'README.md', expectedSha256: sha('before') }),
+    context,
+  )
+  for (let i = 0; i < 40 && !context.approvals.list().length; i++)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  expect(context.approvals.list()).toHaveLength(1)
+  context.approvals.answer(context.approvals.list()[0].id, false)
+  expect(await pending).toMatchObject({
+    success: false,
+    error: { code: 'APPROVAL_DENIED_OR_EXPIRED', message: 'APPROVAL_DENIED_OR_EXPIRED' },
+  })
+  expect(await readFile(path.join(dir, 'README.md'), 'utf8')).toBe('before')
 })

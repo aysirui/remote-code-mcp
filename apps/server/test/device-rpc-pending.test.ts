@@ -57,6 +57,36 @@ describe('DeviceRpcPending 请求生命周期', () => {
     await expect(currentResult).resolves.toBe(42)
   })
 
+  test('允许列表错误码会传递到 Server，任意错误文本不能穿透', async () => {
+    const pending = new DeviceRpcPending()
+    const ws = socket()
+    const known = pending.send(ws, 'device-1', request('known'), 1000, jest.fn())
+    pending.accept(
+      {
+        kind: 'response',
+        id: 'known',
+        success: false,
+        error: { code: 'EXPECTED_SHA256_REQUIRED', message: 'D:\\\\private\\\\data' },
+      },
+      'device-1',
+      ws,
+    )
+    await expect(known).rejects.toThrow('EXPECTED_SHA256_REQUIRED')
+
+    const unknown = pending.send(ws, 'device-1', request('unknown'), 1000, jest.fn())
+    pending.accept(
+      {
+        kind: 'response',
+        id: 'unknown',
+        success: false,
+        error: { code: 'D:\\\\private\\\\secret', message: 'private content' },
+      },
+      'device-1',
+      ws,
+    )
+    await expect(unknown).rejects.toThrow('EXECUTION_FAILED')
+  })
+
   test('超时后拒绝请求且忽略迟到响应', async () => {
     jest.useFakeTimers()
     try {

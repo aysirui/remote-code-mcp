@@ -309,7 +309,7 @@ export async function inspectDeleteTarget(target: string) {
   // 文件本身计为 1 项；目录只统计其内部子项，避免把容器目录重复计入批量删除数量。
   const entryCount = entries.length - (entries[0]?.type === 'directory' ? 1 : 0)
   // 不从目标父目录推测工作区；根目录由调用方按授权工作区明确拒绝。
-  return { entryCount, fingerprint }
+  return { entryCount, fingerprint, contentHash: entries[0]?.contentHash }
 }
 
 /** 拒绝破坏性操作处理链接、敏感路径、以及超大目录树。 */
@@ -411,8 +411,11 @@ export async function deleteChecked(
   if (st.isSymbolicLink()) throw Error('SYMLINK_DENIED')
   if (st.isFile()) {
     if (!expectedSha256) throw Error('EXPECTED_SHA256_REQUIRED')
-    const actual = sha(await readChecked(w, requested))
-    if (actual !== expectedSha256) throw Error('FILE_CONFLICT')
+    // 删除比较原始字节的 SHA-256；复用快照的流式校验，支持 PNG 等二进制文件。
+    if (snapshot.contentHash !== expectedSha256) throw Error('FILE_CONFLICT')
+    const latest = await inspectDeleteTarget(target)
+    if (latest.fingerprint !== snapshot.fingerprint)
+      throw Error('DELETE_TARGET_CHANGED_DURING_APPROVAL')
     await fs.unlink(target)
   } else if (st.isDirectory()) {
     if (expectedSha256) throw Error('INVALID_FILE_HASH')

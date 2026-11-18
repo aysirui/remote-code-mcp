@@ -1,5 +1,10 @@
 import { WebSocket } from 'ws'
-import { RpcResponseSchema, type CommandAudit, type RpcRequest } from '@rcm/protocol'
+import {
+  RpcResponseSchema,
+  rpcPublicErrorCode,
+  type CommandAudit,
+  type RpcRequest,
+} from '@rcm/protocol'
 
 /** 每条 RPC 与发送时的 WebSocket 绑定，禁止重连后的旧响应完成新请求。 */
 interface PendingRequest {
@@ -55,7 +60,7 @@ export class DeviceRpcPending {
     this.pending.delete(response.id)
     request.onCommandAudit(response.commandAudit)
     if (response.success) request.resolve(response.data)
-    else request.reject(new Error(response.error?.code || 'EXECUTION_FAILED'))
+    else request.reject(new Error(rpcPublicErrorCode(response.error?.code)))
   }
 
   /** 连接断开时只清理该连接上的请求，不影响同设备的新连接。 */

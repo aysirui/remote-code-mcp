@@ -1,4 +1,4 @@
-import { RpcRequestSchema, type CommandAudit } from '@rcm/protocol'
+import { RpcRequestSchema, rpcPublicErrorCode, type CommandAudit } from '@rcm/protocol'
 import { serverWorkspaces, type Config, type ServerProfile } from '../workspace/state'
 import { execute, validateOperationSafety, assertRequestAccess } from '../operations/executors'
 import { requiresApproval } from './approval-policy'
@@ -65,14 +65,16 @@ export async function handleGatewayMessage(
     })
     return { kind: 'response', id: req.id, success: true, data, commandAudit }
   } catch (error: unknown) {
+    // 只发送稳定业务错误码；原始异常可能包含工作区绝对路径或命令信息。
+    const code = rpcPublicErrorCode(error instanceof Error ? error.message : undefined)
     return {
       kind: 'response',
       id: req.id,
       success: false,
       commandAudit,
       error: {
-        code: 'EXECUTION_FAILED',
-        message: error instanceof Error ? error.message : String(error),
+        code,
+        message: code,
       },
     }
   }

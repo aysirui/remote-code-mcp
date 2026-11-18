@@ -45,8 +45,10 @@ services:
     labels:
       - 'traefik.enable=true'
       - 'traefik.docker.network=${TRAEFIK_NETWORK:-traefik-public}'
-      - 'traefik.http.routers.rcm-server.rule=Host(`${SERVER_HOST:?Set SERVER_HOST}`)'
+      # 以下路径配置才访问 server 服务
+      - 'traefik.http.routers.rcm-server.rule=Host(`${SERVER_HOST:?Set SERVER_HOST}`) && (Path(`/health`) || Path(`/mcp`) || Path(`/agent/connect`) || Path(`/.well-known/oauth-protected-resource`) || Path(`/.well-known/oauth-authorization-server`) || PathPrefix(`/api/`) || PathPrefix(`/oauth/`))'
       - 'traefik.http.routers.rcm-server.entrypoints=${TRAEFIK_ENTRYPOINT:-web}'
+      - 'traefik.http.routers.rcm-server.priority=50'
       - 'traefik.http.routers.rcm-server.service=rcm-server'
       - 'traefik.http.services.rcm-server.loadbalancer.server.port=3000'
 

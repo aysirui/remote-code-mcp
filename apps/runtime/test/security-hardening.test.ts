@@ -116,6 +116,7 @@ test('本地管理 API 的大小写变体均不能绕过令牌，写入审批也
       req.end(post ? JSON.stringify({ approve: true }) : undefined)
     })
   const logs = jest.spyOn(logger, 'error').mockImplementation(() => undefined)
+  const debug = jest.spyOn(logger, 'debug').mockImplementation(() => undefined)
   try {
     for (const prefix of ['/local/api', '/LOCAL/API', '/Local/Api']) {
       expect(await request(prefix + '/status')).toBe(401)
@@ -123,22 +124,49 @@ test('本地管理 API 的大小写变体均不能绕过令牌，写入审批也
     }
     expect(approvals.list()).toHaveLength(1)
     expect(await request('/local/api/status', 'wrong-key')).toBe(401)
-    expect(await request('/local/api/status', 'test-local-key')).toBe(200)
+    expect(await request('/local/api/status?view=full', 'test-local-key')).toBe(200)
+    expect(debug).toHaveBeenCalledWith(
+      'local.request.completed',
+      expect.objectContaining({
+        url: '/local/api/status?view=full',
+        query: { view: 'full' },
+      }),
+    )
     statusError = true
     expect(await request('/local/api/status?token=private-query', 'test-local-key')).toBe(500)
     expect(logs).toHaveBeenCalledWith(
       'local.request.exception',
       expect.objectContaining({
         code: 'LOCAL_INTERNAL_ERROR',
+        url: '/local/api/status?token=private-query',
+        query: { token: 'private-query' },
         err: expect.objectContaining({ message: 'private-status-value' }),
       }),
     )
     expect(logs).toHaveBeenCalledWith(
       'local.request.failed',
-      expect.objectContaining({ httpStatus: 500, route: '/status', method: 'GET' }),
+      expect.objectContaining({
+        httpStatus: 500,
+        route: '/status',
+        method: 'GET',
+        url: '/local/api/status?token=private-query',
+        query: { token: 'private-query' },
+      }),
     )
-    expect(JSON.stringify(logs.mock.calls)).not.toMatch(/private-query|test-local-key/)
+    expect(logs).toHaveBeenCalledWith(
+      'local.request.failed',
+      expect.objectContaining({
+        httpStatus: 401,
+        method: 'POST',
+        url: `/LOCAL/API/write-approvals/${approval.id}`,
+        body: { approve: true },
+      }),
+    )
+    expect(JSON.stringify([logs.mock.calls, debug.mock.calls])).not.toMatch(
+      /wrong-key|test-local-key/,
+    )
   } finally {
+    debug.mockRestore()
     logs.mockRestore()
     approvals.cancelAll()
     await pending

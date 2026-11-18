@@ -2,7 +2,7 @@ import type { RpcRequest } from '@rcm/protocol'
 import { types } from 'node:util'
 import pino from 'pino'
 
-/** 本地运行元数据；允许附带原始异常，但不主动记录工具入参或响应正文。 */
+/** 本地运行元数据；允许附带异常和本地 HTTP 请求参数，不记录响应正文。 */
 interface LogDetails {
   /** RPC ID 与 Server 的操作审计 ID 相同。 */
   requestId?: string
@@ -22,9 +22,14 @@ interface LogDetails {
   workspaceCount?: number
   /** 设备启动时的 Runtime 版本。 */
   version?: string
-  /** 本地 HTTP 方法、注册路由模板和响应状态；不接收原始 URL 或请求体。 */
+  /** 本地 HTTP 方法、注册路由模板和响应状态。 */
   method?: string
   route?: string
+  /** 客户端发送的原始请求 URL，通常为包含查询字符串的路径。 */
+  url?: string
+  /** Express 解析的查询参数和 JSON 请求体，仅写入本地日志。 */
+  query?: unknown
+  body?: unknown
   /** 原始异常或 Promise 拒绝值，只进入本地终端日志。 */
   err?: unknown
 }

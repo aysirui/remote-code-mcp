@@ -272,7 +272,9 @@ export async function load(): Promise<Config> {
       servers: [],
       workspaces: [],
     }
-    config.activeServerId = addServer(config, process.env.GATEWAY_URL || 'http://localhost:3000').id
+    // SERVER_URL 只用于首次配置；未指定时使用本机开发地址。
+    const serverUrl = process.env.SERVER_URL || 'http://localhost:3000'
+    config.activeServerId = addServer(config, serverUrl).id
     logger.debug('runtime.config.defaulted')
     return config
   }

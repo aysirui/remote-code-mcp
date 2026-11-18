@@ -3,6 +3,7 @@ import { registerWorkspaceRoutes } from './workspace-routes'
 import { registerServerRoutes } from './server-routes'
 import { registerEventsRoutes } from './events-routes'
 import path from 'node:path'
+import { styleText } from 'node:util'
 import type { Config } from '../workspace/state'
 import type { WriteApprovalQueue } from '../requests/write-approvals'
 import type { LocalEvents } from './local-events'
@@ -34,11 +35,15 @@ export function startLocalServer(options: LocalServerOptions) {
   app.use((req, res, next) => {
     if (/^\/local\/api(?:\/|$)/i.test(req.path)) {
       const startedAt = Date.now()
+      const url = req.originalUrl
       res.once('finish', () => {
-        // 仅使用 Express 的注册模板，不输出路径参数或查询字符串。
+        // 本地诊断保留原始 URL 和已解析的参数；不读取认证请求头。
         const route: unknown = req.route?.path
         const details = {
           method: req.method,
+          url,
+          query: req.query,
+          body: req.body as unknown,
           route: typeof route === 'string' ? route : undefined,
           httpStatus: res.statusCode,
           durationMs: Date.now() - startedAt,
@@ -135,7 +140,7 @@ export function startLocalServer(options: LocalServerOptions) {
   app.get('/{*splat}', (_req, res) => res.sendFile(path.join(ui, 'index.html')))
 
   /** Express 捕获的异常不属于进程崩溃；只返回固定错误码，不把异常栈写入 HTTP 响应。 */
-  const handleLocalError: ErrorRequestHandler = (error: unknown, _req, res, _next) => {
+  const handleLocalError: ErrorRequestHandler = (error: unknown, req, res, _next) => {
     const status =
       error && typeof error === 'object' && 'status' in error ? error.status : undefined
     const httpStatus =
@@ -143,7 +148,15 @@ export function startLocalServer(options: LocalServerOptions) {
         ? status
         : 500
     const code = httpStatus >= 500 ? 'LOCAL_INTERNAL_ERROR' : 'LOCAL_REQUEST_INVALID'
-    logger.error('local.request.exception', { code, httpStatus, err: error })
+    logger.error('local.request.exception', {
+      code,
+      httpStatus,
+      method: req.method,
+      url: req.originalUrl,
+      query: req.query,
+      body: req.body as unknown,
+      err: error,
+    })
     if (res.headersSent) res.destroy()
     else
       res
@@ -152,10 +165,18 @@ export function startLocalServer(options: LocalServerOptions) {
   }
   app.use(handleLocalError)
 
-  return app.listen(port, '127.0.0.1', () => {
-    logger.info('runtime.local_server.listening', { port })
-    // 凭据仅通过现有本机启动提示交付，不进入诊断日志。
-    console.log(`Local UI: http://127.0.0.1:${port}/#token=${localKey}`)
-    console.log('This URL is private; do not share its token.')
+  const server = app.listen(port, '127.0.0.1', () => {
+    const address = server.address()
+    const listeningPort = address && typeof address === 'object' ? address.port : port
+    logger.info('runtime.local_server.listening', { port: listeningPort })
+    // 启动提示与结构化日志分开；终端不支持颜色时仍保留空行及缩进。
+    const link = `Local UI: http://127.0.0.1:${listeningPort}/#token=${localKey}`
+    const warning = 'This URL is private; do not share its token.'
+    const useColor =
+      process.stdout.isTTY && process.stdout.hasColors() && process.env.NO_COLOR === undefined
+    console.log(
+      `\n  ${useColor ? styleText(['bold', 'cyan'], link) : link}\n  ${useColor ? styleText(['bold', 'yellow'], warning) : warning}\n`,
+    )
   })
+  return server
 }

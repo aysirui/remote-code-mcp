@@ -4,7 +4,15 @@
 
 ## Runtime 配置
 
-Runtime 默认保存配置到 `~/.remote-code-mcp/config.json`。可通过进程环境变量指定 `RUNTIME_DATA_DIR`（私有数据目录）、`RUNTIME_PORT`（默认 18787）及首次配置的 `GATEWAY_URL`（默认 `http://localhost:3000`）。Runtime 不自动读取 `.env`，需在启动进程前设置这些变量；已有服务器配置通过本地 UI 管理。
+Runtime 默认保存配置到 `~/.remote-code-mcp/config.json`。可通过进程环境变量指定 `RUNTIME_DATA_DIR`（私有数据目录）、`RUNTIME_PORT`（默认 18787）及首次配置的 `SERVER_URL`（默认 `http://localhost:3000`）。Runtime 不自动读取 `.env`，需在启动进程前设置这些变量；已有服务器配置通过本地 UI 管理，不受地址环境变量影响。
+
+### 本地管理 Token
+
+直接启动 Runtime 即可，不用手动设置 Token。每次启动时，Runtime 都会生成随机的本地管理 Token，并在终端打印完整的 `Local UI:` 链接（例如 `http://127.0.0.1:18787/#token=...`）。浏览器页面读取链接片段，再通过 `Authorization: Bearer` 请求本地管理 API。它不是配对后的设备 Token，也不是 Console 的登录凭据。
+
+回环地址只限制请求来自本机，不能证明请求者有管理权限。没有 Token，能访问该端口的其他本机进程就可能修改工作区授权、批准操作或解除设备绑定。因此，不要分享完整链接或公开本地管理端口。
+
+Token 不写入 Runtime 配置，只对当前进程有效。每次启动重新生成，是为了让以前复制、记录或泄露的链接在重启后失效。重启后，旧标签页若用旧 Token 重连会收到 `401`；请打开当前终端打印的新链接，刷新旧标签页不会更新 Token。已保存的设备绑定与工作区授权不受影响。
 
 ## Runtime 审批通知
 
@@ -14,8 +22,7 @@ Runtime 默认保存配置到 `~/.remote-code-mcp/config.json`。可通过进程
 
 ## Runtime 配对
 
-1. 打开启动日志打印的本地 UI URL，例如 `http://127.0.0.1:18787/#token=...`，**不要分享其中的 token**。
-   本地管理凭据每次启动都会重新生成。若页面提示凭据失效，请重新打开当前启动日志中的完整链接；找不到链接时，请重启 Runtime 并打开新打印的链接。刷新旧页面无法恢复，设备绑定和工作区授权不受影响。
+1. 打开当前 Runtime 启动时打印的完整 [本地管理链接](#本地管理-token)。
 2. 在本地 UI 确定 Server 地址（本机可用 `http://localhost:3000`；公网必须 `https://...`）。
 3. 点击 **生成配对码**，获得临时配对码。
 4. 点击“打开平台授权页面”（本地开发为 `http://localhost:5173/activate`），用平台账号登录，输入配对码并确认。
@@ -53,9 +60,9 @@ Console 将命令无法启动（`COMMAND_START_FAILED`）、非零退出（`COMM
 
 Runtime 通过项目内的 `logger.debug()`、`logger.info()`、`logger.error()` 统一输出，业务代码不直接依赖 Pino。调试和运行信息写入标准输出，故障写入标准错误。
 
-启动 Runtime 前设置 `RUNTIME_LOG_LEVEL`：`info`（默认）记录启动、连接与 RPC 结果；`debug` 额外记录本地 API 成功请求、授权、审批、执行与重连；`error` 仅输出故障。日志为逐行 JSON，包含时间、事件及适用的请求 ID、执行阶段、错误码与耗时。`requestId` 对应 Server 审计记录的 `operationId`。有原始异常时，失败日志记录其消息、堆栈、原因链及可用的系统错误码和文件路径，无需启用 `debug`。本地 API 日志使用注册路由模板，不主动记录实际 URL、查询或请求体。
+启动 Runtime 前设置 `RUNTIME_LOG_LEVEL`：`info`（默认）记录启动、连接与 RPC 结果；`debug` 额外记录本地 API 成功请求、授权、审批、执行与重连；`error` 仅输出故障。日志为逐行 JSON，包含时间、事件及适用的请求 ID、执行阶段、错误码与耗时。`requestId` 对应 Server 审计记录的 `operationId`。有原始异常时，失败日志记录其消息、堆栈、原因链及可用的系统错误码和文件路径，无需启用 `debug`。本地 API 失败日志（以及 `debug` 下的成功日志）记录原始请求 URL（含查询字符串）、解析后的查询参数和 JSON 请求体，不记录认证请求头或响应正文。管理链接和私密提醒在本地服务监听成功后单独显示，支持颜色的终端会高亮。
 
-启动失败、未捕获异常和未处理的 Promise 拒绝会输出一条 `runtime.fatal` 日志并以退出码 1 停止进程。原始异常只在本地输出，不上传 Server；RPC 错误仍使用公开错误码，Server/Console 审计仍只保存脱敏元数据。异常文本可能含绝对路径或其他私密信息，分享前请检查；不要分享含本机会话令牌的管理链接。
+启动失败、未捕获异常和未处理的 Promise 拒绝会输出一条 `runtime.fatal` 日志并以退出码 1 停止进程。原始异常只在本地输出，不上传 Server；RPC 错误仍使用公开错误码，Server/Console 审计仍只保存脱敏元数据。异常文本和请求参数可能含绝对路径、配对凭据或其他私密信息，分享前请检查；不要分享含本机会话令牌的管理链接。
 
 ## Runtime 多服务器配置
 

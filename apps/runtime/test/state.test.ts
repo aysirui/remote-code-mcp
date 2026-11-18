@@ -1,7 +1,9 @@
+import fs from 'node:fs/promises'
 import {
   activeServer,
   addServer,
   authorizeWorkspace,
+  load,
   migrateConfig,
   normalizeGateway,
   selectServer,
@@ -29,6 +31,25 @@ beforeEach(() => {
       },
     ],
   })
+})
+
+test.each([
+  ['https://rcm.example.com', 'https://rcm.example.com'],
+  ['', 'http://localhost:3000'],
+])('首次配置使用 SERVER_URL，未指定时使用默认地址', async (serverUrl, expected) => {
+  const env = jest.replaceProperty(process, 'env', {
+    ...process.env,
+    SERVER_URL: serverUrl,
+  })
+  const read = jest
+    .spyOn(fs, 'readFile')
+    .mockRejectedValue(Object.assign(Error('未创建配置'), { code: 'ENOENT' }))
+  try {
+    expect(activeServer(await load()).gateway).toBe(expected)
+  } finally {
+    read.mockRestore()
+    env.restore()
+  }
 })
 
 test('旧配置迁移保留设备凭据、工作区 ID 和原授权，重复读取不会生成新身份', () => {

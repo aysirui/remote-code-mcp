@@ -139,6 +139,8 @@ test('远程临时命令必须经本机审批；拒绝、过期和权限撤销�
   })
   try {
     await waitFor(() => ready && token)
+    expect(stdout).toContain(`\n  Local UI: http://127.0.0.1:${port}/#token=${token}\n`)
+    expect(stdout).toContain('\n  This URL is private; do not share its token.\n')
     const registeredId = send({ command: 'registered-echo' })
     expect(await waitFor(() => responses.get(registeredId))).toMatchObject({
       success: true,

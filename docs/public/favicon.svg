@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Remote Code MCP Docs favicon">
+  <!-- 保留品牌原有电脑与连接图形；用平面配色和简洁功能角标区分应用。 -->
+  <defs>
+    <clipPath id="tile"><rect width="256" height="256" rx="48"/></clipPath>
+    <filter id="white-mark" color-interpolation-filters="sRGB">
+      <feColorMatrix type="matrix" values="0 0 0 1 0  0 0 0 1 0  0 0 0 1 0  1.17 0 0 0 -0.17"/>
+    </filter>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect width="256" height="256" fill="#754DD5"/>
+    <path d="M0 219 C75 206 133 226 190 194 C220 176 239 159 256 143 V256 H0Z" fill="#A07AF4"/>
+    <image x="0" y="0" width="256" height="256" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAMAAABrrFhUAAADAFBMVEUlY+tEee5jkPGCpvSivPbB0vng6fz///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////8Qy6M2AAAE10lEQVR42u2d6dqcIAxGJ2Hx/u+4sz51Y9FaiHrO30795IUESAI+HgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA90a0KSKmWq8+Dq2JXs10fhj6EGxI4IZ+eAPt98NwawX6tr+/Am7ojesrQOwuQLz5AOhsBNGAAD2HgI7fw5XWbgfxfJS6sfJqwgJaD8Rgwg3+fYvQ8W97CwJIR/MLBgSIPR2wBQECAiAAAiAAAiAAAtgQQJrFjE0KoOEdMz6XAC688EcI8NugRTmRAH7PY9YF0KZxgoMEkF1b+3UBYtMd+kEC+OME0LahooMEiLteeVWASZBSTiKA7hu01xFgnwWUBTBoAs/ZTssW8Ax77hZARk4wmBMgrPayzqKbr04McsAsIMYE0Lj+Xn76xp85Meo+AULbaPkWAVzitzIbsrE22L0mwPuFYrvagQ0C+FTXuKkF+OopYUWA8HmMOtdoN1QvQEjmc2eh9XonthTAN0+T1AogMTk9zyxAJlk/2SRA+/bXCqCZhL6bWca03kg3COA7ZInqBHC5gobFIiDWlj88fxif/P6475qhDJXmv+hTWfi8Wc1ZuknBvZ8lznVrf40A0x6NUrEMnioQ6vPUwWBMUAuNWd0ITguvMq7wVXbQs/1lAVxhOOu6sc8qb9ZdoYa3evG55OnV/qIAvmTOPrFw17IrHD07dAuOFwQIxVYkjWM2GfjCs3slB7ICzNqgWQ/hCi0MhfrMYC8xohWeLFthknOFOi8VU3MCSEUHSf7fXboablGfbm8EhIrXcyU/n/IhsqwWFGMCSM1qrlhiNHEjPmMBvWzg3wSQokKaEMDZF+ARyy6wZAGzduq5BJj5cN2RD0kvo05gAgtH7TbnQzK7whUnaLBAwhWq2n3Wg+eXgieYBpcDdR7rz1qA5ge4Gjk4UtgLzHoxtZhzxTWQFLcCnUqmS7vB+YlCrbSAioDA8qhGMFkk5ZPdFCtXkRVbbf9ZL0S1WCWmiW5ySQuoDYt+z+u+j9B+h5qzWCaXcATJjaBumN+fKSCdDAiTUeG5I5DsRtAN9amRlf8YTBZK+qUVpJbBWu/Xfvk/0fFQe0k2GhhGUmNusbFPbQRD/cz2iod6/4yMhmlu2Df0iNXJUZ3lPKVmiec2Z4d966VRfXZYpk4vuRHU/P6pVB+gjfdHWwok/LjL08tgn1g476gTtFYjNHLTuY1grH3g+QolX47g07G5ZbDU2u8Z6wR/9W/Zsw7ivF68UFIP8dQnrhU+5sTteavF5ZjTPuc9LyDHrFUSMuoJTozEQ/ooNY7ktRaOzvKZoa8N/GMfZQzJ/qmx910YD84NIgACIAACIMAlBLj9LTId0vO27hHq8BLRwk1SvltqcpxvcjZukxu8a0cYbNwmd/v7BLtfqdr9RkkxIIBwq2xXQuf2h8fj1gr0b39fR2jhbvHFAZ+GE6CZC/a/B7jatj6Yaf6GL0y8f5X8HkGo/r7E77zgSfGGPRoCIAACIAACIAACHP4lqgkx+fGoCU6u0vx4+rV+t6jRJRQIp/2GjoWwobuAB7hAxKOjAO7uJqA4wQsMgf3hsijXXvoWY95yz0/Syid0qJdpPgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/G/+AFNttvOU8CaEAAAAAElFTkSuQmCC" filter="url(#white-mark)"/>
+    <!-- 应用功能标识保持线性、低复杂度，缩小为浏览器 favicon 时仍能区分。 -->
+    <rect x="169" y="168" width="70" height="70" rx="19" fill="#5933B5" stroke="#fff" stroke-width="6"/>
+    <g fill="none" stroke="#fff" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M204 188v35m0-35c-7-5-14-7-23-6v34c10-1 17 1 23 7m0-35c7-5 14-7 23-6v34c-10-1-17 1-23 7"/>
+    </g>
+  </g>
+</svg>

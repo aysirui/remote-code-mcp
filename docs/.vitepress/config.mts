@@ -7,6 +7,7 @@ export default defineConfig({
   lang: 'zh-CN',
   title: 'Remote Code MCP',
   description: 'Remote Code MCP 使用、部署与许可证文档',
+  head: [['link', { rel: 'icon', type: 'image/svg+xml', href: '/docs/favicon.svg' }]],
   // 保留默认 .html 地址，使 Nginx 可直接查找生成的静态页面。
   cleanUrls: false,
   themeConfig: {

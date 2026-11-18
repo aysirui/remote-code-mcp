@@ -94,7 +94,11 @@ test('新增审批通知一次，刷新、移除再重连不重复；标题和�
   const p = page(['a'])
   expect(notices).toHaveLength(1)
   expect(document.title).toContain('1 项待审批')
-  expect(icon.href).toContain('data:image/svg+xml')
+  expect(icon.href).toBe('/favicon-attention.svg')
+  jest.advanceTimersByTime(500)
+  expect(icon.href).toBe('/original.png')
+  jest.advanceTimersByTime(500)
+  expect(icon.href).toBe('/favicon-attention.svg')
   p.approvals.value = [item('a')]
   await nextTick()
   expect(notices).toHaveLength(1)

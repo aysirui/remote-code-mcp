@@ -46,11 +46,14 @@ export function useApprovalNotifications(
     typeof BroadcastChannel === 'undefined'
       ? undefined
       : new BroadcastChannel('rcm-approval-notifications')
-  const unreadIcon =
-    'data:image/svg+xml,' +
-    encodeURIComponent(
-      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#192b3b"/><path d="m12 9-6 7 6 7m8-14 6 7-6 7" fill="none" stroke="white" stroke-width="3"/><circle cx="26" cy="6" r="6" fill="#e5484d" stroke="white" stroke-width="2"/></svg>',
-    )
+  // 提醒态复用完整品牌 Logo，避免以临时绘制的图标替换原 favicon。
+  const attentionIcon = '/favicon-attention.svg'
+  let blinkOn = true
+
+  /** 仅在存在待审批任务时切换 favicon，清空或离线后恢复标准图标。 */
+  function updateFavicon() {
+    if (icon) icon.href = count.value && blinkOn ? attentionIcon : originalIcon
+  }
 
   /** 仅点击按钮时申请通知权限，已拒绝时由用户在浏览器设置中修改。 */
   async function enableNotifications() {
@@ -101,7 +104,8 @@ export function useApprovalNotifications(
       document.title = count.value
         ? `（${count.value} 项待审批）Runtime · Local Code`
         : originalTitle
-      if (icon) icon.href = count.value ? unreadIcon : originalIcon
+      if (!count.value) blinkOn = true
+      updateFavicon()
       const ids = new Set(pending.value.map((item) => item.id))
       for (const [id, notification] of opened) {
         if (!ids.has(id)) {
@@ -153,7 +157,11 @@ export function useApprovalNotifications(
     syncSeen()
     timer = setInterval(() => {
       now.value = Date.now()
-    }, 1000)
+      if (count.value) {
+        blinkOn = !blinkOn
+        updateFavicon()
+      }
+    }, 500)
     window.addEventListener('focus', syncPermission)
     // 只有有效且允许通知的页面参与选举，避免失效或拒绝权限的标签页占住发送权。
     stopElection = watch(

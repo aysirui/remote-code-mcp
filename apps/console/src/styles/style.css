@@ -378,6 +378,7 @@ input {
   height: 40px;
   flex-shrink: 0;
   object-fit: contain;
+  border-radius: 10px;
 }
 .auth-hero {
   position: relative;
@@ -774,7 +775,7 @@ input {
   color: #45668e;
 }
 .auth-brand-symbol {
-  border-radius: 7px;
+  border-radius: 10px;
 }
 .auth-kicker {
   display: none;

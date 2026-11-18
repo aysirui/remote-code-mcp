@@ -11,7 +11,7 @@ defineProps<{
   <div class="auth-page">
     <aside class="auth-art">
       <div class="auth-brand">
-        <img class="auth-brand-symbol" src="/remote-code-logo.png" alt="" width="40" height="40" />
+        <img class="auth-brand-symbol" src="/logo-square.svg" alt="" width="40" height="40" />
         Remote Code MCP
       </div>
       <div class="auth-hero">
@@ -28,8 +28,6 @@ defineProps<{
     <section class="auth-form">
       <div class="auth-box">
         <slot />
-        <!-- 文档公开访问，未登录用户也可查看部署和使用说明。 -->
-        <p class="muted"><a href="/docs/">使用文档</a></p>
       </div>
     </section>
   </div>

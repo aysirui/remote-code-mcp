@@ -5,6 +5,6 @@ import 'element-plus/dist/index.css'
 import App from './App.vue'
 import { router } from './router'
 import '../../ui/theme.css'
-import './style.css'
-import './data-lists.css'
+import './styles/style.css'
+import './styles/data-lists.css'
 createApp(App).use(ElementPlus, { locale: zhCn }).use(router).mount('#app')

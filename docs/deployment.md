@@ -4,7 +4,7 @@
 
 ## 环境配置
 
-本地开发优先使用 `apps/server/.env.example`，Docker Compose 使用根目录 `.env.docker.example`。复制模板后填写真实配置，不要提交包含密钥的文件。
+本地开发优先使用 `apps/server/.env.example`，Docker Compose 使用 `docker/env.example` 作为通用配置模板。复制模板后填写真实配置，不要提交包含密钥的文件。
 
 Server 环境变量优先级为：系统环境变量 → `apps/server/.env` → 根目录 `.env` → 默认值。服务、迁移及管理员初始化统一使用 `apps/server/src/config/env.ts`；执行数据库命令前务必确认目标库。
 
@@ -21,6 +21,10 @@ Server 环境变量优先级为：系统环境变量 → `apps/server/.env` → 
 | `MAIL_FROM`                               | 可选，默认使用 `SMTP_USER`，须为服务商允许的发件地址                   |
 | `MYSQL_PASSWORD`、`MYSQL_ROOT_PASSWORD`   | Compose 必填的数据库密码，使用不同的强密码                             |
 | `VITE_API_URL`                            | Console 构建时使用的 API 地址；Compose 自动使用 `PUBLIC_URL`           |
+| `WEBSITE_URL`                             | 官网公开 URL，供 Astro 生成规范地址；默认使用 `PUBLIC_URL`             |
+| `DOCS_URL`                                | 在线文档完整 URL，供 Console 导航使用；默认 `PUBLIC_URL/docs/`         |
+| `VITE_DOCS_URL`                           | Console 构建期文档地址，Compose 从 `DOCS_URL` 自动传入                 |
+| `PUBLIC_SITE_URL`、`PUBLIC_CONSOLE_URL`   | Astro 构建期官网和控制台地址，由 Compose 自动注入                      |
 
 若数据库密码含 URL 保留字符，`DATABASE_URL` 中的密码段需要 URL 编码。当前 Compose 直接插值 `MYSQL_PASSWORD` 构造连接串，应使用足够长且无需 URL 编码的随机密码，或自行调整连接串配置。
 
@@ -31,7 +35,7 @@ Server 环境变量优先级为：系统环境变量 → `apps/server/.env` → 
 本地准备 Compose 配置可使用：
 
 ```powershell
-Copy-Item .env.docker.example .env
+Copy-Item docker/env.example .env
 ```
 
 填写 `.env` 后，可在已配置反向代理的环境运行：
@@ -42,9 +46,9 @@ docker compose up -d --build
 
 仓库 Compose 仅使用 `expose`，不向宿主机发布端口。独立使用 Compose 时，反向代理必须连接同一 Docker 网络；此命令本身不会提供公网域名和 HTTPS。MySQL 仅供内部服务访问。
 
-在 Dokploy 中选择 **Docker Compose 应用**，连接仓库并使用根目录 `docker-compose.yml`。Environment 中配置 `.env.docker.example` 的全部必填变量，包括 SMTP；这些变量通过 Compose 显式传入容器。
+在 Dokploy 中选择 **Docker Compose 应用**，连接仓库并使用根目录 `docker-compose.yml`。Environment 中按 `docker/env.example` 的说明配置全部必填变量，包括 SMTP；这些变量通过 Compose 显式传入容器。
 
-在 Domains 中分别为 `server`（端口 3000）和 `console`（端口 80）配置域名及 HTTPS，对应 `PUBLIC_URL`、`CONSOLE_URL`。反向代理必须保留 `/agent/connect` 的 WebSocket Upgrade，允许 `/mcp` 的流式 HTTP 响应。推荐启用 Dokploy 的 Isolated Deployments，由其管理路由与网络。
+在 Domains 中为 `server`（端口 3000）、`console`、`website`、`docs`（均为端口 80）配置公开入口。一个域名承载多个服务时，应按 Host 和路径匹配，确保 API、OAuth、MCP、WebSocket 以及文档路径不会被官网根路由覆盖。路由及 TLS 的具体实现由部署环境决定，对应 `PUBLIC_URL`、`CONSOLE_URL`。反向代理必须保留 `/agent/connect` 的 WebSocket Upgrade，允许 `/mcp` 的流式 HTTP 响应。推荐启用 Dokploy 的 Isolated Deployments，由其管理路由与网络。
 
 Server 容器启动顺序：
 
@@ -58,17 +62,15 @@ Server 容器启动顺序：
 
 持久化并备份 `mysql_data` 数据卷，不要在重部署时删除。迁移 SQL、快照及 `meta/_journal.json` 随源码和镜像分发，无需单独挂载迁移目录。更新前备份数据库，核对目标提交及迁移；多副本部署需要改为单独执行迁移任务，当前方案不提供多实例 WSS 路由。
 
-## 在线文档
+## 官网与在线文档
 
-Console 镜像同时构建管理台和 VitePress 文档，文档产物位于镜像内的 `/usr/share/nginx/html/docs/`。部署后访问 `CONSOLE_URL` 所在域名的 `/docs/`，例如 `https://console.example.com/docs/`。文档公开访问，无需登录；不需要额外服务、端口或环境变量。
+产品官网由 `apps/website` 使用 Astro 静态生成，在线文档由根目录 `docs/` 使用 VitePress 生成；两者均采用独立 Docker 镜像，不依赖 Console 的构建与发布。
 
-反向代理应将 `/docs` 和 `/docs/` 下的请求原样转发给 Console 服务（端口 80）。镜像内 Nginx 会将 `/docs` 重定向至 `/docs/`，独立处理文档页面和资源；缺失文档返回 HTTP 404，不回退到管理台。
+构建时可通过 `WEBSITE_URL` 配置官网公开地址，`DOCS_URL` 配置控制台导航使用的在线文档绝对地址。官网控制台按钮使用 `CONSOLE_URL`，文档默认公共路径为 `/docs/`。请设置公开访问地址，不要填写容器内部地址或密钥。
 
-修改 `docs/*.md` 后重新构建并发布 Console 镜像，即可更新在线文档。文档与管理台使用同一次构建的源码，不需要挂载 Markdown 文件，也不在运行时解析文档。
+建议的公开路径为：官网 `/`、文档 `/docs/`、MCP `/mcp`、REST API `/api/*`、OAuth `/oauth/*`，Console 使用独立域名。代理层需要保留 OAuth 元数据发现路径、健康检查和 WebSocket Upgrade，同时支持 MCP 流式响应。
 
-本地编写时运行 `pnpm docs:dev`，访问 `http://127.0.0.1:5174/docs/`；同时运行 `pnpm dev:console` 后，管理台的“使用文档”入口会代理到该文档服务。文档开发服务固定使用 5174 端口，启动前请确保端口空闲。
-
-单独检查发布产物时，先运行 `pnpm docs:build`，再运行 `pnpm docs:preview`，访问同一预览地址。根目录 `pnpm build` 也会构建文档；生成目录 `docs/.vitepress/dist/` 和开发缓存无需提交。
+本地运行 `pnpm dev:website` 开发官网，`pnpm docs:dev` 开发文档。运行 `pnpm docs:build` 生成文档；根目录 `pnpm build` 同时包含官网与文档构建。
 
 ## 数据库迁移
 
@@ -92,7 +94,7 @@ Console 镜像同时构建管理台和 VitePress 文档，文档产物位于镜�
 在独立测试环境验证，避免对生产库或私人工作区执行破坏性测试：
 
 - `GET /health` 返回健康状态；OAuth 两个 `.well-known` 元数据入口可用。
-- Console 域名下 `/docs` 跳转至 `/docs/`；未登录时可阅读文档、搜索并直接刷新文档页面，未知文档路径返回 HTTP 404；管理台登录和原有页面仍可访问。
+- 官网根路径正确展示产品入口，Console 和 GitHub 按钮有效；文档 `/docs` 跳转至 `/docs/`，未登录可阅读、搜索并直接刷新页面，未知文档路径返回 HTTP 404；控制台登录及现有页面保持可用。
 - 未授权访问 `/mcp` 返回 401 和 `WWW-Authenticate`，OAuth 授权、刷新、重放拒绝及撤销符合预期。
 - 两个用户只能访问自己的设备和工作区，管理员也不能通过 MCP 跨用户读文件。
 - Runtime 离线、设备撤销、工作区停用、连接替换及断线重连后权限仍正确，旧凭据失效。

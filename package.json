@@ -22,6 +22,7 @@
     "check": "pnpm lint && pnpm typecheck && pnpm format:check",
     "dev:server": "pnpm --filter @rcm/server dev",
     "dev:console": "pnpm --filter @rcm/console dev",
+    "dev:website": "pnpm --filter @rcm/website dev",
     "dev:runtime": "pnpm --filter @rcm/runtime dev",
     "build": "pnpm -r --sort build && pnpm docs:build",
     "docs:dev": "vitepress dev docs --host 127.0.0.1 --port 5174 --strictPort",

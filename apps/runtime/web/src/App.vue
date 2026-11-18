@@ -11,7 +11,7 @@ const { token, authorizationExpired, status, writeApprovals, refresh } = ctx
   <div class="runtime-shell">
     <aside class="runtime-sidebar">
       <div class="runtime-brand">
-        <img class="mark" src="/remote-code-logo.png" alt="" width="32" height="32" />
+        <img class="mark" src="/logo-square.svg" alt="" width="32" height="32" />
         <div>
           Remote Code
           <small>本地 Runtime</small>

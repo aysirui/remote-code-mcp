@@ -1,4 +1,6 @@
+# 通用自托管编排：服务不发布宿主机端口，由部署者配置公开访问入口。
 services:
+  # MySQL 持久化数据库，只连接内部应用网络。
   mysql:
     image: mysql:8.4
     restart: unless-stopped
@@ -9,11 +11,14 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD}
     volumes: [mysql_data:/var/lib/mysql]
     healthcheck:
+      # 数据库可访问后再启动依赖服务。
       test: ['CMD-SHELL', 'mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent']
       interval: 10s
       timeout: 5s
       retries: 15
     networks: [internal]
+
+  # Server 承载 MCP、OAuth、API 和设备长连接。
   server:
     build: { context: ., dockerfile: docker/Dockerfile.server }
     restart: unless-stopped
@@ -24,7 +29,7 @@ services:
       CONSOLE_URL: ${CONSOLE_URL:?Set CONSOLE_URL}
       ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL}
       PORT: 3000
-      # SMTP 配置直接传入 Server；密钥仅来自部署环境，不写入镜像。
+      # SMTP 凭据仅来自环境配置，不写入镜像。
       SMTP_HOST: ${SMTP_HOST:?Set SMTP_HOST}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_SECURE: ${SMTP_SECURE:-false}
@@ -35,15 +40,44 @@ services:
       mysql: { condition: service_healthy }
     expose: ['3000']
     networks: [internal]
+
+  # Console 独立构建；文档入口使用构建期公开 URL。
   console:
     build:
       context: .
       dockerfile: docker/Dockerfile.console
-      args: { VITE_API_URL: '${PUBLIC_URL}' }
+      args:
+        VITE_API_URL: '${PUBLIC_URL}'
+        VITE_DOCS_URL: '${DOCS_URL:-${PUBLIC_URL}/docs/}'
     restart: unless-stopped
     expose: ['80']
     networks: [internal]
+
+  # Astro 官网构建为静态资源，与后端进程解耦。
+  website:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.website
+      args:
+        PUBLIC_SITE_URL: '${WEBSITE_URL:-${PUBLIC_URL}}'
+        PUBLIC_CONSOLE_URL: '${CONSOLE_URL}'
+    restart: unless-stopped
+    expose: ['80']
+    networks: [internal]
+
+  # VitePress 文档独立构建，由外部代理提供 /docs/ 访问路径。
+  docs:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.docs
+    restart: unless-stopped
+    expose: ['80']
+    networks: [internal]
+
+# 数据库卷持久化，升级和重部署时保持不变。
 volumes:
   mysql_data:
+
+# 外部路由网络由自托管者按需配置。
 networks:
   internal:

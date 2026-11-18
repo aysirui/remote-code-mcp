@@ -1,6 +1,6 @@
 import { defineConfig } from 'vitepress'
 
-/** 将公开产品文档构建为部署在 Console 同域名 /docs/ 下的静态站点。 */
+/** 将公开文档独立构建到 /docs/，不依赖 Console 发布。 */
 export default defineConfig({
   // 所有文档链接和构建资源均使用此部署前缀。
   base: '/docs/',

@@ -47,6 +47,8 @@ const descriptions: Record<string, string> = {
   'admin-devices': '查看平台设备，撤销失效授权',
   'admin-overview': '了解平台资源与连接状态',
 }
+// 在线文档独立发布，开发环境可回退到本地 /docs/ 代理。
+const docsUrl = import.meta.env.VITE_DOCS_URL || '/docs/'
 const pageDescription = computed(() => descriptions[page.value] || '管理设备与 AI 工具授权')
 </script>
 <template>
@@ -59,7 +61,7 @@ const pageDescription = computed(() => descriptions[page.value] || '管理设备
   <div v-else class="app-shell">
     <aside class="sidebar">
       <div class="brand">
-        <img class="brand-mark" src="/remote-code-logo.png" alt="" width="32" height="32" />
+        <img class="brand-mark" src="/logo-square.svg" alt="" width="32" height="32" />
         <span class="brand-text">
           Remote Code
           <span class="brand-caption">控制中心</span>
@@ -102,7 +104,7 @@ const pageDescription = computed(() => descriptions[page.value] || '管理设备
           <span class="label">{{ item.name }}</span>
         </router-link>
         <!-- 文档是独立静态站点，使用普通链接离开 Console 路由。 -->
-        <a href="/docs/" title="使用文档">
+        <a :href="docsUrl" title="使用文档">
           <el-icon><Reading /></el-icon>
           <span class="label">使用文档</span>
         </a>

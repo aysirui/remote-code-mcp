@@ -95,7 +95,7 @@ async function activate() {
   <div class="activation-page">
     <header class="activation-header">
       <a class="activation-brand" href="/console" aria-label="Remote Code MCP，前往登录页">
-        <img src="/remote-code-logo.png" width="32" height="32" alt="" />
+        <img src="/logo-square.svg" width="32" height="32" alt="" />
         <span>
           Remote Code
           <span class="brand-suffix">MCP</span>

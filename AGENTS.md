@@ -4,7 +4,7 @@
 
 ## 一、项目定位与架构
 
-Remote Code MCP（RCM）是基于 pnpm workspace 的 TypeScript monorepo。其目标是在用户授权下，让 ChatGPT 等 MCP 客户端通过远程 Gateway 安全调用用户本地工作区的文件、Git 和已登记命令。当前采用 **Server + Console + Runtime + Protocol** 四部分，而非通用 OS 沙箱平台。
+Remote Code MCP（RCM）是基于 pnpm workspace 的 TypeScript monorepo。其目标是在用户授权下，让 ChatGPT 等 MCP 客户端通过远程 Gateway 安全调用用户本地工作区的文件、Git 和已登记命令。当前采用 **Server + Console + Website + Docs + Runtime + Protocol** 四部分，而非通用 OS 沙箱平台。
 
 主要调用链：
 
@@ -30,6 +30,8 @@ packages/protocol（共享 RPC、Zod Schema、类型契约）
 - `apps/server/src/modules/device/`：设备配对、WebSocket 连接、工作区同步、RPC 路由、超时和操作审计；`DeviceHub` 由 NestJS 生命周期管理。
 - `apps/server/src/modules/mcp/`：MCP HTTP 接口、工具注册和工具到设备 RPC 的映射；服务端验证 OAuth 身份及工作区归属。
 - `apps/server/src/infrastructure/database/`：Drizzle Schema、数据库连接、Store；迁移产物位于 `apps/server/drizzle/`。
+- `apps/website/`：Astro 独立静态官网，负责公开产品展示、文档、控制台和代码仓库导航；不承载后端业务。
+- `docs/`：VitePress 独立文档产物，公共访问前缀为 `/docs/`。
 - `apps/console/src/`：Vue 3 + Vue Router + Pinia + Element Plus；页面在 `views/`，页面复用组件在 `components/`，界面业务状态在 `composables/`，API 请求在 `api/`。
 - `apps/runtime/src/connection/`：Gateway WebSocket 连接与重连；`workspace/`：本机目录定义、服务器配置、工作区授权及策略。
 - `apps/runtime/src/requests/`：RPC 请求分发、审批策略、审批队列与资源核验。

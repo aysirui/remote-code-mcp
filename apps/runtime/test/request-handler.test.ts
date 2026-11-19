@@ -238,22 +238,44 @@ test.each([
   [{ exitCode: null, timedOut: false }, 'COMMAND_PROCESS_TERMINATED'],
   [{ exitCode: 0, timedOut: true }, 'COMMAND_TIMEOUT'],
 ] as const)('区分已启动的命令失败并保留部分结果：%s => %s', async (state, code) => {
+  const stderr = jest.spyOn(process.stderr, 'write').mockReturnValue(true)
+  const args = ['run', 'build', '--token', 'private-argument']
+  context.config.workspaces[0].commands = [
+    { id: 'build-local', name: '本机构建', executable: 'pnpm', args, timeoutMs: 120_000 },
+  ]
   const provider = jest.spyOn(commandExecutionProvider, 'run').mockResolvedValue({
     ...state,
     output: '私有输出',
     truncated: true,
   })
   try {
-    const response = await handleGatewayMessage(rpc('command.run', { command: 'build' }), context)
+    const request = rpc('command.run', { command: 'build-local' })
+    const { id } = JSON.parse(request)
+    const response = await handleGatewayMessage(request, context)
     expect(response).toMatchObject({
       success: false,
       error: { code, message: code },
-      data: { command: 'build', output: '私有输出', truncated: true, exitCode: state.exitCode },
-      commandAudit: { executable: 'pnpm', args: ['run', 'build'] },
+      data: {
+        command: 'build-local',
+        output: '私有输出',
+        truncated: true,
+        exitCode: state.exitCode,
+      },
+      commandAudit: { executable: 'pnpm' },
     })
     expect(response?.data).not.toHaveProperty('timedOut')
+    expect(JSON.stringify(response)).not.toMatch(/private-argument|--token|"cwd"|"timeoutMs"/)
+    expect(JSON.parse(String(stderr.mock.calls[0][0]))).toMatchObject({
+      event: 'command.failed',
+      requestId: id,
+      command: { id: 'build-local', executable: 'pnpm', args, cwd: dir, timeoutMs: 120_000 },
+      ...state,
+      output: '私有输出',
+      truncated: true,
+    })
   } finally {
     provider.mockRestore()
+    stderr.mockRestore()
   }
 })
 
@@ -275,17 +297,22 @@ test('命令启动失败在本地记录原始原因，RPC 只返回稳定错误�
       expect.objectContaining({ requestId: id }),
     )
     expect(JSON.parse(String(stderr.mock.calls[0][0]))).toMatchObject({
+      event: 'command.start_failed',
+      requestId: id,
+      command: { id: 'build', executable: 'pnpm', args: ['run', 'build'], cwd: dir },
+    })
+    expect(JSON.parse(String(stderr.mock.calls[1][0]))).toMatchObject({
       level: 'error',
       event: 'rpc.failed',
       requestId: id,
       stage: 'execution',
       code: 'COMMAND_START_FAILED',
       durationMs: expect.any(Number),
-      err: {
+      error: {
         message: expect.stringContaining('private-token ' + dir),
-        stack: expect.stringContaining('private-token ' + dir),
       },
     })
+    expect(String(stderr.mock.calls[0][0])).not.toContain('"stack"')
     const serialized = JSON.stringify(response)
     expect(serialized).not.toContain('private-token')
     expect(serialized).not.toContain(JSON.stringify(dir).slice(1, -1))
@@ -326,8 +353,9 @@ test('文件读取失败的绝对路径和系统错误只进入本地日志', as
     expect(entry).toMatchObject({
       event: 'rpc.failed',
       operation: 'file.read',
-      err: { code: 'ENOENT', path: missing, stack: expect.stringContaining('ENOENT') },
+      error: { code: 'ENOENT', path: missing, message: expect.stringContaining('ENOENT') },
     })
+    expect(entry.error).not.toHaveProperty('stack')
     expect(response).toMatchObject({
       success: false,
       error: { code: 'FILE_OPERATION_FAILED', message: 'FILE_OPERATION_FAILED' },

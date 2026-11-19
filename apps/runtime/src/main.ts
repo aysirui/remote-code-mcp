@@ -5,7 +5,7 @@ import { startLocalServer } from './local/local-server'
 import { LocalEvents } from './local/local-events'
 import { RuntimeConnection } from './connection/runtime-connection'
 import { runtimeVersion } from './version'
-import { logger } from './logger'
+import { logger, summarizeError } from './logger'
 
 /** 记录无法继续运行的异常后以非零状态退出，不让进程带着未知状态继续执行。 */
 function exitOnFailure(code: string, error: unknown): never {
@@ -22,7 +22,10 @@ process.once('uncaughtException', (error, origin) =>
     error,
   ),
 )
-process.once('unhandledRejection', (reason) => exitOnFailure('UNHANDLED_REJECTION', reason))
+// 已运行的服务不因孤立的异步任务失败而退出；同步未捕获异常仍不能安全恢复。
+process.on('unhandledRejection', (reason) => {
+  logger.error('runtime.unhandled_rejection', { code: 'UNHANDLED_REJECTION', err: reason })
+})
 
 /** Runtime 组合入口：装配本地 API、审批队列和 Server 连接。 */
 async function boot() {
@@ -55,7 +58,7 @@ async function boot() {
   httpServer.once('error', (error) => {
     logger.error('runtime.local_server.failed', {
       code: 'LOCAL_SERVER_START_FAILED',
-      err: error,
+      error: summarizeError(error),
     })
     process.exitCode = 1
     shutdown()

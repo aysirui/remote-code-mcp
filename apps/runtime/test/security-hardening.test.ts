@@ -140,7 +140,7 @@ test('本地管理 API 的大小写变体均不能绕过令牌，写入审批也
         code: 'LOCAL_INTERNAL_ERROR',
         url: '/local/api/status?token=private-query',
         query: { token: 'private-query' },
-        err: expect.objectContaining({ message: 'private-status-value' }),
+        error: { message: 'private-status-value' },
       }),
     )
     expect(logs).toHaveBeenCalledWith(

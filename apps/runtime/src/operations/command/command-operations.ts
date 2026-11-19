@@ -14,6 +14,7 @@ import {
   type ToolOutput,
 } from '@rcm/protocol'
 import { policyForOperation } from '../../workspace/state'
+import { logger, summarizeError } from '../../logger'
 
 /** 内置命令只保留项目任务；所有 Git 操作必须通过独立 Git 工具域执行。 */
 const builtins: Record<string, LocalCommand> = {
@@ -135,7 +136,7 @@ export function commandFingerprint(command: LocalCommand): string {
 /** 未设置独立超时的登记项及临时命令默认执行 60 秒。 */
 export const COMMAND_TIMEOUT_MS = 60_000
 
-/** 已启动命令失败，可保留执行结果以回复发起调用的客户端，不用于日志。 */
+/** 已启动命令失败，保留限长结果以回复发起调用的客户端；Server 不持久化结果。 */
 export class CommandResultError extends Error {
   /** @param code 稳定失败码。 @param result 已校验的、限长的命令结果。 */
   constructor(
@@ -154,6 +155,7 @@ export class CommandResultError extends Error {
  * @param approvalResourceHash 本机审批生成的命令指纹，不接受远程传入
  * @param timeoutMs 内部测试可覆盖超时；生产优先使用本机登记项的 timeoutMs
  * @param onExecution 执行前接收脱敏审计元数据，不包含命令输出
+ * @param requestId 可选 RPC ID，仅用于关联本地命令日志
  * @returns 退出码、限长输出及供 RPC 层区分失败原因的超时状态
  */
 export async function runCheckedCommand(
@@ -162,6 +164,7 @@ export async function runCheckedCommand(
   approvalResourceHash?: string,
   timeoutMs?: number,
   onExecution?: (command: CommandAudit) => void,
+  requestId?: string,
 ) {
   if (!w.enabled || !w.permissions.read || !w.permissions.write) throw Error('PERMISSION_DENIED')
   if (policyForOperation(w, 'command.run') === 'deny') throw Error('POLICY_DENIED')
@@ -191,6 +194,19 @@ export async function runCheckedCommand(
     GIT_PAGER: 'cat',
   }
   onExecution?.(sanitizeCommandAudit(selected))
+  // 本地日志保留实际执行信息；审计回调仍只接收独立的脱敏对象。
+  const logContext = {
+    requestId,
+    command: {
+      id: 'command' in input ? input.command : undefined,
+      executable: selected.executable,
+      args: selected.args,
+      cwd: root,
+      timeoutMs: effectiveTimeoutMs,
+    },
+  }
+  const startedAt = Date.now()
+  logger.info('command.started', logContext)
   const result = await commandExecutionProvider
     .run({
       executable: selected.executable,
@@ -201,8 +217,17 @@ export async function runCheckedCommand(
       outputLimitBytes: COMMAND_OUTPUT_LIMIT_BYTES,
     })
     .catch((cause: unknown) => {
+      logger.error('command.start_failed', {
+        ...logContext,
+        code: 'COMMAND_START_FAILED',
+        durationMs: Date.now() - startedAt,
+        error: summarizeError(cause),
+      })
       throw Error('COMMAND_START_FAILED', { cause })
     })
+  const details = { ...logContext, ...result, durationMs: Date.now() - startedAt }
+  if (result.timedOut || result.exitCode !== 0) logger.error('command.failed', details)
+  else logger.info('command.completed', details)
   return {
     command: 'command' in input ? input.command : selected.executable,
     exitCode: result.exitCode,

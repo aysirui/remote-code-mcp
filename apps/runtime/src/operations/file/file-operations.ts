@@ -3,7 +3,7 @@ import path from 'node:path'
 import { constants } from 'node:fs'
 import { randomUUID, createHash } from 'node:crypto'
 import type { LocalWorkspace } from '../../workspace/state'
-import { logger } from '../../logger'
+import { logger, summarizeError } from '../../logger'
 import {
   resolveSafe,
   isSensitive,
@@ -175,7 +175,7 @@ export async function writeChecked(
     await fs.rm(temporary, { force: true }).catch((error: unknown) => {
       logger.error('file.temporary.cleanup_failed', {
         code: 'FILE_TEMP_CLEANUP_FAILED',
-        err: error,
+        error: summarizeError(error),
       })
     })
   }

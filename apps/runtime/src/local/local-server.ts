@@ -7,7 +7,7 @@ import { styleText } from 'node:util'
 import type { Config } from '../workspace/state'
 import type { WriteApprovalQueue } from '../requests/write-approvals'
 import type { LocalEvents } from './local-events'
-import { logger } from '../logger'
+import { logger, summarizeError } from '../logger'
 
 /** 本地管理 HTTP Server 的外部依赖，由 Runtime 主入口注入以避免全局状态耦合。 */
 export interface LocalServerOptions {
@@ -47,7 +47,7 @@ export function startLocalServer(options: LocalServerOptions) {
           route: typeof route === 'string' ? route : undefined,
           httpStatus: res.statusCode,
           durationMs: Date.now() - startedAt,
-          err: res.locals.diagnosticError as unknown,
+          error: summarizeError(res.locals.diagnosticError),
         }
         if (res.statusCode >= 400) logger.error('local.request.failed', details)
         else logger.debug('local.request.completed', details)
@@ -155,7 +155,7 @@ export function startLocalServer(options: LocalServerOptions) {
       url: req.originalUrl,
       query: req.query,
       body: req.body as unknown,
-      err: error,
+      error: summarizeError(error),
     })
     if (res.headersSent) res.destroy()
     else

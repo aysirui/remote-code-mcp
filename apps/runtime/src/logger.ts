@@ -1,8 +1,9 @@
 import type { RpcRequest } from '@rcm/protocol'
 import { types } from 'node:util'
 import pino from 'pino'
+import pretty from 'pino-pretty'
 
-/** 本地运行元数据；允许附带异常和本地 HTTP 请求参数，不记录响应正文。 */
+/** 本地运行诊断，可附带请求参数、命令结果和异常；不记录 HTTP 响应正文。 */
 interface LogDetails {
   /** RPC ID 与 Server 的操作审计 ID 相同。 */
   requestId?: string
@@ -30,7 +31,22 @@ interface LogDetails {
   /** Express 解析的查询参数和 JSON 请求体，仅写入本地日志。 */
   query?: unknown
   body?: unknown
-  /** 原始异常或 Promise 拒绝值，只进入本地终端日志。 */
+  /** 原始 RPC 入参只在 Runtime 本地记录，不进入审计。 */
+  payload?: unknown
+  /** 实际执行的命令、参数、工作目录及本机执行时限（毫秒），仅用于本地日志。 */
+  command?: {
+    id?: string
+    executable: string
+    args: string[]
+    cwd: string
+    timeoutMs: number
+  }
+  /** 本机命令收集到的 stdout / stderr 合并输出及超时状态。 */
+  output?: string
+  timedOut?: boolean
+  /** 已捕获错误的业务摘要，不包含堆栈。 */
+  error?: unknown
+  /** 显式记录原始异常或未处理的拒绝值，只进入本地终端日志。 */
   err?: unknown
 }
 
@@ -49,6 +65,20 @@ function serializeError(error: unknown): unknown {
   }
 }
 
+/** 提取原始消息和系统字段，供可恢复的失败使用，不记录堆栈或请求对象。 */
+export function summarizeError(error: unknown): unknown {
+  if (!types.isNativeError(error) && !(error instanceof Error))
+    return typeof error === 'string' || error === undefined ? error : { type: typeof error }
+  const cause = error.cause
+  const systemError = types.isNativeError(cause) || cause instanceof Error ? cause : error
+  return {
+    message: systemError === error ? error.message : `${error.message}: ${systemError.message}`,
+    code: 'code' in systemError ? systemError.code : undefined,
+    path: 'path' in systemError ? systemError.path : undefined,
+    syscall: 'syscall' in systemError ? systemError.syscall : undefined,
+  }
+}
+
 /** 只在启动时读取本机日志级别；无效设置按 info 处理。 */
 const configuredLevel = process.env.RUNTIME_LOG_LEVEL
 const level = configuredLevel === 'debug' || configuredLevel === 'error' ? configuredLevel : 'info'
@@ -62,8 +92,22 @@ const options = {
   serializers: { err: serializeError },
 }
 
-const stdout = pino({ ...options, level }, process.stdout)
-const stderr = pino({ ...options, level: 'error' }, process.stderr)
+/** 首行只显示时间、级别和事件；交由 pino-pretty 缩进展示全部已记录字段及异常。 */
+const formatTerminalLine = pretty.prettyFactory({
+  messageKey: 'event',
+  timestampKey: 'timestamp',
+  translateTime: 'SYS:HH:MM:ss.l',
+  colorize: false,
+})
+
+/** 每个输出流独立判断是否连接终端；管道和重定向保留原有 JSON。 */
+function outputOptions(isTTY: boolean | undefined) {
+  return isTTY ? { ...options, hooks: { streamWrite: formatTerminalLine } } : options
+}
+
+const stdout = pino({ ...outputOptions(process.stdout.isTTY), level }, process.stdout)
+const stderrOptions = { ...outputOptions(process.stderr.isTTY), level: 'error' }
+const stderr = pino(stderrOptions, process.stderr)
 
 /** Runtime 本地诊断日志；与发送给 Server 的 RPC 错误及审计元数据相互独立。 */
 export const logger = {
@@ -81,9 +125,6 @@ export const logger = {
   },
   /** 进程即将退出时同步写入标准错误，避免管道中的最后一条日志丢失。 */
   fatal(event: string, details: LogDetails): void {
-    pino({ ...options, level: 'error' }, pino.destination({ dest: 2, sync: true })).error(
-      details,
-      event,
-    )
+    pino(stderrOptions, pino.destination({ dest: 2, sync: true })).error(details, event)
   },
 }

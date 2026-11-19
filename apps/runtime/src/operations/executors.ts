@@ -232,6 +232,7 @@ export async function execute(
         approvalResourceHash,
         undefined,
         onCommandExecution,
+        req.id,
       )
       // 只向调用方返回已校验的业务字段；超时优先于进程给出的退出码。
       const commandResult = ToolOutputs['command.run'].safeParse(result)

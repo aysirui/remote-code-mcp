@@ -8,7 +8,7 @@ import { LocalEvents } from '../local/local-events'
 import { handleWorkspaceRevocations } from './workspace-revocations'
 import { verifyApprovalResource } from './approval-verification'
 import { CommandResultError } from '../operations/command/command-operations'
-import { logger } from '../logger'
+import { logger, summarizeError } from '../logger'
 
 /** RPC 业务处理与 WebSocket 生命周期分离；依赖均由连接层提供。 */
 export interface RequestContext {
@@ -45,7 +45,7 @@ export async function handleGatewayMessage(
       : 'COMMAND_CONFIGURATION_FAILED'
   let stage: 'authorization' | 'validation' | 'approval' | 'execution' = 'authorization'
   let commandAudit: CommandAudit | undefined
-  logger.debug('rpc.received', logContext)
+  logger.debug('rpc.received', { ...logContext, payload: req.payload })
   try {
     const workspace = serverWorkspaces(context.config, context.server).find(
       (item) => item.id === req.workspaceId,
@@ -94,12 +94,13 @@ export async function handleGatewayMessage(
     const result = error instanceof CommandResultError ? error.result : undefined
     logger.error('rpc.failed', {
       ...logContext,
+      payload: req.payload,
       stage: error instanceof ZodError ? 'validation' : stage,
       code,
       durationMs: Date.now() - startedAt,
       exitCode: result?.exitCode,
       truncated: result?.truncated,
-      err: error,
+      error: summarizeError(error),
     })
     return {
       kind: 'response',

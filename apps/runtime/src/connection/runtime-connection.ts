@@ -4,7 +4,7 @@ import { publicWs, activeServer, serverWorkspaces, type Config } from '../worksp
 import { WriteApprovalQueue } from '../requests/write-approvals'
 import { LocalEvents } from '../local/local-events'
 import { handleGatewayMessage } from '../requests/request-handler'
-import { logger } from '../logger'
+import { logger, summarizeError } from '../logger'
 
 /** 管理 Runtime 到当前 Server 的唯一连接、重连和工作区同步。 */
 export class RuntimeConnection {
@@ -125,7 +125,7 @@ export class RuntimeConnection {
       } catch (error: unknown) {
         logger.error('gateway.message.failed', {
           code: 'GATEWAY_MESSAGE_FAILED',
-          err: error,
+          error: summarizeError(error),
         })
       }
     })
@@ -163,7 +163,7 @@ export class RuntimeConnection {
       if (this.socket === connection)
         logger.error('gateway.socket.failed', {
           code: 'GATEWAY_SOCKET_FAILED',
-          err: error,
+          error: summarizeError(error),
         })
     })
   }

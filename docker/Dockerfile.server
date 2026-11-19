@@ -9,6 +9,8 @@ COPY apps/console/package.json apps/console/package.json
 COPY apps/runtime/package.json apps/runtime/package.json
 COPY packages/protocol/package.json packages/protocol/package.json
 COPY packages/bot-sdk/package.json packages/bot-sdk/package.json
+# 工作区安装会先链接演示命令；入口文件必须早于编译产物存在。
+COPY packages/bot-sdk/bin packages/bot-sdk/bin
 COPY apps/website/package.json apps/website/package.json
 RUN pnpm --filter @rcm/server... install --frozen-lockfile
 COPY packages/protocol packages/protocol

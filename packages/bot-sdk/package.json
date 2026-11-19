@@ -8,12 +8,13 @@
     "node": ">=22"
   },
   "files": [
-    "dist"
+    "dist",
+    "bin"
   ],
   "bin": {
-    "rcm-bot-demo-feishu": "./dist/demo/feishu.js",
-    "rcm-bot-demo-wecom": "./dist/demo/wecom.js",
-    "rcm-bot-demo-dingtalk": "./dist/demo/dingtalk.js"
+    "rcm-bot-demo-feishu": "./bin/feishu.js",
+    "rcm-bot-demo-wecom": "./bin/wecom.js",
+    "rcm-bot-demo-dingtalk": "./bin/dingtalk.js"
   },
   "exports": {
     "./core": "./dist/core/index.js",

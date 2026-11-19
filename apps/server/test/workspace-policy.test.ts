@@ -7,6 +7,7 @@ import type { Request } from 'express'
 import { COMMAND_RPC_TIMEOUT_MS, RPC_APPROVAL_TIMEOUT_MS, type RpcRequest } from '@rcm/protocol'
 import { NestFactory } from '@nestjs/core'
 import { AccountController } from '../src/modules/account/account.controller'
+import { ApprovalChannelService } from '../src/modules/device/approval-channel.service'
 import { AccountService } from '../src/modules/account/account.service'
 import { AccountRepository } from '../src/modules/account/account.repository'
 import { DeviceHub } from '../src/modules/device/device-hub'
@@ -56,6 +57,7 @@ test.each([
         {} as DeviceHub,
         new AccountRepository(store as unknown as Store),
       ),
+      {} as never,
     )
     const request = {} as Request
     await expect(controller.workspaces(request)).resolves.toEqual([
@@ -85,6 +87,7 @@ test('云端工作区接口只读，修改策略或停用的请求返回 404', a
         },
         { provide: Store, useValue: { db: database() } },
         { provide: DeviceHub, useValue: {} },
+        { provide: ApprovalChannelService, useValue: {} },
         AccountRepository,
         AccountService,
       ],

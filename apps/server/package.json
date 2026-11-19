@@ -24,6 +24,7 @@
     "admin:init": "pnpm build && node dist/admin-init.js"
   },
   "dependencies": {
+    "@rcm/bot-sdk": "workspace:*",
     "@rcm/protocol": "workspace:*",
     "@nestjs/common": "^11.1.0",
     "@nestjs/core": "^11.1.0",

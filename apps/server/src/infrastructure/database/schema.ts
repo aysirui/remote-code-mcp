@@ -7,6 +7,7 @@ import {
   int,
   index,
   uniqueIndex,
+  primaryKey,
 } from 'drizzle-orm/mysql-core'
 const id = () => varchar('id', { length: 48 }).primaryKey()
 /** 平台用户、角色与强制改密状态；密码只保存 bcrypt Hash。 */
@@ -21,6 +22,54 @@ export const users = mysqlTable('users', {
   status: varchar('status', { length: 20 }).notNull().default('active'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 })
+/** 每个 RCM 账号在每个审批通知渠道最多绑定一个用户。 */
+export const approvalChannelBindings = mysqlTable(
+  'approval_channel_bindings',
+  {
+    /** RCM 账号 ID。 */
+    userId: varchar('user_id', { length: 48 }).notNull(),
+    /** 通知渠道，绑定时显式指定。 */
+    channel: varchar('channel', { length: 16, enum: ['feishu', 'wecom', 'dingtalk'] }).notNull(),
+    /** 机器人应用身份；切换机器人后不得复用旧绑定。 */
+    appId: varchar('app_id', { length: 96 }).notNull(),
+    /** 平台事件确认的应用内用户标识，例如飞书 open_id。 */
+    platformUserId: varchar('platform_user_id', { length: 128 }).notNull(),
+    /** 每次重新绑定生成新版本；旧卡片不能在解绑后重新获得审批权限。 */
+    revision: varchar('revision', { length: 36 }).notNull(),
+    /** 是否向此渠道发送新通知；停用会使已发卡片失效。 */
+    enabled: boolean('enabled').notNull().default(true),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.channel] }),
+    uniqueIndex('approval_channel_identity_idx').on(
+      table.channel,
+      table.appId,
+      table.platformUserId,
+    ),
+  ],
+)
+
+/** 一次性双向绑定挑战；只保存两个验证值的摘要及候选身份。 */
+export const approvalChannelChallenges = mysqlTable(
+  'approval_channel_challenges',
+  {
+    /** 发起绑定的 RCM 账号 ID。 */
+    userId: varchar('user_id', { length: 48 }).notNull(),
+    /** 发起绑定的渠道。 */
+    channel: varchar('channel', { length: 16, enum: ['feishu', 'wecom', 'dingtalk'] }).notNull(),
+    /** 当前配置的机器人应用身份。 */
+    appId: varchar('app_id', { length: 96 }).notNull(),
+    /** 在机器人私聊发送的随机绑定码摘要。 */
+    codeHash: varchar('code_hash', { length: 64 }).notNull().unique(),
+    /** 机器人私聊回复、在 RCM 输入的随机确认码摘要。 */
+    confirmationHash: varchar('confirmation_hash', { length: 64 }),
+    /** 从机器人私聊事件取得的候选用户标识。 */
+    platformUserId: varchar('platform_user_id', { length: 128 }),
+    /** 挑战及确认码的共同过期时间。 */
+    expiresAt: timestamp('expires_at').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.channel] })],
+)
 /** 每用户一条邮箱激活记录；仅保存令牌摘要，重发替换旧令牌。 */
 export const emailActivations = mysqlTable('email_activations', {
   /** 用户 ID，同时保证每用户仅有一条激活记录。 */

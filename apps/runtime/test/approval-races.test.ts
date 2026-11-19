@@ -1,6 +1,6 @@
 import { WriteApprovalQueue } from '../src/requests/write-approvals'
 import type { LocalWorkspace } from '../src/workspace/state'
-import type { RpcRequest } from '@rcm/protocol'
+import type { ApprovalEvent, RpcRequest } from '@rcm/protocol'
 
 const workspace = (id: string): LocalWorkspace => ({
   id,
@@ -38,5 +38,66 @@ test('断开连接时取消全部待审批请求', async () => {
   const pending = queue.request(request('one'), workspace('one'))
   queue.cancelAll()
   expect(queue.list()).toHaveLength(0)
+  await expect(pending).resolves.toMatchObject({ approved: false })
+})
+
+test('飞书通知只发送相对路径与写入大小，不发送内容且不能批准写入', async () => {
+  const queue = new WriteApprovalQueue()
+  const events: ApprovalEvent[] = []
+  const req = { ...request('one'), notifyApproval: true as const }
+  const pending = queue.request(req, workspace('one'), (event) => events.push(event))
+  const approvalId = queue.list()[0].id
+  expect(events[0]).toMatchObject({ kind: 'approval-notice', canApprove: false })
+  expect(JSON.stringify(events)).toContain('README.md')
+  expect(JSON.stringify(events)).not.toMatch(/hello|\/tmp\/demo/)
+  expect(queue.answerRemote(req.id, approvalId, true)).toBe(false)
+  expect(queue.answerRemote('different-request', approvalId, false)).toBe(false)
+  expect(queue.answer(approvalId, true)).toBe(true)
+  expect(queue.answerRemote(req.id, approvalId, false)).toBe(false)
+  await expect(pending).resolves.toMatchObject({ approved: true })
+  expect(events[1]).toMatchObject({ kind: 'approval-closed', status: 'approved' })
+})
+
+test('只展示明确允许外发的内置命令，飞书和本地审批共享队列', async () => {
+  const queue = new WriteApprovalQueue()
+  const events: ApprovalEvent[] = []
+  const req: RpcRequest = {
+    ...request('one'),
+    notifyApproval: true,
+    operation: 'command.run',
+    payload: { command: 'test' },
+  }
+  const pending = queue.request(req, workspace('one'), (event) => events.push(event))
+  const approvalId = queue.list()[0].id
+  expect(events[0]).toMatchObject({
+    kind: 'approval-notice',
+    canApprove: true,
+    summary: expect.stringContaining('["run","test"]'),
+  })
+  expect(JSON.stringify(events)).not.toContain('/tmp/demo')
+  expect(queue.answerRemote(req.id, approvalId, true)).toBe(true)
+  expect(queue.answer(approvalId, false)).toBe(false)
+  await expect(pending).resolves.toMatchObject({ approved: true })
+})
+
+test('未订阅时不回传审批通知，临时命令参数从不外发', async () => {
+  const queue = new WriteApprovalQueue()
+  const events: ApprovalEvent[] = []
+  const requestLocal = queue.request(request('one'), workspace('one'), (event) =>
+    events.push(event),
+  )
+  queue.cancelAll()
+  await requestLocal
+  expect(events).toHaveLength(0)
+  const req: RpcRequest = {
+    ...request('one'),
+    notifyApproval: true,
+    operation: 'command.run',
+    payload: { executable: 'tool', args: ['secret-value'] },
+  }
+  const pending = queue.request(req, workspace('one'), (event) => events.push(event))
+  expect(events[0]).toMatchObject({ kind: 'approval-notice', canApprove: false })
+  expect(JSON.stringify(events)).not.toContain('secret-value')
+  queue.cancelAll()
   await expect(pending).resolves.toMatchObject({ approved: false })
 })

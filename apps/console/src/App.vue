@@ -12,6 +12,7 @@ import {
   Lock,
   SwitchButton,
   Reading,
+  Bell,
 } from '@element-plus/icons-vue'
 import { useConsole } from './composables/use-console'
 import { pagePaths } from './router'
@@ -20,6 +21,7 @@ import PasswordPage from './views/password/index.vue'
 const ctx = useConsole()
 provide('console', ctx)
 const { me, loading, page, isAdmin, title, refresh, refreshing, logout } = ctx
+const { channels, reload: reloadChannels, loading: channelsLoading } = ctx.approvalChannels
 const router = useRouter()
 /** 管理页仅管理员可打开；未登录与首次改密由根布局统一拦截展示。 */
 watch(
@@ -41,6 +43,7 @@ const descriptions: Record<string, string> = {
   devices: '管理已绑定设备及其连接状态',
   workspaces: '查看 Runtime 同步的工作区权限与工具策略',
   connections: '连接 AI 客户端，管理持久授权',
+  'approval-channels': '绑定消息机器人，选择接收待审批请求的渠道',
   history: '追踪工具执行结果与耗时',
   'admin-users': '管理平台账户及访问状态',
   'admin-audit': '追踪权限变更与平台安全事件',
@@ -75,6 +78,7 @@ const pageDescription = computed(() => descriptions[page.value] || '管理设备
             { id: 'devices', name: '我的设备', icon: Monitor },
             { id: 'workspaces', name: '工作区', icon: FolderOpened },
             { id: 'connections', name: 'AI 连接', icon: Connection },
+            ...(channels.length ? [{ id: 'approval-channels', name: '审批通知', icon: Bell }] : []),
             { id: 'history', name: '操作记录', icon: Warning },
           ]"
           :key="item.id"
@@ -136,7 +140,14 @@ const pageDescription = computed(() => descriptions[page.value] || '管理设备
             <h1>{{ title }}</h1>
             <div class="muted">{{ pageDescription }}</div>
           </div>
-          <el-button :icon="Refresh" :loading="refreshing" @click="refresh">刷新</el-button>
+          <el-button
+            v-if="page === 'approval-channels'"
+            :icon="Refresh"
+            :loading="channelsLoading"
+            @click="reloadChannels">
+            刷新
+          </el-button>
+          <el-button v-else :icon="Refresh" :loading="refreshing" @click="refresh">刷新</el-button>
         </div>
         <router-view />
       </main>

@@ -58,6 +58,68 @@ export class Env {
     return this.source.CONSOLE_URL || 'http://localhost:5173'
   }
 
+  /** 可选飞书企业自建应用；凭证不下发到 Console 或 Runtime。 */
+  get feishuApproval() {
+    const appId = this.source.FEISHU_APP_ID
+    const appSecret = this.source.FEISHU_APP_SECRET
+    const botLink = this.source.FEISHU_BOT_LINK
+    if (!appId || !appSecret || !botLink) return undefined
+    const url = new URL(botLink)
+    if (
+      url.protocol !== 'https:' ||
+      !['applink.feishu.cn', 'open.feishu.cn'].includes(url.hostname) ||
+      url.username ||
+      url.password
+    )
+      throw new Error('FEISHU_BOT_LINK 必须是飞书官方 HTTPS 链接')
+    return { appId, appSecret, botLink: url.href }
+  }
+
+  /** 可选企业微信智能机器人配置；缺少必要项时不启用。 */
+  get wecomApproval() {
+    const botId = this.source.WECOM_BOT_ID
+    const secret = this.source.WECOM_SECRET
+    const botLink = this.source.WECOM_BOT_LINK
+    if (!botId || !secret) return undefined
+    return {
+      botId,
+      secret,
+      botLink: botLink ? this.approvalLink(botLink, ['work.weixin.qq.com']) : undefined,
+    }
+  }
+
+  /** 可选钉钉企业内部应用配置；缺少必要项时不启用。 */
+  get dingtalkApproval() {
+    const clientId = this.source.DINGTALK_CLIENT_ID
+    const clientSecret = this.source.DINGTALK_CLIENT_SECRET
+    const corpId = this.source.DINGTALK_CORP_ID
+    const cardTemplateId = this.source.DINGTALK_CARD_TEMPLATE_ID
+    const robotCode = this.source.DINGTALK_ROBOT_CODE || clientId
+    const botLink = this.source.DINGTALK_BOT_LINK
+    if (!clientId || !clientSecret || !corpId || !cardTemplateId) return undefined
+    return {
+      clientId,
+      clientSecret,
+      corpId,
+      cardTemplateId,
+      robotCode,
+      botLink: botLink ? this.approvalLink(botLink, ['dingtalk.com']) : undefined,
+    }
+  }
+
+  /** 可选私聊链接仅允许所属平台的 HTTPS 域名，不允许链接内嵌凭据。 */
+  private approvalLink(value: string, domains: string[]) {
+    const url = new URL(value)
+    if (
+      url.protocol !== 'https:' ||
+      url.username ||
+      url.password ||
+      !domains.some((domain) => url.hostname === domain || url.hostname.endsWith('.' + domain))
+    )
+      throw new Error('机器人分享链接必须使用所属平台的官方 HTTPS 域名')
+    return url.href
+  }
+
   get adminEmail(): string {
     return (this.source.ADMIN_EMAIL || '').trim().toLowerCase()
   }
@@ -92,6 +154,9 @@ export class Env {
     void this.appSecret
     void this.port
     void this.mail
+    void this.feishuApproval
+    void this.wecomApproval
+    void this.dingtalkApproval
   }
 }
 

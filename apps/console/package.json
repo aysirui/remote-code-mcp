@@ -25,13 +25,15 @@
     "pinia": "catalog:",
     "element-plus": "catalog:",
     "@element-plus/icons-vue": "^2.3.2",
-    "axios": "catalog:"
+    "axios": "catalog:",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "catalog:",
     "vite": "catalog:",
     "typescript": "catalog:",
     "vue-tsc": "catalog:",
-    "@types/node": "catalog:"
+    "@types/node": "catalog:",
+    "@types/qrcode": "^1.5.6"
   }
 }

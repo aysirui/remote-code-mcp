@@ -18,7 +18,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "pnpm --filter @rcm/protocol build && pnpm -r typecheck",
+    "typecheck": "pnpm --filter @rcm/protocol --filter @rcm/bot-sdk build && pnpm -r typecheck",
     "check": "pnpm lint && pnpm typecheck && pnpm format:check",
     "dev:server": "pnpm --filter @rcm/server dev",
     "dev:console": "pnpm --filter @rcm/console dev",

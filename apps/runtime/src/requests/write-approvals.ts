@@ -1,23 +1,33 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { RPC_APPROVAL_TIMEOUT_MS, ToolInputs, type RpcRequest } from '@rcm/protocol'
+import {
+  RPC_APPROVAL_TIMEOUT_MS,
+  ToolInputs,
+  type ApprovalEvent,
+  type ApprovalNotice,
+  type RpcRequest,
+} from '@rcm/protocol'
 import type { LocalWorkspace } from '../workspace/state'
-import { resolveCommandRequest, commandFingerprint } from '../operations/command/command-operations'
+import {
+  resolveCommandRequest,
+  commandFingerprint,
+  commandCanBeDisplayedInApproval,
+} from '../operations/command/command-operations'
 import { gitApprovalContext } from '../operations/git/git-operations'
 import { inspectDeleteTarget, HIGH_RISK_DELETE_THRESHOLD } from '../operations/file/file-operations'
 import { resolveSafe, assertSafeRelativePath } from '../operations/file/path-safety'
 
-/** 本地审批页面可展示的待处理任务；详情只驻留 Runtime 内存，不上传或落库。 */
+/** 本地审批页面可展示的完整任务；不会把此对象上传或落库。 */
 export interface WriteApprovalInfo {
   id: string
   workspaceId: string
-  /** 审批卡片使用的工作区显示名；审批详情与该字段不上传，云端只接收独立的工作区公开名称。 */
+  /** 本地审批显示名；启用渠道通知时可作为摘要的一部分。 */
   workspaceName: string
   path: string
   operation: string
   bytes: number
   preview: string
   truncated: boolean
-  /** 目录删除影响条目数；仅本地审批 UI 可见。 */
+  /** 目录删除影响条目数；可包含在通知摘要中。 */
   itemCount: number
   /** normal / high；风险等级由 Runtime 根据本地资源计算。 */
   riskLevel: 'normal' | 'high'
@@ -43,12 +53,14 @@ interface PendingApproval extends WriteApprovalInfo {
   resourceHash?: string
   resolve: (decision: ApprovalDecision) => void
   timeout: ReturnType<typeof setTimeout>
+  /** 发卡关联及远程决定所需的临时状态，不落盘。 */
+  remote?: { notice: ApprovalNotice; send: (event: ApprovalEvent) => void }
 }
 
 /** 单次审批最多等待五分钟；审批上下文只在本机内存短暂展示。 */
 export const WRITE_APPROVAL_TIMEOUT_MS = RPC_APPROVAL_TIMEOUT_MS
 
-/** 审批上下文不传到 Server，不写入数据库；断线、撤销或超时后立即清理。 */
+/** 完整审批上下文仅驻留本机；启用通知时只转发单独构造的摘要。 */
 export class WriteApprovalQueue {
   private readonly pending = new Map<string, PendingApproval>()
 
@@ -89,7 +101,11 @@ export class WriteApprovalQueue {
   }
 
   /** 远程写入请求进入本地审批队列，超时自动拒绝。 */
-  async request(req: RpcRequest, workspace: LocalWorkspace): Promise<ApprovalDecision> {
+  async request(
+    req: RpcRequest,
+    workspace: LocalWorkspace,
+    send?: (event: ApprovalEvent) => void,
+  ): Promise<ApprovalDecision> {
     if (this.pending.size >= 20) throw Error('TOO_MANY_PENDING_WRITE_APPROVALS')
     let pathLabel = ''
     let preview = ''
@@ -98,20 +114,27 @@ export class WriteApprovalQueue {
     let itemCount = 0
     let riskLevel: 'normal' | 'high' = 'normal'
     let resourceHash: string | undefined
+    let externalDetails = ''
+    let canApprove = false
     if (req.operation === 'file.write') {
       const payload = ToolInputs['file.write'].parse(req.payload)
       pathLabel = payload.path
       preview = payload.content.slice(0, 2000)
       previewTruncated = payload.content.length > 2000
       bytes = Buffer.byteLength(payload.content, 'utf8')
+      externalDetails = `路径：${payload.path}\n写入大小：${bytes} 字节（正文仅本机可见）`
     } else if (req.operation === 'file.mkdir') {
       const payload = ToolInputs['file.mkdir'].parse(req.payload)
       pathLabel = payload.path
       preview = '创建目录' + (payload.recursive ? '（含父目录）' : '')
+      externalDetails = `路径：${payload.path}\n${preview}`
+      canApprove = true
     } else if (req.operation === 'file.move') {
       const payload = ToolInputs['file.move'].parse(req.payload)
       pathLabel = payload.from + ' → ' + payload.to
       preview = '移动或重命名本地文件/目录，不覆盖目标'
+      externalDetails = `源路径：${payload.from}\n目标路径：${payload.to}\n${preview}`
+      canApprove = true
     } else if (req.operation === 'file.delete') {
       const payload = ToolInputs['file.delete'].parse(req.payload)
       assertSafeRelativePath(payload.path)
@@ -124,12 +147,18 @@ export class WriteApprovalQueue {
       preview = payload.recursive
         ? `递归删除目录（影响 ${itemCount} 个目录项，不可撤销）`
         : '删除文件或空目录（不可撤销）'
+      externalDetails = `路径：${payload.path}\n${preview}\n影响项数：${itemCount}`
+      canApprove = riskLevel === 'normal'
     } else if (req.operation === 'command.run') {
       const { command: selected, registered } = resolveCommandRequest(workspace, req.payload)
       resourceHash = commandFingerprint(selected)
       // 已登记命令在 approval 策略下属于常规审批；未登记命令始终高风险。
       riskLevel = registered ? 'normal' : 'high'
       pathLabel = registered ? selected.name + ' (' + selected.id + ')' : selected.name
+      canApprove = registered && commandCanBeDisplayedInApproval(selected.id)
+      externalDetails = canApprove
+        ? `程序：${selected.executable}\n参数：${JSON.stringify(selected.args)}\n工作目录：.\n程序以 Runtime 账号权限运行，没有 OS 沙箱隔离。`
+        : '命令参数可能含私密信息，请在 Runtime 查看完整命令。'
       preview =
         '程序：' +
         selected.executable +
@@ -147,33 +176,46 @@ export class WriteApprovalQueue {
       const payload = ToolInputs['file.list'].parse(req.payload)
       pathLabel = payload.path
       preview = '读取目录清单'
+      externalDetails = `路径：${payload.path}\n${preview}`
+      canApprove = true
     } else if (req.operation === 'file.read') {
       const payload = ToolInputs['file.read'].parse(req.payload)
       pathLabel = payload.path
       preview = '读取文件内容'
+      externalDetails = `路径：${payload.path}\n${preview}`
+      canApprove = true
     } else if (req.operation === 'file.search') {
       const payload = ToolInputs['file.search'].parse(req.payload)
       pathLabel = payload.path
       preview = '在工作区内搜索文本：' + payload.query
+      externalDetails = `路径：${payload.path}\n搜索词仅本机可见。`
     } else if (req.operation === 'git.status') {
       pathLabel = 'Git 工作区'
       preview = '读取 Git 工作区状态'
+      canApprove = true
     } else if (req.operation === 'git.log') {
       const payload = ToolInputs['git.log'].parse(req.payload)
       pathLabel = 'Git 提交历史'
       preview = '读取最近 ' + payload.limit + ' 条提交记录'
+      externalDetails = preview
+      canApprove = true
     } else if (req.operation === 'git.diff') {
       pathLabel = 'Git 工作区 Diff'
       preview = '读取当前未暂存变更差异'
+      canApprove = true
     } else if (req.operation === 'git.add' || req.operation === 'git.commit') {
       const context = await gitApprovalContext(workspace, req.operation, req.payload)
       pathLabel = context.path
       preview = context.preview
       resourceHash = context.fingerprint
+      if (req.operation === 'git.add')
+        externalDetails = '路径：' + ToolInputs['git.add'].parse(req.payload).paths.join('、')
+      else externalDetails = '暂存文件：' + context.path + '\n提交说明仅本机可见。'
     } else if (req.operation === 'command.list') {
       ToolInputs['command.list'].parse(req.payload)
       pathLabel = '本地命令注册表'
       preview = '列出已登记的固定命令'
+      canApprove = true
     } else throw Error('UNSUPPORTED_APPROVAL_OPERATION')
 
     const id = randomUUID()
@@ -194,6 +236,34 @@ export class WriteApprovalQueue {
         ? WRITE_APPROVAL_TIMEOUT_MS
         : Math.min(WRITE_APPROVAL_TIMEOUT_MS, Math.max(0, req.deadlineAt - createdAt - 1000))
     const expiresAt = createdAt + waitMs
+    const safeToDisplay = !/[\u061c\u200b-\u200f\u202a-\u202e\u2066-\u2069]/u.test(
+      workspace.name + externalDetails,
+    )
+    const summary = [
+      `操作：${req.operation}`,
+      `工作区：${workspace.name.replace(/\s+/g, ' ')}`,
+      riskLevel === 'high' ? '风险：高，仅能在 Runtime 批准。' : '',
+      externalDetails,
+    ]
+      .filter(Boolean)
+      .join('\n')
+    const showDetails = safeToDisplay && summary.length <= 3000
+    const remote =
+      req.notifyApproval && send && waitMs > 0
+        ? {
+            send,
+            notice: {
+              kind: 'approval-notice' as const,
+              requestId: req.id,
+              approvalId: id,
+              expiresAt,
+              summary: showDetails
+                ? summary
+                : `操作：${req.operation}\n此详情无法安全显示，请在 Runtime 中查看。`,
+              canApprove: canApprove && showDetails,
+            },
+          }
+        : undefined
     return new Promise((resolve) => {
       const timeout = setTimeout(() => this.complete(id, 'APPROVAL_EXPIRED'), waitMs)
       this.pending.set(id, {
@@ -213,14 +283,29 @@ export class WriteApprovalQueue {
         expiresAt,
         resolve,
         timeout,
+        remote,
       })
       this.notify()
+      remote?.send(remote.notice)
     })
   }
 
   /** 接收本地用户的明确决定；任务只允许完成一次。 */
   answer(id: string, approved: boolean): boolean {
+    const pending = this.pending.get(id)
+    if (!pending) return false
+    if (pending.expiresAt <= Date.now()) {
+      this.complete(id, 'APPROVAL_EXPIRED')
+      return false
+    }
     return this.complete(id, approved ? undefined : 'APPROVAL_DENIED')
+  }
+
+  /** 渠道入口只能处理匹配的待审批 RPC，不能批准仅本机可审核的操作。 */
+  answerRemote(requestId: string, approvalId: string, approved: boolean): boolean {
+    const notice = this.pending.get(approvalId)?.remote?.notice
+    if (!notice || notice.requestId !== requestId || (approved && !notice.canApprove)) return false
+    return this.answer(approvalId, approved)
   }
 
   /** 完成指定审批并清理计时器；无错误码表示批准，返回值表明任务是否仍在队列。 */
@@ -236,6 +321,18 @@ export class WriteApprovalQueue {
       errorCode,
       requestHash: approval.requestHash,
       resourceHash: approved ? approval.resourceHash : undefined,
+    })
+    approval.remote?.send({
+      kind: 'approval-closed',
+      requestId: approval.remote.notice.requestId,
+      approvalId: id,
+      status: approved
+        ? 'approved'
+        : errorCode === 'APPROVAL_DENIED'
+          ? 'denied'
+          : errorCode === 'APPROVAL_EXPIRED'
+            ? 'expired'
+            : 'cancelled',
     })
     return true
   }

@@ -5,6 +5,7 @@ export const pagePaths: Record<string, string> = {
   activate: '/activate',
   workspaces: '/console/workspaces',
   connections: '/console/connections',
+  'approval-channels': '/console/approval-channels',
   history: '/console/history',
   'admin-overview': '/admin',
   'admin-users': '/admin/users',

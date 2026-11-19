@@ -1,4 +1,10 @@
-import { RpcRequestSchema, rpcPublicErrorCode, type CommandAudit } from '@rcm/protocol'
+import {
+  RpcRequestSchema,
+  ApprovalAnswerSchema,
+  rpcPublicErrorCode,
+  type ApprovalEvent,
+  type CommandAudit,
+} from '@rcm/protocol'
 import { ZodError } from 'zod'
 import { serverWorkspaces, type Config, type ServerProfile } from '../workspace/state'
 import { execute, validateOperationSafety, assertRequestAccess } from '../operations/executors'
@@ -17,6 +23,8 @@ export interface RequestContext {
   approvals: WriteApprovalQueue
   events: LocalEvents
   isConnected: () => boolean
+  /** 将脱敏通知发送到提交当前请求的设备连接。 */
+  sendApproval?: (event: ApprovalEvent) => void
 }
 
 /** 只处理业务消息，返回 RPC 响应；连接层负责发送。 */
@@ -25,6 +33,16 @@ export async function handleGatewayMessage(
   context: RequestContext,
 ): Promise<Record<string, unknown> | undefined> {
   const message: unknown = JSON.parse(raw)
+  const decision = ApprovalAnswerSchema.safeParse(message)
+  if (decision.success) {
+    if (context.isConnected())
+      context.approvals.answerRemote(
+        decision.data.requestId,
+        decision.data.approvalId,
+        decision.data.approved,
+      )
+    return
+  }
   if (
     message &&
     typeof message === 'object' &&
@@ -61,7 +79,7 @@ export async function handleGatewayMessage(
     if (await requiresApproval(workspace, req)) {
       stage = 'approval'
       logger.debug('rpc.approval.waiting', { ...logContext, stage })
-      const decision = await context.approvals.request(req, workspace)
+      const decision = await context.approvals.request(req, workspace, context.sendApproval)
       if (decision.errorCode) throw Error(decision.errorCode)
       approvalResourceHash = decision.resourceHash
       // 审批展示与执行对象一致性由独立的资源指纹校验负责。

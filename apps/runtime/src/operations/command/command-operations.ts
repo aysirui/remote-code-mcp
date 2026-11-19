@@ -48,6 +48,11 @@ const builtins: Record<string, LocalCommand> = {
   },
 }
 
+/** 只有本机内置固定命令明确允许展示完整程序和参数；自定义登记参数可能含秘密。 */
+export function commandCanBeDisplayedInApproval(commandId: string): boolean {
+  return Object.hasOwn(builtins, commandId)
+}
+
 /** 自定义登记命令通过本地管理接口保存；远程临时命令不写入注册表。 */
 export function validateLocalCommand(input: unknown): LocalCommand {
   if (!input || typeof input !== 'object') throw Error('INVALID_COMMAND')

@@ -7,6 +7,7 @@ import { configureHttp } from './http-bootstrap'
 async function main() {
   env.validateServer()
   const app = await NestFactory.create(AppModule, { bodyParser: false })
+  app.enableShutdownHooks()
   configureHttp(app)
   app
     .getHttpAdapter()

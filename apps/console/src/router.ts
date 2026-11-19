@@ -24,6 +24,11 @@ export const router = createRouter({
     { path: '/console/devices', name: 'devices', component: DevicesPage },
     { path: '/console/workspaces', name: 'workspaces', component: WorkspacesPage },
     { path: '/console/connections', name: 'connections', component: ConnectionsPage },
+    {
+      path: '/console/approval-channels',
+      name: 'approval-channels',
+      component: () => import('./views/approval-channels/index.vue'),
+    },
     { path: '/console/history', name: 'history', component: HistoryPage },
     { path: '/activate', name: 'activate', component: ActivatePage },
     { path: '/admin', name: 'admin-overview', component: AdminOverviewPage },

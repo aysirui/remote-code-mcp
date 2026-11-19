@@ -65,6 +65,7 @@ test('个人记录分页的数据和总数查询都必须限制为当前用户',
       {} as DeviceHub,
       new AccountRepository(store as unknown as Store),
     ),
+    {} as never,
   )
   const result = await controller.operationLogs({
     query: { page: '3', pageSize: '20' },

@@ -110,7 +110,40 @@ export const RpcRequestSchema = z.object({
   operation: z.enum(Operations),
   payload: z.unknown(),
   deadlineAt: z.number(),
+  /** 仅有已启用的通知渠道时，允许 Runtime 回传限长的脱敏审批摘要。 */
+  notifyApproval: z.literal(true).optional(),
 })
+
+/** Runtime 为已绑定渠道生成的审批摘要；不含原始请求或本机绝对路径。 */
+export const ApprovalNoticeSchema = z.object({
+  kind: z.literal('approval-notice'),
+  requestId: z.string().uuid(),
+  approvalId: z.string().uuid(),
+  summary: z.string().min(1).max(3000),
+  expiresAt: z.number().int(),
+  canApprove: z.boolean(),
+})
+
+/** Runtime 结算审批后同步结果；批准不代表执行成功。 */
+export const ApprovalClosedSchema = z.object({
+  kind: z.literal('approval-closed'),
+  requestId: z.string().uuid(),
+  approvalId: z.string().uuid(),
+  status: z.enum(['approved', 'denied', 'expired', 'cancelled']),
+})
+
+/** Server 转发经过绑定校验的渠道决定；Runtime 仍检查请求、期限及本机策略。 */
+export const ApprovalAnswerSchema = z.object({
+  kind: z.literal('approval-answer'),
+  requestId: z.string().uuid(),
+  approvalId: z.string().uuid(),
+  approved: z.boolean(),
+})
+
+/** 渠道卡片摘要。 */
+export type ApprovalNotice = z.infer<typeof ApprovalNoticeSchema>
+/** 共享审批事件；仅在启用通知时通过设备连接转发。 */
+export type ApprovalEvent = ApprovalNotice | z.infer<typeof ApprovalClosedSchema>
 
 /**
  * Runtime 返回的 RPC 响应。

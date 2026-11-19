@@ -63,7 +63,7 @@ macOS / Linux 可使用 `cp` 复制上述环境文件。修改 `apps/server/.env
 ```sh
 pnpm db:migrate
 pnpm admin:init
-pnpm --filter @rcm/protocol build
+pnpm --filter @rcm/protocol --filter @rcm/bot-sdk build
 ```
 
 管理员初始化会显示一次随机临时密码，首次登录后需修改。首次运行不需要生成迁移；只有修改数据库 Schema 时才运行 `pnpm db:generate`。

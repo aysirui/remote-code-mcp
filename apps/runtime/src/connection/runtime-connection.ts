@@ -111,6 +111,13 @@ export class RuntimeConnection {
           approvals: this.approvals,
           events: this.events,
           isConnected: () => this.socket === connection && connection.readyState === WebSocket.OPEN,
+          sendApproval: (event) => {
+            if (this.socket !== connection || connection.readyState !== WebSocket.OPEN) return
+            connection.send(JSON.stringify(event), (error) => {
+              if (error)
+                logger.error('gateway.approval_notification.failed', { code: 'DEVICE_SEND_FAILED' })
+            })
+          },
         })
         if (response && this.socket === connection && connection.readyState === WebSocket.OPEN) {
           const requestId = typeof response.id === 'string' ? response.id : undefined

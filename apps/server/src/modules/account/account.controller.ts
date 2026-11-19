@@ -1,9 +1,27 @@
-import { Controller, Get, Patch, Delete, Req, Param, Body } from '@nestjs/common'
+import {
+  Header,
+  BadRequestException,
+  Controller,
+  Get,
+  Patch,
+  Delete,
+  Post,
+  Req,
+  Param,
+  Body,
+} from '@nestjs/common'
 import type { Request } from 'express'
 import { Identity } from '../core/identity'
 import { AccountService } from './account.service'
 import { csrf } from '../../common/http-security'
 import { parsePagination } from '../../common/pagination'
+import { ApprovalChannelService } from '../device/approval-channel.service'
+
+/** 拒绝未知渠道，避免把外部输入作为适配器或数据库标识。 */
+function approvalChannel(value: string) {
+  if (value === 'feishu' || value === 'wecom' || value === 'dingtalk') return value
+  throw new BadRequestException('不支持的审批通知渠道')
+}
 
 /** 当前登录用户的设备、工作区、OAuth 授权与个人操作记录接口。 */
 @Controller('api')
@@ -12,7 +30,61 @@ export class AccountController {
   constructor(
     private readonly id: Identity,
     private readonly account: AccountService,
+    private readonly channels: ApprovalChannelService,
   ) {}
+
+  /** 返回当前账号可配置的审批通知渠道。 */
+  @Get('me/approval-channels') async approvalChannels(@Req() req: Request) {
+    const user = await this.id.requireUser(req)
+    return this.channels.status(user.id)
+  }
+
+  /** 已登录账号发起指定渠道的绑定。 */
+  @Header('Cache-Control', 'no-store')
+  @Post('me/approval-channels/:channel')
+  async beginChannel(@Req() req: Request, @Param('channel') channel: string) {
+    csrf(req)
+    const user = await this.id.requireUser(req)
+    return this.channels.begin(user.id, approvalChannel(channel))
+  }
+
+  /** 当前账号输入指定机器人返回的确认码。 */
+  @Post('me/approval-channels/:channel/confirm') async confirmChannel(
+    @Req() req: Request,
+    @Param('channel') channel: string,
+    @Body() body: { confirmation?: unknown },
+  ) {
+    csrf(req)
+    const user = await this.id.requireUser(req)
+    const confirmation = typeof body?.confirmation === 'string' ? body.confirmation.trim() : ''
+    if (!/^[a-f0-9]{32}$/.test(confirmation)) throw new BadRequestException('确认码格式不正确')
+    await this.channels.confirm(user.id, approvalChannel(channel), confirmation)
+    return { bound: true }
+  }
+
+  /** 解除指定渠道的绑定及旧卡片的审批授权。 */
+  @Delete('me/approval-channels/:channel') async unbindChannel(
+    @Req() req: Request,
+    @Param('channel') channel: string,
+  ) {
+    csrf(req)
+    const user = await this.id.requireUser(req)
+    await this.channels.unbind(user.id, approvalChannel(channel))
+    return { bound: false }
+  }
+
+  /** 独立开关已绑定渠道，支持同时启用多个渠道。 */
+  @Patch('me/approval-channels/:channel') async toggleChannel(
+    @Req() req: Request,
+    @Param('channel') channel: string,
+    @Body() body: { enabled?: unknown },
+  ) {
+    csrf(req)
+    const user = await this.id.requireUser(req)
+    if (typeof body?.enabled !== 'boolean') throw new BadRequestException('请选择是否接收通知')
+    await this.channels.setEnabled(user.id, approvalChannel(channel), body.enabled)
+    return { enabled: body.enabled }
+  }
 
   /** 仅返回当前用户自己的设备与在线状态。 */
   @Get('me/devices') async devices(@Req() req: Request) {

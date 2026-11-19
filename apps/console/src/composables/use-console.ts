@@ -4,6 +4,7 @@ import { useAuth } from './use-auth'
 import { useConsoleData } from './use-console-data'
 import { useOAuthGrants } from './use-oauth-grants'
 import { useAdminActions } from './use-admin-actions'
+import { useApprovalChannels } from './use-approval-channels'
 import { useRoute, useRouter } from 'vue-router'
 import { pagePaths } from '../page-paths'
 import { ElMessage } from 'element-plus'
@@ -18,6 +19,7 @@ const reportError = (error: unknown) => {
 /** Console 页面业务模型（Composition API）。 */
 export function useConsole() {
   const me = ref<Account | null>(null)
+  const approvalChannels = useApprovalChannels(me)
   const loading = ref(true)
   const route = useRoute()
   const router = useRouter()
@@ -93,6 +95,7 @@ export function useConsole() {
     devices: '我的设备',
     workspaces: '工作区',
     connections: 'AI 连接',
+    'approval-channels': '审批通知',
     history: '操作记录',
     activate: '绑定新设备',
     'admin-overview': '平台概览',
@@ -105,6 +108,7 @@ export function useConsole() {
   // 各页面只消费这里公开的响应式状态与动作，接口请求集中在本组合式函数中。
   return {
     me,
+    approvalChannels,
     loading,
     refreshing,
     listRevision,

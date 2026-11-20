@@ -25,7 +25,7 @@ import { synchronizeDeviceHello, StaleDeviceConnectionError } from './device-wor
 import { DeviceRpcError, DeviceRpcPending } from './device-rpc-pending'
 import { recordDeviceOperation } from './device-operation-audit'
 import { ApprovalChannelService, type ApprovalRecipient } from './approval-channel.service'
-import type { CardRef } from '@rcm/bot-sdk/core'
+import type { CardRef } from '@rcm/bot-sdk/cards'
 import type { ApprovalNotice, ApprovalEvent } from '@rcm/protocol'
 
 /** 连接身份和卡片关联均仅在当前 RPC 内存中有效。 */

@@ -20,7 +20,9 @@
     "./core": "./dist/core/index.js",
     "./adapters/feishu": "./dist/adapters/feishu/index.js",
     "./adapters/wecom": "./dist/adapters/wecom/index.js",
-    "./adapters/dingtalk": "./dist/adapters/dingtalk/index.js"
+    "./adapters/dingtalk": "./dist/adapters/dingtalk/index.js",
+    "./text": "./dist/core/capabilities/text/index.js",
+    "./cards": "./dist/core/capabilities/cards/index.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

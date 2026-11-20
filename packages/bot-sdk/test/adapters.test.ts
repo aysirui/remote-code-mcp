@@ -6,8 +6,17 @@ import { WSClient, type WsFrame } from '@wecom/aibot-node-sdk'
 import { DWClient, TOPIC_CARD, TOPIC_ROBOT, type DWClientDownStream } from 'dingtalk-stream'
 import { createAdapter as createFeishuAdapter } from '../src/adapters/feishu/index.js'
 import { createAdapter as createWecomAdapter } from '../src/adapters/wecom/index.js'
-import { createAdapter as createDingtalkAdapter } from '../src/adapters/dingtalk/index.js'
-import { createBot, type ActionEvent, type Card, type TextEvent } from '../src/core/index.js'
+import {
+  createAdapter as createDingtalkAdapter,
+  type DingtalkCardOptions,
+} from '../src/adapters/dingtalk/index.js'
+import { BotConfigurationError, createBot } from '../src/core/index.js'
+import {
+  CardCapability,
+  type ActionEvent,
+  type Card,
+} from '../src/core/capabilities/cards/index.js'
+import { TextCapability, type TextEvent } from '../src/core/capabilities/text/index.js'
 
 const card: Card = { title: '模拟', body: '详情', buttons: [{ id: 'approve', label: '批准' }] }
 const done: Card = { title: '模拟', body: '处理完成', buttons: [] }
@@ -16,7 +25,7 @@ test('飞书映射单聊、主动消息、原生按钮回调与主动更新', as
   let handlers: Partial<EventMap> = {}
   const clear = mock.fn()
   mock.method(LarkChannel.prototype, 'on', (eventMap: Partial<EventMap>) => {
-    handlers = eventMap
+    handlers = { ...handlers, ...eventMap }
     return clear
   })
   mock.method(LarkChannel.prototype, 'connect', async () => undefined)
@@ -24,16 +33,19 @@ test('飞书映射单聊、主动消息、原生按钮回调与主动更新', as
   const send = mock.method(LarkChannel.prototype, 'send', async () => ({ messageId: 'om_test' }))
   const update = mock.method(LarkChannel.prototype, 'updateCard', async () => undefined)
   const errors: string[] = []
+  const adapter = createFeishuAdapter({ id: 'feishu', appId: 'cli_test', appSecret: 'fake' })
   const bot = createBot({
-    adapters: [createFeishuAdapter({ id: 'feishu', appId: 'cli_test', appSecret: 'fake' })],
-    onError: (_id, error) => errors.push(error.message),
+    adapter,
+    onError: (error) => errors.push(error.message),
   })
+  const text = bot.install(new TextCapability())
+  const cardCapability = bot.install(new CardCapability())
   const texts: TextEvent[] = []
   const actions: ActionEvent[] = []
-  bot.onMessage((event) => {
+  text.onMessage((event) => {
     texts.push(event)
   })
-  bot.onAction((event) => {
+  cardCapability.onAction((event) => {
     actions.push(event)
     if (event.actionId === 'throw') throw new Error('不应从上游透出')
     return { card: done }
@@ -56,11 +68,13 @@ test('飞书映射单聊、主动消息、原生按钮回调与主动更新', as
   await handlers.message?.({ ...row, chatType: 'group' })
   await handlers.message?.(row)
   assert.deepEqual(texts, [{ conversation: user, text: '你好', messageId: 'om_in' }])
-  await bot.sendText(user, '回应')
+  await text.send(user, '回应')
   assert.deepEqual(send.mock.calls[0].arguments, [user.userId, { text: '回应' }])
-  const ref = await bot.sendCard(user, card)
+  const hidden = { id: 'snooze', label: '稍后查看', visible: false }
+  const ref = await cardCapability.send(user, { ...card, buttons: [hidden, ...card.buttons] })
   assert.equal(ref.cardId, 'om_test')
   assert.match(JSON.stringify(send.mock.calls[1].arguments), /botSdkAction/)
+  assert.doesNotMatch(JSON.stringify(send.mock.calls[1].arguments), /snooze/)
   const click = {
     messageId: ref.cardId,
     chatId: 'oc_test',
@@ -88,10 +102,10 @@ test('飞书映射单聊、主动消息、原生按钮回调与主动更新', as
     /按钮处理失败/,
   )
   assert.deepEqual(errors, ['飞书按钮处理失败'])
-  await bot.updateCard(ref, done)
+  await cardCapability.update(ref, done)
   assert.equal(update.mock.calls.length, 1)
   await bot.stop()
-  assert.equal(clear.mock.calls.length, 1)
+  assert.equal(clear.mock.calls.length, 3)
 })
 
 test('企微等待认证、将 task_id 关联到点击并使用原回调帧更新', async ({ mock }) => {
@@ -103,25 +117,26 @@ test('企微等待认证、将 task_id 关联到点击并使用原回调帧更�
   mock.method(WSClient.prototype, 'disconnect', () => undefined)
   const send = mock.method(WSClient.prototype, 'sendMessage', async () => ({}))
   const update = mock.method(WSClient.prototype, 'updateTemplateCard', async () => ({}))
-  const bot = createBot({
-    adapters: [
-      createWecomAdapter({
-        id: 'wecom',
-        botId: 'robot',
-        secret: 'fake',
-        textNoticeUrl: 'https://example.com/console',
-        onDiagnostic: diagnose,
-      }),
-    ],
+  const adapter = createWecomAdapter({
+    id: 'wecom',
+    botId: 'robot',
+    secret: 'fake',
+    onDiagnostic: diagnose,
   })
+  const bot = createBot({ adapter })
+  const text = bot.install(new TextCapability())
+  const cardCapability = bot.install(new CardCapability())
+  const cards = cardCapability.withOptions({ textNoticeUrl: 'https://example.com/console' })
   const texts: TextEvent[] = []
   const actions: ActionEvent[] = []
-  bot.onMessage((event) => {
+  text.onMessage((event) => {
     texts.push(event)
   })
-  bot.onAction((event) => {
-    actions.push(event)
-    return { card: done }
+  cardCapability.onAction(async (event) => {
+    const { deferCardUpdate, ...action } = event
+    actions.push(action)
+    deferCardUpdate?.()
+    await cards.settle(ref, done)
   })
   await bot.start()
   const client = connect.mock.calls[0].this as WSClient
@@ -136,17 +151,18 @@ test('企微等待认证、将 task_id 关联到点击并使用原回调帧更�
       text: { content: '你好' },
     },
   } as WsFrame as never)
-  await bot.sendText(user, '**纯文本**')
+  await text.send(user, '**纯文本**')
   assert.deepEqual(send.mock.calls[0].arguments, [
     'member',
     { msgtype: 'markdown', markdown: { content: '\\*\\*纯文本\\*\\*' } },
   ])
   const body =
     '设备：开发电脑\n工作区：示例\n操作：执行命令\n完整命令：node --version\n工作目录：工作区根目录\n授权范围：仅本次，不会登记到命令列表。'
-  const ref = await bot.sendCard(user, {
+  const ref = await cards.send(user, {
     ...card,
     body: '模拟审批详情\n' + body,
     buttons: [
+      { id: 'snooze', label: '稍后查看', visible: false },
       { id: 'deny', label: '拒绝', style: 'secondary' },
       { ...card.buttons[0], style: 'primary' },
     ],
@@ -218,7 +234,7 @@ test('企微等待认证、将 task_id 关联到点击并使用原回调帧更�
     [
       '企微长连接认证成功',
       '企微已接受私聊文本',
-      '企微已接受审批卡片',
+      '企微已接受卡片',
       '企微已推送卡片按钮回调',
       '企微按钮回调未通过机器人或私聊身份校验',
       '企微已推送卡片按钮回调',
@@ -227,7 +243,117 @@ test('企微等待认证、将 task_id 关联到点击并使用原回调帧更�
       '企微已确认卡片更新',
     ],
   )
-  await assert.rejects(bot.updateCard(ref, done), /不支持主动更新/)
+  await assert.rejects(cards.update(ref, done), { capability: 'cards.update' })
+  await bot.stop()
+})
+
+test('同一个钉钉连接使用两套模板，更新和点击各自沿用原配置', async ({ mock }) => {
+  const connect = mock.method(DWClient.prototype, 'connect', async function (this: DWClient) {
+    this.connected = true
+  })
+  mock.method(DWClient.prototype, 'disconnect', () => undefined)
+  mock.method(DWClient.prototype, 'socketCallBackResponse', () => undefined)
+  const http = mock.method(globalThis, 'fetch', async (url: string, _init?: RequestInit) =>
+    url.endsWith('/accessToken')
+      ? Response.json({ accessToken: 'token', expireIn: 7200 })
+      : Response.json({ success: true, result: { deliverResults: [{ success: true }] } }),
+  )
+  const adapter = createDingtalkAdapter({
+    id: 'ding',
+    clientId: 'fake',
+    clientSecret: 'fake',
+    corpId: 'corp',
+  })
+  const bot = createBot({ adapter })
+  const cardCapability = bot.install(new CardCapability())
+  const customOptions = {
+    templateId: 'template',
+    buttonSlots: [
+      {
+        labelVariable: 'leftText',
+        visibleVariable: 'showLeft',
+        actionIdVariable: 'leftAction',
+      },
+      {
+        labelVariable: 'rightText',
+        visibleVariable: 'showRight',
+        actionIdVariable: 'rightAction',
+      },
+    ],
+    buttonActionParam: 'choice',
+  } satisfies DingtalkCardOptions
+  const customCards = cardCapability.withOptions(customOptions)
+  const defaultCards = cardCapability.withOptions({ templateId: 'second-template' })
+  const actions: ActionEvent[] = []
+  cardCapability.onAction((event) => {
+    actions.push(event)
+  })
+  await bot.start()
+  const to = { botId: 'ding', userId: 'member' }
+  await assert.rejects(cardCapability.send(to, card), BotConfigurationError)
+  await assert.rejects(
+    cardCapability.send(to, card, { textNoticeUrl: 'https://example.com/' }),
+    BotConfigurationError,
+  )
+  assert.equal(http.mock.calls.length, 0)
+  const ref = await customCards.send(to, {
+    title: '提醒',
+    body: '任务已到期',
+    buttons: [
+      { id: 'snooze', label: '稍后提醒', visible: false },
+      { id: 'resolve', label: '标为完成' },
+    ],
+  })
+  const second = await defaultCards.send(to, card)
+  // 调整业务配置后，已投放的卡片仍然使用发送时的按钮变量。
+  customOptions.buttonSlots[0].visibleVariable = 'changed'
+  customOptions.buttonActionParam = 'changed'
+  await defaultCards.update(ref, done)
+  await customCards.update(second, done)
+  const payload = (index: number) => JSON.parse(http.mock.calls[index].arguments[1]?.body as string)
+  assert.equal(payload(1).cardTemplateId, 'template')
+  assert.equal(payload(2).cardTemplateId, 'second-template')
+  assert.equal(payload(3).cardData.cardParamMap.showLeft, 'false')
+  assert.equal(payload(4).cardData.cardParamMap.showFirst, 'false')
+  assert.deepEqual(
+    JSON.parse(http.mock.calls[1].arguments[1]?.body as string).cardData.cardParamMap,
+    {
+      title: '提醒',
+      body: '任务已到期',
+      leftText: '稍后提醒',
+      showLeft: 'false',
+      leftAction: 'snooze',
+      rightText: '标为完成',
+      showRight: 'true',
+      rightAction: 'resolve',
+    },
+  )
+  const client = connect.mock.calls[0].this as DWClient
+  client.emit(TOPIC_CARD, {
+    headers: { messageId: 'callback' },
+    data: JSON.stringify({
+      spaceType: 'IM_ROBOT',
+      corpId: 'corp',
+      userId: 'member',
+      outTrackId: ref.cardId,
+      content: JSON.stringify({ cardPrivateData: { params: { choice: 'resolve' } } }),
+    }),
+  } as DWClientDownStream)
+  client.emit(TOPIC_CARD, {
+    headers: { messageId: 'second-callback' },
+    data: JSON.stringify({
+      spaceType: 'IM_ROBOT',
+      corpId: 'corp',
+      userId: 'member',
+      outTrackId: second.cardId,
+      content: JSON.stringify({ cardPrivateData: { params: { botSdkAction: 'approve' } } }),
+    }),
+  } as DWClientDownStream)
+  await setImmediate()
+  assert.deepEqual(actions, [
+    { botId: 'ding', cardId: ref.cardId, actorId: 'member', actionId: 'resolve' },
+    { botId: 'ding', cardId: second.cardId, actorId: 'member', actionId: 'approve' },
+  ])
   await bot.stop()
 })
 
@@ -251,26 +377,27 @@ test('钉钉 OpenAPI 主动投放、Stream 点击回执、主动更新和平台�
       )
     return url.endsWith('/createAndDeliver') ? cardResponse() : Response.json({ success: true })
   })
-  const bot = createBot({
-    adapters: [
-      createDingtalkAdapter({
-        id: 'ding',
-        clientId: 'fake',
-        clientSecret: 'fake',
-        corpId: 'corp',
-        cardTemplateId: 'template',
-        robotCode: 'card-robot',
-        onDeliveryFailureDetail: deliveryFailureDetail,
-        onMessageDiagnostic: messageDiagnostic,
-      }),
-    ],
+  const adapter = createDingtalkAdapter({
+    id: 'ding',
+    clientId: 'fake',
+    clientSecret: 'fake',
+    corpId: 'corp',
+    robotCode: 'card-robot',
+    onDiagnostic: messageDiagnostic,
   })
+  const bot = createBot({ adapter })
+  const text = bot.install(new TextCapability())
+  const cardCapability = bot.install(new CardCapability())
+  const cards = cardCapability.withOptions({
+    templateId: 'template',
+    onDeliveryFailureDetail: deliveryFailureDetail,
+  } satisfies DingtalkCardOptions)
   const actions: ActionEvent[] = []
   const texts: TextEvent[] = []
-  bot.onMessage((event) => {
+  text.onMessage((event) => {
     texts.push(event)
   })
-  bot.onAction((event) => {
+  cardCapability.onAction((event) => {
     actions.push(event)
     return { card: done }
   })
@@ -291,9 +418,14 @@ test('钉钉 OpenAPI 主动投放、Stream 点击回执、主动更新和平台�
     text: { content: '你好' },
   })
   const user = { botId: 'ding', userId: 'member' }
-  await bot.sendText(user, '回声')
-  const ref = await bot.sendCard(user, card)
+  await text.send(user, '回声')
+  const ref = await cards.send(user, {
+    ...card,
+    buttons: [{ id: 'deny', label: '拒绝' }, card.buttons[0]],
+  })
   const request = JSON.parse(http.mock.calls[2].arguments[1]?.body as string)
+  assert.equal(request.cardData.cardParamMap.firstId, 'deny')
+  assert.equal(request.cardData.cardParamMap.secondId, 'approve')
   assert.equal(request.openSpaceId, 'dtv1.card//IM_ROBOT.member')
   assert.deepEqual(request.imRobotOpenDeliverModel, {
     spaceType: 'IM_ROBOT',
@@ -333,33 +465,33 @@ test('钉钉 OpenAPI 主动投放、Stream 点击回执、主动更新和平台�
       ['机器人组织与配置一致，但发送者不是该组织成员或回调缺少发送者组织。'],
     ],
   )
-  await bot.updateCard(ref, done)
+  await cards.update(ref, done)
   assert.match(JSON.stringify(http.mock.calls[3].arguments), /PUT/)
   textRejected = true
-  await assert.rejects(bot.sendText(user, '不会投递'), /未接受/)
+  await assert.rejects(text.send(user, '不会投递'), /未接受/)
   cardResponse = () =>
     Response.json({
       success: true,
       result: { deliverResults: [{ success: false, errorMsg: 'param.userIdNotExist' }] },
     })
-  await assert.rejects(bot.sendCard(user, card), /平台返回投递失败（param.userIdNotExist）/)
+  await assert.rejects(cards.send(user, card), /平台返回投递失败（param.userIdNotExist）/)
   cardResponse = () =>
     Response.json({
       success: true,
       result: { deliverResults: [{ success: false, errorMsg: '平台回显的私聊内容' }] },
     })
   await assert.rejects(
-    bot.sendCard(user, card),
+    cards.send(user, card),
     (error: Error) =>
       error.message.includes('平台返回投递失败') && !error.message.includes('平台回显的私聊内容'),
   )
   assert.deepEqual(deliveryFailureDetail.mock.calls[1].arguments, ['平台回显的私聊内容'])
   cardResponse = () => Response.json({ success: true })
-  await assert.rejects(bot.sendCard(user, card), /投递结果条数：未返回/)
+  await assert.rejects(cards.send(user, card), /投递结果条数：未返回/)
   cardResponse = () =>
     Response.json({ code: 'param.templateUnpublished', message: '审批正文示例' }, { status: 400 })
   await assert.rejects(
-    bot.sendCard(user, card),
+    cards.send(user, card),
     (error: Error) =>
       error.message.includes('HTTP 400，param.templateUnpublished') &&
       !error.message.includes('审批正文示例'),
@@ -376,12 +508,62 @@ test('钉钉 OpenAPI 主动投放、Stream 点击回执、主动更新和平台�
       { status: 403 },
     )
   await assert.rejects(
-    bot.sendCard(user, card),
+    cards.send(user, card),
     (error: Error) =>
       error.message.includes('HTTP 403，Forbidden.AccessDenied.AccessTokenPermissionDenied') &&
       error.message.includes('Card.Instance.Write') &&
       error.message.includes(requestId) &&
       !/审批正文示例|未识别值/.test(error.message),
   )
+  cardResponse = () => new Response('代理错误页')
+  await assert.rejects(cards.send(user, card), /返回非 JSON 响应（HTTP 200）/)
+  cardResponse = () => {
+    throw new TypeError('底层网络错误含敏感值', { cause: { code: 'ENOTFOUND' } })
+  }
+  await assert.rejects(
+    cards.send(user, card),
+    (error: Error) =>
+      error.message.includes('网络请求失败（ENOTFOUND）') && !error.message.includes('敏感值'),
+  )
   await bot.stop()
+})
+
+test('钉钉仅安装文本时不会注册卡片回调，重启不重复注册', async ({ mock }) => {
+  const connection = createDingtalkAdapter({
+    id: 'ding',
+    clientId: 'fake',
+    clientSecret: 'fake',
+    corpId: 'corp',
+  })
+  const other = createDingtalkAdapter({
+    id: 'ding-other',
+    clientId: 'fake',
+    clientSecret: 'fake',
+    corpId: 'corp',
+  })
+  const connect = mock.method(DWClient.prototype, 'connect', async function (this: DWClient) {
+    this.connected = true
+  })
+  mock.method(DWClient.prototype, 'disconnect', function (this: DWClient) {
+    this.connected = false
+  })
+  const bot = createBot({ adapter: connection })
+  bot.install(new TextCapability())
+  for (let i = 0; i < 2; i++) {
+    await bot.start()
+    const client = connect.mock.calls[i].this as DWClient
+    assert.equal(client.listenerCount(TOPIC_ROBOT), 1)
+    assert.deepEqual(
+      client.config.subscriptions
+        .filter(({ type }) => type === 'CALLBACK')
+        .map(({ topic }) => topic),
+      [TOPIC_ROBOT],
+    )
+    assert.equal(
+      other.client.config.subscriptions.some(({ type }) => type === 'CALLBACK'),
+      false,
+    )
+    await bot.stop()
+    assert.equal(client.listenerCount(TOPIC_ROBOT), 0)
+  }
 })

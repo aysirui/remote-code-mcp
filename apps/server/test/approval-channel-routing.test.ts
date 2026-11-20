@@ -2,74 +2,90 @@ import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import { WebSocket } from 'ws'
 import type { ApprovalNotice } from '@rcm/protocol'
+import { env } from '../src/config/env'
 import { DeviceHub } from '../src/modules/device/device-hub'
 import {
   ApprovalChannelService,
   type ApprovalRecipient,
 } from '../src/modules/device/approval-channel.service'
 
-test.each(['feishu', 'dingtalk', 'wecom'] as const)('结算后保留 %s 卡片原详情', async (channel) => {
-  const service = new ApprovalChannelService({} as never)
-  const ref = { botId: channel, cardId: 'test-card', userId: 'test-user' }
-  const bot = {
-    sendCard: jest.fn().mockResolvedValue(ref),
-    updateCard: jest.fn().mockResolvedValue(undefined),
-    sendText: jest.fn().mockResolvedValue(undefined),
-    capabilities: () => ({ proactiveCardUpdate: channel !== 'wecom' }),
-  }
-  jest.replaceProperty(
-    service as unknown as { channels: Map<string, unknown> },
-    'channels',
-    new Map<string, unknown>([[channel, { bot }]]),
-  )
-  jest.spyOn(service, 'isCurrent').mockResolvedValue(true)
-  const recipient: ApprovalRecipient = {
-    channel,
-    userId: 'owner',
-    appId: 'test-app',
-    platformUserId: 'test-user',
-    revision: 'test-revision',
-    enabled: true,
-  }
-  const notice: ApprovalNotice = {
-    kind: 'approval-notice',
-    approvalId: randomUUID(),
-    requestId: randomUUID(),
-    expiresAt: Date.now() + 60_000,
-    summary: '工作区：项目\n完整命令：node --version',
-  }
-  await service.deliver(recipient, notice, '测试电脑', async () => true)
-  expect(bot.sendCard.mock.calls[0][1].buttons.map(({ id }: { id: string }) => id)).toEqual(
-    channel === 'dingtalk' ? ['approve', 'deny'] : ['deny', 'approve'],
-  )
-  const original = bot.sendCard.mock.calls[0][1].body
-  await service.close(ref, 'approved')
-  if (channel === 'wecom') {
-    const reference = `审批编号 ${notice.approvalId.slice(0, 8)}`
-    const details = `设备：测试电脑\n${notice.summary}`
-    expect(original).toContain(reference)
-    expect(bot.sendText).toHaveBeenNthCalledWith(
-      1,
-      { botId: channel, userId: recipient.platformUserId },
-      `RCM 操作审批\n${reference}\n${details}`,
+test.each(['feishu', 'dingtalk', 'wecom'] as const)(
+  '结算 %s 使用同一张卡，仅提供结算文本',
+  async (channel) => {
+    const service = new ApprovalChannelService({} as never)
+    const ref = { botId: channel, cardId: 'test-card', userId: 'test-user' }
+    const cards = {
+      send: jest.fn().mockResolvedValue(ref),
+      settle: jest.fn().mockResolvedValue(undefined),
+    }
+    const cardOptions = {
+      feishu: undefined,
+      wecom: { textNoticeUrl: 'https://example.test/console/approval-channels' },
+      dingtalk: { templateId: 'test-template' },
+    }[channel]
+    service['channels'].set(channel, { appId: 'test-app', cardOptions })
+    jest.replaceProperty(
+      service as unknown as { cards: Map<string, typeof cards> },
+      'cards',
+      new Map([[channel, cards]]),
     )
-    expect(bot.sendText.mock.invocationCallOrder[0]).toBeLessThan(
-      bot.sendCard.mock.invocationCallOrder[0],
+    jest.spyOn(service, 'isCurrent').mockResolvedValue(true)
+    const recipient: ApprovalRecipient = {
+      channel,
+      userId: 'owner',
+      appId: 'test-app',
+      platformUserId: 'test-user',
+      revision: 'test-revision',
+      enabled: true,
+    }
+    const notice: ApprovalNotice = {
+      kind: 'approval-notice',
+      approvalId: randomUUID(),
+      requestId: randomUUID(),
+      expiresAt: Date.now() + 60_000,
+      summary: '工作区：项目\n完整命令：node --version',
+    }
+    await service.deliver(recipient, notice, '测试电脑', async () => true)
+    expect(cards.send).toHaveBeenCalledWith(
+      recipient.platformUserId,
+      expect.any(Object),
+      cardOptions,
     )
-    expect(bot.sendText).toHaveBeenNthCalledWith(
-      2,
+    expect(cards.send.mock.calls[0][1].buttons.map(({ id }: { id: string }) => id)).toEqual([
+      'deny',
+      'approve',
+    ])
+    const original = cards.send.mock.calls[0][1].body
+    const deferCardUpdate = jest.fn(() => jest.fn())
+    await service['handleAction']({
+      botId: channel,
+      cardId: ref.cardId,
+      actorId: 'other-user',
+      actionId: 'approve',
+      deferCardUpdate,
+    })
+    expect(deferCardUpdate).not.toHaveBeenCalled()
+    await service['handleAction']({
+      botId: channel,
+      cardId: ref.cardId,
+      actorId: recipient.platformUserId,
+      actionId: 'approve',
+      deferCardUpdate,
+    })
+    expect(deferCardUpdate).toHaveBeenCalledTimes(1)
+    await service.close(ref, 'approved')
+    expect(cards.settle).toHaveBeenCalledWith(
       ref,
-      expect.stringContaining(`${reference}\n${details}`),
+      { title: '审批已通过', body: original, buttons: [] },
+      { resultText: expect.any(Function) },
     )
-  } else
-    expect(bot.updateCard).toHaveBeenCalledWith(
-      ref,
-      expect.objectContaining({
-        body: '状态：已批准（不代表执行成功）\n\n' + original,
-        buttons: [],
-      }),
+    const { resultText } = cards.settle.mock.calls[0][2]
+    await expect(resultText()).resolves.toBe(
+      `审批已通过\n审批编号 ${notice.approvalId.slice(0, 8)}`,
     )
-})
+    expect(cards.send).toHaveBeenCalledTimes(1)
+  },
+)
 
 /** 模拟设备侧事件，不连接真实飞书或数据库。 */
 test('多渠道独立投递，绑定变更后旧卡片失效，审批结果同步到所有成功投递的卡片', async () => {
@@ -187,17 +203,18 @@ test('多渠道独立投递，绑定变更后旧卡片失效，审批结果同�
 })
 
 test('未配置机器人时不访问绑定表、不返回渠道也不启动适配器', async () => {
+  jest.spyOn(env, 'feishuApproval', 'get').mockReturnValue(undefined)
+  jest.spyOn(env, 'wecomApproval', 'get').mockReturnValue(undefined)
+  jest.spyOn(env, 'dingtalkApproval', 'get').mockReturnValue(undefined)
   const store = { db: { select: jest.fn() } }
   const service = new ApprovalChannelService(store as never)
-  jest.replaceProperty(
-    service as unknown as { channels: Map<string, unknown> },
-    'channels',
-    new Map<string, unknown>(),
-  )
-  service.onApplicationBootstrap()
-  await expect(service.status('owner')).resolves.toEqual([])
-  await expect(service.recipients('owner')).resolves.toEqual([])
-  expect(store.db.select).not.toHaveBeenCalled()
-  await service.onApplicationShutdown()
-  jest.restoreAllMocks()
+  try {
+    service.onApplicationBootstrap()
+    await expect(service.status('owner')).resolves.toEqual([])
+    await expect(service.recipients('owner')).resolves.toEqual([])
+    expect(store.db.select).not.toHaveBeenCalled()
+  } finally {
+    await service.onApplicationShutdown()
+    jest.restoreAllMocks()
+  }
 })

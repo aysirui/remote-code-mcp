@@ -8,7 +8,8 @@ import {
 } from '@nestjs/common'
 import { and, eq, gt, isNull, ne } from 'drizzle-orm'
 import { randomBytes, randomUUID } from 'node:crypto'
-import type { Bot, BotAdapter, CardRef } from '@rcm/bot-sdk/core'
+import type { ActionEvent, CardOptions, CardClient, CardRef } from '@rcm/bot-sdk/cards'
+import type { Bot, BotAdapter, BotManager } from '@rcm/bot-sdk/core'
 import type { ApprovalNotice } from '@rcm/protocol'
 import { env } from '../../config/env'
 import { hash } from '../../common/security'
@@ -27,6 +28,8 @@ interface Delivery {
   recipient: ApprovalRecipient
   /** 发布时的原卡正文，不含 Runtime 本机专用详情。 */
   body: string
+  /** 同一渠道内关联审批卡和结算通知的展示编号。 */
+  reference: string
   expiresAt: number
   answer: (approved: boolean) => Promise<boolean>
 }
@@ -34,151 +37,210 @@ interface Delivery {
 /** 支持的部署级渠道标识。 */
 export type ApprovalChannel = ApprovalRecipient['channel']
 
-/** 单个已配置渠道的连接及生命周期。 */
-interface ChannelConnection {
+/** 已配置渠道的应用标识、分享链接和卡片选项。 */
+interface ChannelConfig {
+  /** 当前应用的身份，用于区分不同应用的绑定。 */
   appId: string
+  /** 供用户打开机器人私聊的分享链接。 */
   botLink?: string
-  create: () => Promise<BotAdapter>
-  bot?: Bot
-  startup?: Promise<void>
-  retry?: NodeJS.Timeout
+  /** 该渠道的审批卡片选项。 */
+  cardOptions?: CardOptions
 }
 
-/** 只创建配置齐全的渠道；各机器人连接独立失败和重试。 */
-function configuredChannels() {
-  const channels = new Map<ApprovalChannel, ChannelConnection>()
-  const feishu = env.feishuApproval
-  const wecom = env.wecomApproval
-  const dingtalk = env.dingtalkApproval
-  if (feishu)
-    channels.set('feishu', {
-      ...feishu,
-      create: async () =>
-        (await import('@rcm/bot-sdk/adapters/feishu')).createAdapter({ ...feishu, id: 'feishu' }),
-    })
-  if (wecom)
-    channels.set('wecom', {
-      ...wecom,
-      appId: wecom.botId,
-      create: async () =>
-        (await import('@rcm/bot-sdk/adapters/wecom')).createAdapter({
-          ...wecom,
-          id: 'wecom',
-          textNoticeUrl: new URL('/console/approval-channels', env.consoleUrl).href,
-        }),
-    })
-  if (dingtalk)
-    channels.set('dingtalk', {
-      ...dingtalk,
-      appId: hash(JSON.stringify([dingtalk.corpId, dingtalk.clientId, dingtalk.robotCode])),
-      create: async () =>
-        (await import('@rcm/bot-sdk/adapters/dingtalk')).createAdapter({
-          ...dingtalk,
-          id: 'dingtalk',
-        }),
-    })
-  return channels
-}
-
-/** 统一的审批结果，结算时追加到原卡详情。 */
+/** 原卡结果标题；审批通过只表示批准了请求。 */
 const messages = {
-  approved: '已批准（不代表执行成功）',
-  denied: '已拒绝',
-  expired: '已过期',
+  approved: '审批已通过',
+  denied: '审批已拒绝',
+  expired: '审批已过期',
   cancelled: '审批已失效',
 }
+
+/** Runtime 返回的审批结论。 */
+type ApprovalStatus = keyof typeof messages
 
 /** Server 进程内的通知网关，统一处理多条平台连接、双向绑定及审批卡片。 */
 @Injectable()
 export class ApprovalChannelService implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(ApprovalChannelService.name)
-  private readonly channels = configuredChannels()
+  private readonly channels = new Map<ApprovalChannel, ChannelConfig>()
   private readonly deliveries = new Map<string, Delivery>()
   private stopping = false
+  private startup?: Promise<void>
+  private manager?: BotManager
+  private cards: ReadonlyMap<string, CardClient> = new Map()
 
   constructor(private readonly store: Store) {}
 
-  /** 异步启动，不让任一渠道故障阻断 MCP 服务。 */
+  /** 按渠道读取配置并创建机器人，连接失败由管理器独立重试。 */
   onApplicationBootstrap() {
-    for (const [channel, connection] of this.channels)
-      connection.startup = this.connect(channel, connection)
+    const { feishuApproval: feishu, wecomApproval: wecom, dingtalkApproval: dingtalk } = env
+    if (!feishu && !wecom && !dingtalk) return
+
+    const core = import('@rcm/bot-sdk/core')
+    const pendingBots: Promise<Bot | undefined>[] = []
+
+    if (feishu) {
+      const { appId, appSecret, botLink } = feishu
+      pendingBots.push(
+        this.registerChannel(core, 'feishu', { appId, botLink }, async () => {
+          const { createAdapter } = await import('@rcm/bot-sdk/adapters/feishu')
+          return createAdapter({ id: 'feishu', appId, appSecret })
+        }),
+      )
+    }
+
+    if (wecom) {
+      const { botId, secret, botLink } = wecom
+      const config: ChannelConfig = { appId: botId, botLink }
+      pendingBots.push(
+        this.registerChannel(core, 'wecom', config, async () => {
+          const { createAdapter } = await import('@rcm/bot-sdk/adapters/wecom')
+          config.cardOptions = {
+            textNoticeUrl: new URL('/console/approval-channels', env.consoleUrl).href,
+          }
+          return createAdapter({ id: 'wecom', botId, secret })
+        }),
+      )
+    }
+
+    if (dingtalk) {
+      const { clientId, clientSecret, corpId, robotCode, cardTemplateId, botLink } = dingtalk
+      pendingBots.push(
+        this.registerChannel(
+          core,
+          'dingtalk',
+          {
+            appId: hash(JSON.stringify([corpId, clientId, robotCode])),
+            botLink,
+            cardOptions: { templateId: cardTemplateId },
+          },
+          async () => {
+            const { createAdapter } = await import('@rcm/bot-sdk/adapters/dingtalk')
+            return createAdapter({ id: 'dingtalk', clientId, clientSecret, corpId, robotCode })
+          },
+        ),
+      )
+    }
+
+    this.startup = this.startBots(core, pendingBots)
   }
 
-  /** 停止重试、等待启动完成并关闭机器人连接。 */
+  /** 等待装配完成，统一停止机器人、重试和能力监听。 */
   async onApplicationShutdown() {
     this.stopping = true
-    await Promise.allSettled(
-      [...this.channels.values()].map(async (connection) => {
-        clearTimeout(connection.retry)
-        await connection.startup
-        await connection.bot?.stop()
-      }),
-    )
+    await this.startup
+    await this.manager?.stop()
   }
 
-  /** 连接失败只记录固定提示；使用动态导入兼容 CommonJS Server 与 ESM SDK。 */
-  private async connect(channel: ApprovalChannel, config: ChannelConnection) {
-    if (this.stopping) return
+  /** 先登记渠道供绑定接口查询。加载失败时记录渠道并返回 undefined。 */
+  private async registerChannel(
+    core: Promise<typeof import('@rcm/bot-sdk/core')>,
+    channel: ApprovalChannel,
+    config: ChannelConfig,
+    loadAdapter: () => Promise<BotAdapter>,
+  ): Promise<Bot | undefined> {
+    this.channels.set(channel, config)
     try {
-      const { createBot } = await import('@rcm/bot-sdk/core')
-      const bot = createBot({
-        adapters: [await config.create()],
-        onError: () => this.logger.warn(`${channel} 连接或事件处理失败`),
+      const [{ createBot }, adapter] = await Promise.all([core, loadAdapter()])
+      return createBot({
+        adapter,
+        onError: (error) => this.logger.warn(`${channel}：${error.message}`),
       })
-      bot.onMessage(async ({ conversation, text }) => {
-        const code = /^绑定\s+([a-f0-9]{32})$/.exec(text.trim())?.[1]
-        if (!code) return
-        const confirmation = await this.receiveCode(
-          channel,
-          config.appId,
-          code,
-          conversation.userId,
-        )
-        if (confirmation)
-          await bot.sendText(
-            conversation,
-            `请在发起绑定的 RCM 控制台输入确认码：${confirmation}。请勿把确认码发给他人。`,
-          )
-      })
-      bot.onAction(async ({ cardId, actorId, actionId }) => {
-        this.logger.debug(`${channel} 收到审批按钮事件`)
-        const key = channel + ':' + cardId
-        const delivery = this.deliveries.get(key)
-        if (!delivery || delivery.expiresAt <= Date.now()) {
-          this.logger.debug(`${channel} 审批卡片已失效或不在当前进程`)
-          return
-        }
-        if (
-          actorId !== delivery.recipient.platformUserId ||
-          (actionId !== 'approve' && actionId !== 'deny')
-        ) {
-          this.logger.debug(`${channel} 审批按钮身份或操作校验失败`)
-          return
-        }
-        const forwarded = await delivery.answer(actionId === 'approve')
-        this.logger.debug(
-          `${channel} ${forwarded ? '已向 Runtime 转发审批决定' : '审批决定未转发'}`,
-        )
-        if (!bot.capabilities(channel).proactiveCardUpdate)
-          return {
-            card: {
-              title: 'RCM 操作审批',
-              body: `状态：${forwarded ? '已提交决定，请以结果通知为准。' : '审批已处理或已失效。'}\n\n${delivery.body}`,
-              buttons: [],
-            },
-          }
-      })
-      await bot.start()
-      config.bot = bot
-      this.logger.log(`${channel} 审批机器人已连接`)
     } catch {
-      this.logger.warn(`${channel} 审批机器人未能启动`)
-      if (!this.stopping) {
-        config.retry = setTimeout(() => {
-          config.startup = this.connect(channel, config)
-        }, 30_000)
-        config.retry.unref()
-      }
+      this.logger.warn(`${channel} 审批机器人配置未能加载`)
+      return undefined
+    }
+  }
+
+  /** 为已创建的机器人安装通用审批能力，随后统一启停。 */
+  private async startBots(
+    core: Promise<typeof import('@rcm/bot-sdk/core')>,
+    pendingBots: readonly Promise<Bot | undefined>[],
+  ) {
+    try {
+      const [{ BotManager }, { TextCapability }, { CardCapability }, candidates] =
+        await Promise.all([
+          core,
+          import('@rcm/bot-sdk/text'),
+          import('@rcm/bot-sdk/cards'),
+          Promise.all(pendingBots),
+        ])
+      const bots = candidates.filter((bot) => bot !== undefined)
+      if (this.stopping || !bots.length) return
+
+      const manager = new BotManager({
+        bots,
+        retryAfterMs: 30_000,
+        onConnectionState: (botId, connected) => {
+          if (connected) this.logger.log(`${botId} 审批机器人已连接`)
+          else this.logger.warn(`${botId} 审批机器人未能启动，将重试`)
+        },
+      })
+      const textsByBot = manager.install(() => {
+        const texts = new TextCapability()
+        texts.onMessage(async ({ conversation, text }) => {
+          const channel = conversation.botId as ApprovalChannel
+          const config = this.channels.get(channel)
+          const code = /^绑定\s+([a-f0-9]{32})$/.exec(text.trim())?.[1]
+          if (!config || !code) return
+          const confirmation = await this.receiveCode(
+            channel,
+            config.appId,
+            code,
+            conversation.userId,
+          )
+          if (confirmation)
+            await texts.send(
+              conversation,
+              `请在发起绑定的 RCM 控制台输入确认码：${confirmation}。请勿把确认码发给他人。`,
+            )
+        })
+        return texts
+      })
+      this.cards = manager.install((bot) => {
+        // 结算文本使用同一个机器人的文本能力。
+        const texts = textsByBot.get(bot.id)!
+        const cards = new CardCapability({
+          sendText: (to, text) => texts.send(to, text),
+        })
+        cards.onAction((event) => this.handleAction(event))
+        return cards
+      })
+      this.manager = manager
+      await manager.start()
+    } catch {
+      this.logger.warn('审批机器人网关未能启动')
+    }
+  }
+
+  /** 校验点击者与动作后转发决定；通过 SDK 保留可用的回调更新窗口。 */
+  private async handleAction({
+    botId: channel,
+    cardId,
+    actorId,
+    actionId,
+    deferCardUpdate,
+  }: ActionEvent): Promise<void> {
+    this.logger.debug(`${channel} 收到审批按钮事件`)
+    const delivery = this.deliveries.get(channel + ':' + cardId)
+    if (!delivery || delivery.expiresAt <= Date.now()) {
+      this.logger.debug(`${channel} 审批卡片已失效或不在当前进程`)
+      return
+    }
+    if (
+      actorId !== delivery.recipient.platformUserId ||
+      (actionId !== 'approve' && actionId !== 'deny')
+    ) {
+      this.logger.debug(`${channel} 审批按钮身份或操作校验失败`)
+      return
+    }
+    const cancelCardUpdate = deferCardUpdate?.()
+    let forwarded = false
+    try {
+      forwarded = await delivery.answer(actionId === 'approve')
+      this.logger.debug(`${channel} ${forwarded ? '已向 Runtime 转发审批决定' : '审批决定未转发'}`)
+    } finally {
+      if (!forwarded) cancelCardUpdate?.()
     }
   }
 
@@ -195,7 +257,8 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
   /** 为登录用户生成短期一次性绑定码；新挑战替换旧挑战。 */
   async begin(userId: string, channel: ApprovalChannel) {
     const config = this.channels.get(channel)
-    if (!config?.bot) throw new ServiceUnavailableException('此渠道机器人暂不可用')
+    if (!config || !this.manager?.get(channel)?.isConnected())
+      throw new ServiceUnavailableException('此渠道机器人暂不可用')
     if ((await this.bindings(userId)).some((row) => row.channel === channel))
       throw new ConflictException('请先解除此渠道绑定')
     const code = randomBytes(16).toString('hex')
@@ -335,9 +398,19 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
 
   /** 返回已启用且机器人已启动的收件人。 */
   async recipients(userId: string) {
-    if (![...this.channels.values()].some((channel) => channel.bot)) return []
-    return (await this.bindings(userId)).filter(
-      (binding) => binding.enabled && this.channels.get(binding.channel)?.bot,
+    if (![...this.channels.keys()].some((channel) => this.manager?.get(channel)?.isConnected()))
+      return []
+    const bindings = await this.bindings(userId)
+    const dingtalk = this.channels.get('dingtalk')
+    if (dingtalk) {
+      const binding = bindings.find(({ channel }) => channel === 'dingtalk')
+      if (!this.manager?.get('dingtalk')?.isConnected())
+        this.logger.debug('dingtalk 未选为收件渠道：机器人未就绪')
+      else if (!binding) this.logger.debug('dingtalk 未选为收件渠道：当前账号未绑定当前机器人应用')
+      else if (!binding.enabled) this.logger.debug('dingtalk 未选为收件渠道：当前账号未启用通知')
+    }
+    return bindings.filter(
+      (binding) => binding.enabled && this.manager?.get(binding.channel)?.isConnected(),
     )
   }
 
@@ -358,63 +431,45 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
     deviceName: string,
     answer: Delivery['answer'],
   ) {
-    const bot = this.channels.get(recipient.channel)?.bot
-    if (!bot || notice.expiresAt <= Date.now() || !(await this.isCurrent(recipient))) return
-    const body = `设备：${deviceName.replace(/[\p{Cc}\p{Cf}\s]+/gu, ' ').trim() || '未命名设备'}\n${notice.summary}`
-    const to = { botId: recipient.channel, userId: recipient.platformUserId }
-    const title = 'RCM 操作审批'
+    const cards = this.cards.get(recipient.channel)
+    if (!cards || notice.expiresAt <= Date.now() || !(await this.isCurrent(recipient))) return
     const reference = `审批编号 ${notice.approvalId.slice(0, 8)}`
+    const body = `${reference}\n设备：${deviceName.replace(/[\p{Cc}\p{Cf}\s]+/gu, ' ').trim() || '未命名设备'}\n${notice.summary}`
+    const title = 'RCM 操作审批'
     const approve = { id: 'approve', label: '批准', style: 'primary' } as const
     const deny = { id: 'deny', label: '拒绝', style: 'secondary' } as const
-    // 企微客户端可能折叠卡片长正文，先发送带编号的完整详情，再发送对应的按钮卡。
-    if (recipient.channel === 'wecom') {
-      await bot.sendText(to, `${title}\n${reference}\n${body}`)
-      if (notice.expiresAt <= Date.now() || !(await this.isCurrent(recipient))) return
-    }
-    const ref = await bot
-      .sendCard(to, {
-        title,
-        body:
-          recipient.channel === 'wecom' ? `${reference}（完整详情见同编号的消息）\n${body}` : body,
-        // 已发布的钉钉模板将第二个变量槽放在左侧，其他平台按数组顺序展示。
-        buttons: recipient.channel === 'dingtalk' ? [approve, deny] : [deny, approve],
-      })
-      .catch(async (error: unknown) => {
-        // 只记录钉钉适配器显式允许写日志的错误，避免平台回显审批详情。
-        if (recipient.channel === 'dingtalk') {
-          const { DingtalkApiError } = await import('@rcm/bot-sdk/adapters/dingtalk')
-          if (error instanceof DingtalkApiError) {
-            this.logger.warn(`审批卡片投递失败（dingtalk）：${error.message}`)
-            return undefined
-          }
-        }
-        throw error
-      })
-    if (!ref) return
+    const ref = await cards.send(
+      recipient.platformUserId,
+      { title, body, buttons: [deny, approve] },
+      this.channels.get(recipient.channel)?.cardOptions,
+    )
     this.logger.debug(`${recipient.channel} 审批卡片已投递`)
     this.deliveries.set(recipient.channel + ':' + ref.cardId, {
       recipient,
-      body: recipient.channel === 'wecom' ? `${reference}\n${body}` : body,
+      body,
+      reference,
       expiresAt: notice.expiresAt,
       answer,
     })
     return ref
   }
 
-  /** 清除决策路由并保留原详情；不支持主动更新时附原详情另发结果。 */
-  async close(ref: CardRef, status: keyof typeof messages) {
+  /** 清除决策路由；仅向仍启用且未改变的绑定发送结算文本。 */
+  async close(ref: CardRef, status: ApprovalStatus) {
     const key = ref.botId + ':' + ref.cardId
     const delivery = this.deliveries.get(key)
     this.deliveries.delete(key)
-    const bot = this.channels.get(ref.botId as ApprovalChannel)?.bot
-    if (!bot || !delivery) return
-    const card = {
-      title: 'RCM 操作审批',
-      body: `状态：${messages[status]}\n\n${delivery.body}`,
-      buttons: [],
-    }
-    if (bot.capabilities(ref.botId).proactiveCardUpdate) await bot.updateCard(ref, card)
-    else if (await this.isCurrent(delivery.recipient))
-      await bot.sendText(ref, card.title + '：' + card.body)
+    const cards = this.cards.get(ref.botId)
+    if (!cards || !delivery) return
+    const title = messages[status]
+    await cards.settle(
+      ref,
+      { title, body: delivery.body, buttons: [] },
+      {
+        resultText: async () => {
+          if (await this.isCurrent(delivery.recipient)) return `${title}\n${delivery.reference}`
+        },
+      },
+    )
   }
 }

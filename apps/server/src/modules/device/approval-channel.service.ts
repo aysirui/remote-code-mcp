@@ -22,9 +22,11 @@ import { Store } from '../../infrastructure/database/store'
 /** 绑定代次与收件人，关联单次 RPC，避免重新绑定后使用旧卡片。 */
 export type ApprovalRecipient = typeof bindings.$inferSelect
 
-/** 已投递卡片的短期路由；不保存卡片摘要、命令或文件路径。 */
+/** 已投递卡片的短期路由，仅在内存中保留已发摘要以更新状态。 */
 interface Delivery {
   recipient: ApprovalRecipient
+  /** 发布时的原卡正文，不含 Runtime 本机专用详情。 */
+  body: string
   expiresAt: number
   answer: (approved: boolean) => Promise<boolean>
 }
@@ -137,17 +139,7 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
       bot.onAction(async ({ cardId, actorId, actionId }) => {
         const key = channel + ':' + cardId
         const delivery = this.deliveries.get(key)
-        if (!delivery || delivery.expiresAt <= Date.now()) {
-          if (!bot.capabilities(channel).proactiveCardUpdate)
-            return {
-              card: {
-                title: 'RCM 操作审批',
-                body: '审批已处理或已失效，请查看结果通知。',
-                buttons: [],
-              },
-            }
-          return
-        }
+        if (!delivery || delivery.expiresAt <= Date.now()) return
         if (actorId !== delivery.recipient.platformUserId) return
         if (actionId !== 'approve' && actionId !== 'deny') return
         const forwarded = await delivery.answer(actionId === 'approve')
@@ -155,7 +147,7 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
           return {
             card: {
               title: 'RCM 操作审批',
-              body: forwarded ? '已提交决定，请以结果通知为准。' : '审批已处理或已失效。',
+              body: `状态：${forwarded ? '已提交决定，请以结果通知为准。' : '审批已处理或已失效。'}\n\n${delivery.body}`,
               buttons: [],
             },
           }
@@ -351,36 +343,41 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
   ) {
     const bot = this.channels.get(recipient.channel)?.bot
     if (!bot || notice.expiresAt <= Date.now() || !(await this.isCurrent(recipient))) return
+    const body = `设备：${deviceName.replace(/[\p{Cc}\p{Cf}\s]+/gu, ' ').trim() || '未命名设备'}\n${notice.summary}`
     const ref = await bot.sendCard(
       { botId: recipient.channel, userId: recipient.platformUserId },
       {
         title: 'RCM 操作审批',
-        body: `设备：${deviceName.replace(/[\p{Cc}\p{Cf}\s]+/gu, ' ').trim() || '未命名设备'}\n${notice.summary}`,
+        body,
         buttons: [
           { id: 'approve', label: '批准' },
           { id: 'deny', label: '拒绝' },
         ],
       },
     )
-    if (notice.expiresAt > Date.now())
-      this.deliveries.set(recipient.channel + ':' + ref.cardId, {
-        recipient,
-        expiresAt: notice.expiresAt,
-        answer,
-      })
+    this.deliveries.set(recipient.channel + ':' + ref.cardId, {
+      recipient,
+      body,
+      expiresAt: notice.expiresAt,
+      answer,
+    })
     return ref
   }
 
-  /** 清除决策路由；支持主动更新时替换原卡，否则单独发送结果。 */
+  /** 清除决策路由并保留原详情；不支持主动更新时附原详情另发结果。 */
   async close(ref: CardRef, status: keyof typeof messages) {
     const key = ref.botId + ':' + ref.cardId
     const delivery = this.deliveries.get(key)
     this.deliveries.delete(key)
     const bot = this.channels.get(ref.botId as ApprovalChannel)?.bot
-    if (!bot) return
-    const card = { title: 'RCM 操作审批', body: messages[status], buttons: [] }
+    if (!bot || !delivery) return
+    const card = {
+      title: 'RCM 操作审批',
+      body: `状态：${messages[status]}\n\n${delivery.body}`,
+      buttons: [],
+    }
     if (bot.capabilities(ref.botId).proactiveCardUpdate) await bot.updateCard(ref, card)
-    else if (delivery && (await this.isCurrent(delivery.recipient)))
+    else if (await this.isCurrent(delivery.recipient))
       await bot.sendText(ref, card.title + '：' + card.body)
   }
 }

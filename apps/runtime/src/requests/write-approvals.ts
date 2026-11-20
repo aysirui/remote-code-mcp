@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import {
   RPC_APPROVAL_TIMEOUT_MS,
   ToolInputs,
+  sanitizeCommandAudit,
   type ApprovalEvent,
   type ApprovalNotice,
   type RpcRequest,
@@ -30,7 +31,7 @@ export interface WriteApprovalInfo {
   truncated: boolean
   /** 目录删除影响条目数；可包含在通知摘要中。 */
   itemCount: number
-  /** 仅供本机 UI 展示的命令详情，不直接序列化到渠道。 */
+  /** 本机完整命令详情；通知只使用单独脱敏的命令文本。 */
   command?: { text: string; purpose: string; risk: string; cwd: string; registered: boolean }
   createdAt: number
   expiresAt: number
@@ -158,9 +159,23 @@ export class WriteApprovalQueue {
       const risk =
         '以 Runtime 账号权限运行，无系统隔离，可能读写项目内外文件、访问网络或启动其他进程。'
       command = { text, purpose, risk, cwd: workspace.root, registered }
-      externalDetails = builtin
-        ? `完整命令：${text}\n用途：${purpose}\n执行影响：${risk}`
-        : '完整命令可能包含私密信息，仅在 Runtime 可见。批准前请先核对。'
+      const safeCommand = sanitizeCommandAudit(selected)
+      const redacted =
+        !builtin &&
+        (safeCommand.executable !== selected.executable ||
+          safeCommand.args.some((arg, index) => arg !== selected.args[index]))
+      const shownCommand = redacted
+        ? formatApprovalCommand(safeCommand.executable, safeCommand.args)
+        : text
+      const shownPurpose = registered && !builtin ? '运行本机登记任务。' : purpose
+      externalDetails = [
+        `${redacted ? '命令（已脱敏）' : '完整命令'}：${shownCommand}`,
+        `用途：${shownPurpose}`,
+        '工作目录：工作区根目录',
+        `执行影响：${risk}`,
+        ...(!registered ? ['授权范围：仅本次，不会登记到命令列表。'] : []),
+        ...(redacted ? ['有隐藏内容，请在 Runtime 核对原始命令后再决定。'] : []),
+      ].join('\n')
     } else if (req.operation === 'file.list') {
       const payload = ToolInputs['file.list'].parse(req.payload)
       pathLabel = payload.path
@@ -226,7 +241,8 @@ export class WriteApprovalQueue {
       `工作区：${workspace.name.replace(/[\p{Cc}\p{Cf}\s]+/gu, ' ').trim() || '未命名工作区'}`,
       `操作：${req.operation}`,
     ].join('\n')
-    const summary = externalDetails ? source + '\n' + externalDetails : source
+    const details = externalDetails || preview
+    const summary = details ? source + '\n' + details : source
     const showDetails = safeToDisplay && summary.length <= 3000
     const remote =
       req.notifyApproval && send && waitMs > 0

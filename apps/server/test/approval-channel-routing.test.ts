@@ -1,11 +1,57 @@
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import { WebSocket } from 'ws'
+import type { ApprovalNotice } from '@rcm/protocol'
 import { DeviceHub } from '../src/modules/device/device-hub'
 import {
   ApprovalChannelService,
   type ApprovalRecipient,
 } from '../src/modules/device/approval-channel.service'
+
+test.each(['feishu', 'dingtalk', 'wecom'] as const)('结算后保留 %s 卡片原详情', async (channel) => {
+  const service = new ApprovalChannelService({} as never)
+  const ref = { botId: channel, cardId: 'test-card', userId: 'test-user' }
+  const bot = {
+    sendCard: jest.fn().mockResolvedValue(ref),
+    updateCard: jest.fn().mockResolvedValue(undefined),
+    sendText: jest.fn().mockResolvedValue(undefined),
+    capabilities: () => ({ proactiveCardUpdate: channel !== 'wecom' }),
+  }
+  jest.replaceProperty(
+    service as unknown as { channels: Map<string, unknown> },
+    'channels',
+    new Map<string, unknown>([[channel, { bot }]]),
+  )
+  jest.spyOn(service, 'isCurrent').mockResolvedValue(true)
+  const recipient: ApprovalRecipient = {
+    channel,
+    userId: 'owner',
+    appId: 'test-app',
+    platformUserId: 'test-user',
+    revision: 'test-revision',
+    enabled: true,
+  }
+  const notice: ApprovalNotice = {
+    kind: 'approval-notice',
+    approvalId: randomUUID(),
+    requestId: randomUUID(),
+    expiresAt: Date.now() + 60_000,
+    summary: '工作区：项目\n完整命令：node --version',
+  }
+  await service.deliver(recipient, notice, '测试电脑', async () => true)
+  const original = bot.sendCard.mock.calls[0][1].body
+  await service.close(ref, 'approved')
+  if (channel === 'wecom')
+    expect(bot.sendText).toHaveBeenCalledWith(ref, expect.stringContaining(original))
+  else
+    expect(bot.updateCard).toHaveBeenCalledWith(
+      ref,
+      expect.objectContaining({
+        body: '状态：已批准（不代表执行成功）\n\n' + original,
+        buttons: [],
+      }),
+    )
+})
 
 /** 模拟设备侧事件，不连接真实飞书或数据库。 */
 test('多渠道独立投递，绑定变更后旧卡片失效，审批结果同步到所有成功投递的卡片', async () => {

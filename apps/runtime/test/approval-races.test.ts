@@ -93,11 +93,38 @@ test('未订阅时不回传审批通知，临时命令参数从不外发', async
     ...request('one'),
     notifyApproval: true,
     operation: 'command.run',
-    payload: { executable: 'tool', args: ['secret-value'] },
+    payload: { executable: 'node', args: ['--version', 'secret-value'] },
   }
   const pending = queue.request(req, workspace('one'), (event) => events.push(event))
-  expect(events[0]).toMatchObject({ kind: 'approval-notice' })
+  expect(events[0]).toMatchObject({
+    kind: 'approval-notice',
+    summary: expect.stringContaining('node --version'),
+  })
+  expect(JSON.stringify(events)).toContain('[已隐藏]')
   expect(JSON.stringify(events)).not.toContain('secret-value')
   expect(queue.answerRemote(req.id, queue.list()[0].id, true)).toBe(true)
   await expect(pending).resolves.toMatchObject({ approved: true })
+})
+
+test('版本查询的命令文本在机器人通知和 Runtime 中一致', async () => {
+  const queue = new WriteApprovalQueue()
+  const send = jest.fn()
+  const pending = queue.request(
+    {
+      ...request('one'),
+      notifyApproval: true,
+      operation: 'command.run',
+      payload: { executable: 'node', args: ['--version'] },
+    },
+    workspace('one'),
+    send,
+  )
+  expect(queue.list()[0].command?.text).toBe('node --version')
+  expect(send).toHaveBeenCalledWith(
+    expect.objectContaining({
+      summary: expect.stringContaining('完整命令：node --version'),
+    }),
+  )
+  queue.cancelAll()
+  await pending
 })

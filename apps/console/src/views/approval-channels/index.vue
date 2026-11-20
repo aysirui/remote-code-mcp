@@ -293,7 +293,7 @@ async function confirmUnbind(channel: ApprovalChannel) {
     </section>
     <aside class="channel-note">
       <el-icon aria-hidden="true"><Bell /></el-icon>
-      <span>机器人只发送审批摘要，消息可能被平台留存。完整详情仍在 Runtime 查看。</span>
+      <span>审批通知会发送完整命令和操作说明，消息可能被渠道平台留存。</span>
     </aside>
   </template>
 

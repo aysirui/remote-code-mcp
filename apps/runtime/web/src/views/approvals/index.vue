@@ -134,18 +134,10 @@ function formatBytes(bytes: number) {
           </div>
           <dl class="command-details">
             <div>
-              <dt>用途</dt>
-              <dd>{{ approval.command.purpose }}</dd>
-            </div>
-            <div>
               <dt>工作目录</dt>
               <dd>
                 <code>{{ approval.command.cwd }}</code>
               </dd>
-            </div>
-            <div>
-              <dt>执行影响</dt>
-              <dd>{{ approval.command.risk }}</dd>
             </div>
             <div v-if="!approval.command.registered">
               <dt>授权范围</dt>
@@ -212,7 +204,9 @@ function formatBytes(bytes: number) {
       <p>新的本地访问或修改请求到达时，会显示在这里。</p>
     </section>
 
-    <p class="privacy-note">完整详情只保留在 Runtime。启用通知时，机器人会收到审批摘要。</p>
+    <p class="privacy-note">
+      启用渠道通知时，机器人会收到完整命令和操作说明。文件正文仅在 Runtime 查看。
+    </p>
   </main>
 </template>
 

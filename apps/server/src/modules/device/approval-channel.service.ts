@@ -76,7 +76,7 @@ function configuredChannels() {
   return channels
 }
 
-/** 统一的审批结果；状态卡不含原始摘要。 */
+/** 统一的审批结果，结算时追加到原卡详情。 */
 const messages = {
   approved: '已批准（不代表执行成功）',
   denied: '已拒绝',
@@ -344,17 +344,30 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
     const bot = this.channels.get(recipient.channel)?.bot
     if (!bot || notice.expiresAt <= Date.now() || !(await this.isCurrent(recipient))) return
     const body = `设备：${deviceName.replace(/[\p{Cc}\p{Cf}\s]+/gu, ' ').trim() || '未命名设备'}\n${notice.summary}`
-    const ref = await bot.sendCard(
-      { botId: recipient.channel, userId: recipient.platformUserId },
-      {
-        title: 'RCM 操作审批',
-        body,
-        buttons: [
-          { id: 'approve', label: '批准' },
-          { id: 'deny', label: '拒绝' },
-        ],
-      },
-    )
+    const ref = await bot
+      .sendCard(
+        { botId: recipient.channel, userId: recipient.platformUserId },
+        {
+          title: 'RCM 操作审批',
+          body,
+          buttons: [
+            { id: 'approve', label: '批准' },
+            { id: 'deny', label: '拒绝' },
+          ],
+        },
+      )
+      .catch(async (error: unknown) => {
+        // 只记录钉钉适配器显式允许写日志的错误，避免平台回显审批详情。
+        if (recipient.channel === 'dingtalk') {
+          const { DingtalkApiError } = await import('@rcm/bot-sdk/adapters/dingtalk')
+          if (error instanceof DingtalkApiError) {
+            this.logger.warn(`审批卡片投递失败（dingtalk）：${error.message}`)
+            return undefined
+          }
+        }
+        throw error
+      })
+    if (!ref) return
     this.deliveries.set(recipient.channel + ':' + ref.cardId, {
       recipient,
       body,

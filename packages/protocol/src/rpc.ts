@@ -110,11 +110,11 @@ export const RpcRequestSchema = z.object({
   operation: z.enum(Operations),
   payload: z.unknown(),
   deadlineAt: z.number(),
-  /** 仅有已启用的通知渠道时，允许 Runtime 回传限长的脱敏审批摘要。 */
+  /** 仅有已启用的通知渠道时，允许 Runtime 回传限长的审批详情。 */
   notifyApproval: z.literal(true).optional(),
 })
 
-/** Runtime 为已绑定渠道生成的审批摘要；不含原始请求或本机绝对路径。 */
+/** Runtime 为已绑定渠道生成的临时审批详情，可包含完整命令，与持久化审计分开。 */
 export const ApprovalNoticeSchema = z.object({
   kind: z.literal('approval-notice'),
   requestId: z.string().uuid(),

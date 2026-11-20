@@ -80,7 +80,7 @@ test('执行回调只提供脱敏命令，审批被拒绝时没有执行记录',
   expect(record).not.toHaveBeenCalled()
 })
 
-test('临时命令必须先审批，完整程序与参数、工作目录和风险全部可见，批准只消费一次', async () => {
+test('临时命令必须先审批，展示完整命令和工作目录，批准只消费一次', async () => {
   const w = workspace()
   const request = rpc(temporary())
   await expect(execute(w, request)).rejects.toThrow('COMMAND_APPROVAL_REQUIRED')
@@ -90,7 +90,6 @@ test('临时命令必须先审批，完整程序与参数、工作目录和风�
   expect(item.command).toMatchObject({
     cwd: root,
     registered: false,
-    risk: expect.stringContaining('网络'),
   })
   expect(item.command?.text).toContain(
     temporary()

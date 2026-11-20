@@ -9,8 +9,8 @@ export interface WriteApprovalView {
   preview: string
   truncated: boolean
   itemCount: number
-  /** 命令审批专用详情，仅显示在本机。 */
-  command?: { text: string; purpose: string; risk: string; cwd: string; registered: boolean }
+  /** 本机审批显示的完整命令、实际工作目录和命令登记状态。 */
+  command?: { text: string; cwd: string; registered: boolean }
   createdAt: number
   expiresAt: number
 }

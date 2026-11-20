@@ -2,7 +2,6 @@ import { createHash, randomUUID } from 'node:crypto'
 import {
   RPC_APPROVAL_TIMEOUT_MS,
   ToolInputs,
-  sanitizeCommandAudit,
   type ApprovalEvent,
   type ApprovalNotice,
   type RpcRequest,
@@ -12,7 +11,6 @@ import {
   resolveCommandRequest,
   commandFingerprint,
   formatApprovalCommand,
-  commandCanBeDisplayedInApproval,
 } from '../operations/command/command-operations'
 import { gitApprovalContext } from '../operations/git/git-operations'
 import { inspectDeleteTarget } from '../operations/file/file-operations'
@@ -31,8 +29,15 @@ export interface WriteApprovalInfo {
   truncated: boolean
   /** 目录删除影响条目数；可包含在通知摘要中。 */
   itemCount: number
-  /** 本机完整命令详情；通知只使用单独脱敏的命令文本。 */
-  command?: { text: string; purpose: string; risk: string; cwd: string; registered: boolean }
+  /** 命令审批展示实际命令与授权范围；通知用「工作区根目录」代替本机工作目录。 */
+  command?: {
+    /** 按原顺序展示的程序和完整参数。 */
+    text: string
+    /** 本机实际执行目录。 */
+    cwd: string
+    /** 命令是否已登记；未登记命令的批准仅对本次有效。 */
+    registered: boolean
+  }
   createdAt: number
   expiresAt: number
 }
@@ -149,32 +154,13 @@ export class WriteApprovalQueue {
     } else if (req.operation === 'command.run') {
       const { command: selected, registered } = resolveCommandRequest(workspace, req.payload)
       resourceHash = commandFingerprint(selected)
-      const builtin = registered && commandCanBeDisplayedInApproval(selected.id)
       const text = formatApprovalCommand(selected.executable, selected.args)
-      const purpose = builtin
-        ? `运行项目的 ${selected.args[1]} 脚本。`
-        : registered
-          ? `运行本机登记任务「${selected.name}」。`
-          : '运行未登记命令，用途请结合命令本身核对。'
-      const risk =
-        '以 Runtime 账号权限运行，无系统隔离，可能读写项目内外文件、访问网络或启动其他进程。'
-      command = { text, purpose, risk, cwd: workspace.root, registered }
-      const safeCommand = sanitizeCommandAudit(selected)
-      const redacted =
-        !builtin &&
-        (safeCommand.executable !== selected.executable ||
-          safeCommand.args.some((arg, index) => arg !== selected.args[index]))
-      const shownCommand = redacted
-        ? formatApprovalCommand(safeCommand.executable, safeCommand.args)
-        : text
-      const shownPurpose = registered && !builtin ? '运行本机登记任务。' : purpose
+      command = { text, cwd: workspace.root, registered }
+      // 等待用户审批时展示实际执行的命令；执行审计仍在执行链路单独脱敏。
       externalDetails = [
-        `${redacted ? '命令（已脱敏）' : '完整命令'}：${shownCommand}`,
-        `用途：${shownPurpose}`,
+        `完整命令：${text}`,
         '工作目录：工作区根目录',
-        `执行影响：${risk}`,
         ...(!registered ? ['授权范围：仅本次，不会登记到命令列表。'] : []),
-        ...(redacted ? ['有隐藏内容，请在 Runtime 核对原始命令后再决定。'] : []),
       ].join('\n')
     } else if (req.operation === 'file.list') {
       const payload = ToolInputs['file.list'].parse(req.payload)

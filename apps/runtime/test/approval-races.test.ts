@@ -59,7 +59,7 @@ test('飞书可批准写入，但通知不发送文件正文，决定仅结算�
   expect(events[1]).toMatchObject({ kind: 'approval-closed', status: 'approved' })
 })
 
-test('只展示明确允许外发的内置命令，飞书和本地审批共享队列', async () => {
+test('内置命令显示完整命令，机器人和本地审批共享队列', async () => {
   const queue = new WriteApprovalQueue()
   const events: ApprovalEvent[] = []
   const req: RpcRequest = {
@@ -80,7 +80,7 @@ test('只展示明确允许外发的内置命令，飞书和本地审批共享�
   await expect(pending).resolves.toMatchObject({ approved: true })
 })
 
-test('未订阅时不回传审批通知，临时命令参数从不外发', async () => {
+test('未订阅时不回传审批通知，订阅后发送与本机相同的临时命令详情', async () => {
   const queue = new WriteApprovalQueue()
   const events: ApprovalEvent[] = []
   const requestLocal = queue.request(request('one'), workspace('one'), (event) =>
@@ -93,15 +93,18 @@ test('未订阅时不回传审批通知，临时命令参数从不外发', async
     ...request('one'),
     notifyApproval: true,
     operation: 'command.run',
-    payload: { executable: 'node', args: ['--version', 'secret-value'] },
+    payload: { executable: 'node', args: ['-version', '示例参数 带空格'] },
   }
   const pending = queue.request(req, workspace('one'), (event) => events.push(event))
+  const { command } = queue.list()[0]
+  expect(command?.text).toBe('node -version "示例参数 带空格"')
   expect(events[0]).toMatchObject({
     kind: 'approval-notice',
-    summary: expect.stringContaining('node --version'),
+    summary: expect.stringContaining(
+      `完整命令：${command?.text}\n工作目录：工作区根目录\n授权范围：仅本次，不会登记到命令列表。`,
+    ),
   })
-  expect(JSON.stringify(events)).toContain('[已隐藏]')
-  expect(JSON.stringify(events)).not.toContain('secret-value')
+  expect(JSON.stringify(events)).not.toMatch(/已隐藏|\/tmp\/demo|用途：|执行影响：/)
   expect(queue.answerRemote(req.id, queue.list()[0].id, true)).toBe(true)
   await expect(pending).resolves.toMatchObject({ approved: true })
 })
@@ -114,15 +117,15 @@ test('版本查询的命令文本在机器人通知和 Runtime 中一致', async
       ...request('one'),
       notifyApproval: true,
       operation: 'command.run',
-      payload: { executable: 'node', args: ['--version'] },
+      payload: { executable: 'node', args: ['-version'] },
     },
     workspace('one'),
     send,
   )
-  expect(queue.list()[0].command?.text).toBe('node --version')
+  expect(queue.list()[0].command?.text).toBe('node -version')
   expect(send).toHaveBeenCalledWith(
     expect.objectContaining({
-      summary: expect.stringContaining('完整命令：node --version'),
+      summary: expect.stringContaining('完整命令：node -version'),
     }),
   )
   queue.cancelAll()

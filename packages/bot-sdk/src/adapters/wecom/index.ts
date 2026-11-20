@@ -19,7 +19,9 @@ function renderCard(card: Card, taskId: string): TemplateCard {
       ? TemplateCardType.ButtonInteraction
       : TemplateCardType.TextNotice,
     task_id: taskId,
-    main_title: { title: card.title, desc: card.body },
+    main_title: { title: card.title },
+    // 标题辅助信息适合短描述，多行正文放在支持换行的引用区。
+    ...(card.body ? { quote_area: { quote_text: card.body } } : {}),
     ...(card.buttons.length
       ? { button_list: card.buttons.map((button) => ({ key: button.id, text: button.label })) }
       : {}),

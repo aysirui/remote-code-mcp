@@ -23,7 +23,7 @@ export interface RequestContext {
   approvals: WriteApprovalQueue
   events: LocalEvents
   isConnected: () => boolean
-  /** 将脱敏通知发送到提交当前请求的设备连接。 */
+  /** 将临时审批通知发送到提交当前请求的设备连接。 */
   sendApproval?: (event: ApprovalEvent) => void
 }
 

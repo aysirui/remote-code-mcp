@@ -18,6 +18,25 @@ export interface DingtalkOptions {
   robotCode?: string
 }
 
+/** 可写入运维日志的钉钉接口错误，仅由适配器使用固定提示和已知平台错误码构造。 */
+export class DingtalkApiError extends Error {}
+
+/** 平台响应可能包含原始业务内容，只允许已知错误码进入错误消息。 */
+const safeErrorCodes = new Set([
+  'AccessDenied',
+  'Forbidden.AccessDenied',
+  'param.openDeliverModelEmpty',
+  'param.openDeliverModelError',
+  'param.openSpaceIdInvalid',
+  'param.userIdNotExist',
+  'param.contentUnsafe',
+  'param.openSpaceModelInvalid',
+  'param.templateNotExist',
+  'param.templateUnpublished',
+  'param.invalid',
+  'system.busy',
+])
+
 /** 卡片模板映射；两个可见性字段独立控制按钮是否渲染。 */
 function renderCard(card: Card) {
   if (card.buttons.length > 2) throw new Error('钉钉默认模板最多支持两个按钮')
@@ -62,9 +81,10 @@ export function createAdapter(options: DingtalkOptions): BotAdapter {
       body: JSON.stringify({ appKey: clientId, appSecret: clientSecret }),
       signal: AbortSignal.timeout(10_000),
     })
-    if (!response.ok) throw new Error(`钉钉获取访问令牌失败（HTTP ${response.status}）`)
+    if (!response.ok) throw new DingtalkApiError(`钉钉获取访问令牌失败（HTTP ${response.status}）`)
     const result = (await response.json()) as { accessToken?: string; expireIn?: number }
-    if (!result.accessToken || !result.expireIn) throw new Error('钉钉访问令牌响应缺少字段')
+    if (!result.accessToken || !result.expireIn)
+      throw new DingtalkApiError('钉钉访问令牌响应缺少字段')
     token = { value: result.accessToken, expiresAt: Date.now() + (result.expireIn - 60) * 1000 }
     return token.value
   }
@@ -81,7 +101,11 @@ export function createAdapter(options: DingtalkOptions): BotAdapter {
       },
     })
     if (response.status === 401) token = undefined
-    if (!response.ok) throw new Error(`钉钉 ${path} 请求失败（HTTP ${response.status}）`)
+    if (!response.ok) {
+      const result = (await response.json().catch(() => undefined)) as { code?: string } | undefined
+      const code = result?.code && safeErrorCodes.has(result.code) ? `，${result.code}` : ''
+      throw new DingtalkApiError(`钉钉 ${path} 请求失败（HTTP ${response.status}${code}）`)
+    }
     return await response.json()
   }
 
@@ -198,13 +222,21 @@ export function createAdapter(options: DingtalkOptions): BotAdapter {
         cardData: renderCard(card),
         openSpaceId: `dtv1.card//IM_ROBOT.${userId}`,
         imRobotOpenSpaceModel: { supportForward: false },
-        imRobotOpenDeliverModel: { spaceType: 'IM_ROBOT' },
-      })) as { success?: boolean; result?: { deliverResults?: { success?: boolean }[] } }
-      if (
-        !result.success ||
-        result.result?.deliverResults?.some((delivery) => delivery.success === false)
-      )
-        throw new Error('钉钉未接受私聊卡片投递')
+        // 绑定回执走文字接口，卡片投放也需要明确指定单聊机器人编码。
+        imRobotOpenDeliverModel: { spaceType: 'IM_ROBOT', robotCode },
+      })) as {
+        success?: boolean
+        result?: { deliverResults?: { success?: boolean; errorMsg?: string }[] }
+      }
+      // 一次仅向一个单聊投放，接口成功仍需检查实际投放结果。
+      const deliveries = result.result?.deliverResults
+      if (!result.success || deliveries?.length !== 1 || deliveries[0].success !== true) {
+        const code = deliveries?.[0]?.errorMsg
+        const detail = code && safeErrorCodes.has(code) ? `（${code}）` : ''
+        throw new DingtalkApiError(
+          `钉钉未确认私聊卡片投递${detail}。请检查互动卡片权限、模板发布和应用可见范围。`,
+        )
+      }
       return outTrackId
     },
     async updateCard(ref, card) {

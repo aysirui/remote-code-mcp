@@ -148,6 +148,20 @@ Server 容器启动顺序：
 
 钉钉能回复绑定确认码，表示机器人私聊文字接口可用。若审批卡片仍未收到，查看 Server 日志中的「审批卡片投递失败（dingtalk）」及平台错误码，并核对当前应用的「互动卡片实例写权限」、已发布的卡片模板 ID 和机器人编码。
 
+`createAndDeliver` 返回 HTTP 403 时，先进入钉钉开发者后台对应应用的「权限管理」，搜索并开通「互动卡片实例写权限」（`Card.Instance.Write`）。以演示或 Server 的错误码为准。若显示 `IpNotInWhiteList`，核对实际运行环境的出口 IP 与该应用的白名单。
+
+本地联调时，将测试机器人配置放在 `apps/server/.env`，在仓库根目录先执行 `pnpm --filter @rcm/protocol --filter @rcm/bot-sdk build`，再执行 `pnpm dev:server`。打开本地 Console 完成绑定并启用渠道，通过连接该 Server 的 Runtime 发起一条新的待审批请求。可在 Server 日志中查看「审批机器人已连接」「审批卡片已投递」和「收到审批按钮事件」。重启前发出的历史卡片仍可查看，本地进程只处理它自己发出的未结算卡片。
+
+若只测试企业微信，在终端设置 `BOT_DEMO_USER_ID` 为企微通讯录成员账号，再运行 `node --env-file=apps/server/.env packages/bot-sdk/dist/demo/wecom.js`。请用测试机器人，或先停掉使用同一企微凭证的其他进程。演示先发多行模拟详情，再发按钮卡片。点击后按终端的「企微已推送卡片按钮回调」「模拟审批按钮已处理」和「企微已确认卡片更新」区分消息到达、审批决定和卡片更新。正式审批的企微结果卡跳转链接由 `CONSOLE_URL` 生成。
+
+若只测试钉钉发卡，在 PowerShell 中设置 `$env:BOT_DEMO_USER_ID` 为当前组织中测试用户的 `staffId`，再运行 `node --env-file=apps/server/.env packages/bot-sdk/dist/demo/dingtalk.js`。演示发出模拟卡片，不执行工作区操作。使用同一凭证的 Server 和演示应分开运行。
+
+若投递说明为 `spaceId is illegal`，可在上述命令末尾加上 `--lookup-user-id`，到测试机器人私聊只发送本次终端给出的一次性口令。该模式只接收私聊并在终端显示钉钉回调中的员工 ID，不发送卡片，也不修改绑定。
+
+查询模式若显示「已收到钉钉机器人消息回调」，可按后续提示核对组织或口令。发消息后没有这行日志时，检查应用的机器人消息接收模式是否为 Stream、当前版本是否已发布，以及是否有其他环境在使用同一机器人凭证。
+
+若 HTTP 请求成功但卡片投递失败，可在同一 PowerShell 窗口先设置 `$env:DINGTALK_DEMO_DEBUG = '1'`，再运行演示。此前应重新构建 Bot SDK。调试只额外输出钉钉返回的单条投递说明，可能包含收件人信息，分享前请遮盖身份信息。
+
 #### 轮换飞书凭证或更换应用
 
 - **同一个 App ID，仅更新密钥或分享链接**：修改 Server 环境变量后重启。现有绑定不变；分享链接应仍指向同一个应用。

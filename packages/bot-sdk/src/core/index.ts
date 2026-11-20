@@ -24,6 +24,8 @@ export interface Card {
     id: string
     /** 用户可见的按钮名称。 */
     label: string
+    /** 支持样式的平台可区分主要按钮与次要按钮；省略时使用平台默认样式。 */
+    style?: 'primary' | 'secondary'
   }[]
 }
 

@@ -11,13 +11,13 @@ test('只有指定用户在指定机器人卡片上能改变演示状态，决�
   assert.equal(decide({ ...click, cardId: 'other' }, 10), undefined)
   assert.equal(decide({ ...click, actionId: 'unknown' }, 10), undefined)
   assert.equal(decide(click, 10), 'approved')
-  assert.equal(decide({ ...click, actionId: 'reject' }, 20), 'approved')
+  assert.equal(decide({ ...click, actionId: 'deny' }, 20), 'approved')
 })
 
 test('过期操作不能通过；截止前可以拒绝', () => {
   assert.equal(demoDecision('bot', 'user', 'card', 100)(click, 100), 'expired')
   assert.equal(
-    demoDecision('bot', 'user', 'card', 100)({ ...click, actionId: 'reject' }, 99),
+    demoDecision('bot', 'user', 'card', 100)({ ...click, actionId: 'deny' }, 99),
     'rejected',
   )
 })

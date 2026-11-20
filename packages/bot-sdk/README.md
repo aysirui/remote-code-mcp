@@ -98,10 +98,12 @@ try {
 
 企微的主动文字接口使用 Markdown，适配器转义常用格式标记。平台仍可能拒绝超过自身大小或数量限制的消息和卡片。
 
+按钮可选 `style`。企微将 `primary` 映射为蓝底白字，将 `secondary` 映射为浅底深字。省略时使用客户端默认样式。
+
 ## 平台配置
 
 - **飞书**：创建企业自建应用并启用机器人；使用长连接订阅 `im.message.receive_v1` 和卡片回调 `card.action.trigger`，开通单聊接收和应用发消息权限后发布。适配器接收 `{ id, appId, appSecret }`。测试用户应在应用可用范围内，用户 `open_id` 必须来自同一个应用。测试外部账号时，须先开启对外单聊并由用户建立会话，再分别验证收卡、点击和更新。
-- **企业微信**：创建支持长连接的智能机器人，确保测试成员在可用范围内。适配器接收 `{ id, botId, secret }`，其中 `botId` 是企微凭证中的机器人 ID，不是 SDK 实例的 `id`。不要同时运行共享同一凭证的多个实例。
+- **企业微信**：创建支持长连接的智能机器人，确保测试成员在可用范围内。适配器接收 `{ id, botId, secret, textNoticeUrl? }`，其中 `botId` 是企微凭证中的机器人 ID，不是 SDK 实例的 `id`。无按钮的通知卡（包括通过点击回调替换的结果卡）需要 `textNoticeUrl` 作为整卡跳转链接。正文中最多六条形如「标签：内容」的行用原生字段展示。不要同时运行共享同一凭证的多个实例。
 - **钉钉**：开启企业内部应用机器人和 Stream，申请私聊消息及卡片接口权限。适配器接收 `{ id, clientId, clientSecret, corpId, cardTemplateId, robotCode? }`，未配置 `robotCode` 时使用 `clientId`。还需配置下方卡片模板。
 
 ### 钉钉模板
@@ -112,6 +114,8 @@ try {
 | ------ | ------------- | ---------------------- | ---------------------------- |
 | 第一个 | `firstLabel`  | `showFirst` 为 `true`  | `botSdkAction` 取 `firstId`  |
 | 第二个 | `secondLabel` | `showSecond` 为 `true` | `botSdkAction` 取 `secondId` |
+
+RCM 审批和模拟审批模板中，左侧按钮绑定第二个变量槽，回传 `deny`；右侧按钮绑定第一个变量槽，回传 `approve`。每个按钮的文案、可见性、回传值须使用同一个变量槽。
 
 可见性变量在 OpenAPI 的 `cardParamMap` 中以字符串 `"true"` / `"false"` 投递；模板用布尔变量绑定可见性。按钮使用服务端回传事件，参数应出现在 `content.cardPrivateData.params.botSdkAction`。状态卡留空按钮数组。适配器依赖固定版 `dingtalk-stream`（`2.1.6-beta.1`），用于支持可关闭和可重连的 Stream 连接。
 

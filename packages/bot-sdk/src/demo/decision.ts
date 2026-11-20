@@ -9,7 +9,7 @@ export function demoDecision(botId: string, userId: string, cardId: string, expi
     now = Date.now(),
   ) => {
     if (event.botId !== botId || event.actorId !== userId || event.cardId !== cardId) return
-    if (event.actionId !== 'approve' && event.actionId !== 'reject') return
+    if (event.actionId !== 'approve' && event.actionId !== 'deny') return
     decision ??=
       now >= expiresAt ? 'expired' : event.actionId === 'approve' ? 'approved' : 'rejected'
     return decision

@@ -61,7 +61,11 @@ function configuredChannels() {
       ...wecom,
       appId: wecom.botId,
       create: async () =>
-        (await import('@rcm/bot-sdk/adapters/wecom')).createAdapter({ ...wecom, id: 'wecom' }),
+        (await import('@rcm/bot-sdk/adapters/wecom')).createAdapter({
+          ...wecom,
+          id: 'wecom',
+          textNoticeUrl: new URL('/console/approval-channels', env.consoleUrl).href,
+        }),
     })
   if (dingtalk)
     channels.set('dingtalk', {
@@ -137,12 +141,24 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
           )
       })
       bot.onAction(async ({ cardId, actorId, actionId }) => {
+        this.logger.debug(`${channel} 收到审批按钮事件`)
         const key = channel + ':' + cardId
         const delivery = this.deliveries.get(key)
-        if (!delivery || delivery.expiresAt <= Date.now()) return
-        if (actorId !== delivery.recipient.platformUserId) return
-        if (actionId !== 'approve' && actionId !== 'deny') return
+        if (!delivery || delivery.expiresAt <= Date.now()) {
+          this.logger.debug(`${channel} 审批卡片已失效或不在当前进程`)
+          return
+        }
+        if (
+          actorId !== delivery.recipient.platformUserId ||
+          (actionId !== 'approve' && actionId !== 'deny')
+        ) {
+          this.logger.debug(`${channel} 审批按钮身份或操作校验失败`)
+          return
+        }
         const forwarded = await delivery.answer(actionId === 'approve')
+        this.logger.debug(
+          `${channel} ${forwarded ? '已向 Runtime 转发审批决定' : '审批决定未转发'}`,
+        )
         if (!bot.capabilities(channel).proactiveCardUpdate)
           return {
             card: {
@@ -154,6 +170,7 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
       })
       await bot.start()
       config.bot = bot
+      this.logger.log(`${channel} 审批机器人已连接`)
     } catch {
       this.logger.warn(`${channel} 审批机器人未能启动`)
       if (!this.stopping) {
@@ -344,18 +361,24 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
     const bot = this.channels.get(recipient.channel)?.bot
     if (!bot || notice.expiresAt <= Date.now() || !(await this.isCurrent(recipient))) return
     const body = `设备：${deviceName.replace(/[\p{Cc}\p{Cf}\s]+/gu, ' ').trim() || '未命名设备'}\n${notice.summary}`
+    const to = { botId: recipient.channel, userId: recipient.platformUserId }
+    const title = 'RCM 操作审批'
+    const reference = `审批编号 ${notice.approvalId.slice(0, 8)}`
+    const approve = { id: 'approve', label: '批准', style: 'primary' } as const
+    const deny = { id: 'deny', label: '拒绝', style: 'secondary' } as const
+    // 企微客户端可能折叠卡片长正文，先发送带编号的完整详情，再发送对应的按钮卡。
+    if (recipient.channel === 'wecom') {
+      await bot.sendText(to, `${title}\n${reference}\n${body}`)
+      if (notice.expiresAt <= Date.now() || !(await this.isCurrent(recipient))) return
+    }
     const ref = await bot
-      .sendCard(
-        { botId: recipient.channel, userId: recipient.platformUserId },
-        {
-          title: 'RCM 操作审批',
-          body,
-          buttons: [
-            { id: 'approve', label: '批准' },
-            { id: 'deny', label: '拒绝' },
-          ],
-        },
-      )
+      .sendCard(to, {
+        title,
+        body:
+          recipient.channel === 'wecom' ? `${reference}（完整详情见同编号的消息）\n${body}` : body,
+        // 已发布的钉钉模板将第二个变量槽放在左侧，其他平台按数组顺序展示。
+        buttons: recipient.channel === 'dingtalk' ? [approve, deny] : [deny, approve],
+      })
       .catch(async (error: unknown) => {
         // 只记录钉钉适配器显式允许写日志的错误，避免平台回显审批详情。
         if (recipient.channel === 'dingtalk') {
@@ -368,9 +391,10 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
         throw error
       })
     if (!ref) return
+    this.logger.debug(`${recipient.channel} 审批卡片已投递`)
     this.deliveries.set(recipient.channel + ':' + ref.cardId, {
       recipient,
-      body,
+      body: recipient.channel === 'wecom' ? `${reference}\n${body}` : body,
       expiresAt: notice.expiresAt,
       answer,
     })

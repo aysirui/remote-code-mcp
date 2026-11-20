@@ -16,6 +16,10 @@ export interface DingtalkOptions {
   cardTemplateId: string
   /** 机器人编码，缺省时使用 Client ID。 */
   robotCode?: string
+  /** 本地模拟卡片调试专用；接收钉钉的投递错误说明，可能含收件人信息。 */
+  onDeliveryFailureDetail?: (message: string) => void
+  /** 本地排查私聊回调时接收固定诊断提示，不含平台消息或用户身份。 */
+  onMessageDiagnostic?: (message: string) => void
 }
 
 /** 可写入运维日志的钉钉接口错误，仅由适配器使用固定提示和已知平台错误码构造。 */
@@ -25,6 +29,8 @@ export class DingtalkApiError extends Error {}
 const safeErrorCodes = new Set([
   'AccessDenied',
   'Forbidden.AccessDenied',
+  'Forbidden.AccessDenied.AccessTokenPermissionDenied',
+  'Forbidden.AccessDenied.IpNotInWhiteList',
   'param.openDeliverModelEmpty',
   'param.openDeliverModelError',
   'param.openSpaceIdInvalid',
@@ -35,6 +41,9 @@ const safeErrorCodes = new Set([
   'param.templateUnpublished',
   'param.invalid',
   'system.busy',
+  'spaces of card is empty',
+  'spaceId is illegal',
+  'chatbot not exist',
 ])
 
 /** 卡片模板映射；两个可见性字段独立控制按钮是否渲染。 */
@@ -102,9 +111,30 @@ export function createAdapter(options: DingtalkOptions): BotAdapter {
     })
     if (response.status === 401) token = undefined
     if (!response.ok) {
-      const result = (await response.json().catch(() => undefined)) as { code?: string } | undefined
+      const result = (await response.json().catch(() => undefined)) as
+        | {
+            /** 钉钉 REST 错误码、请求追踪号及权限详情；不读取业务异常正文。 */
+            code?: string
+            requestid?: string
+            accessdenieddetail?: { requiredScopes?: string[] }
+          }
+        | undefined
       const code = result?.code && safeErrorCodes.has(result.code) ? `，${result.code}` : ''
-      throw new DingtalkApiError(`钉钉 ${path} 请求失败（HTTP ${response.status}${code}）`)
+      const scopes = result?.accessdenieddetail?.requiredScopes
+      const permission =
+        Array.isArray(scopes) && scopes.includes('Card.Instance.Write')
+          ? '，缺少互动卡片实例写权限 Card.Instance.Write'
+          : ''
+      const requestId = result?.requestid
+      // 只接受官方错误结构里的 UUID 追踪号，不把平台回显的业务数据写进日志。
+      const trace =
+        typeof requestId === 'string' &&
+        /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(requestId)
+          ? `，请求 ID ${requestId}`
+          : ''
+      throw new DingtalkApiError(
+        `钉钉 ${path} 请求失败（HTTP ${response.status}${code}${permission}${trace}）`,
+      )
     }
     return await response.json()
   }
@@ -114,23 +144,35 @@ export function createAdapter(options: DingtalkOptions): BotAdapter {
     callbackCardUpdate: true,
     async start(events) {
       client.registerCallbackListener(TOPIC_ROBOT, (frame) => {
+        const diagnose = options.onMessageDiagnostic
+        diagnose?.('已收到钉钉机器人消息回调。')
         const message = decode(frame.data)
-        if (!frame.headers.messageId) return
-        client.socketCallBackResponse(frame.headers.messageId, EventAck.SUCCESS)
-        if (
-          message?.conversationType !== '1' ||
-          message.msgtype !== 'text' ||
-          message.senderCorpId !== corpId
-        )
+        if (!frame.headers.messageId) {
+          diagnose?.('回调缺少消息确认标识。')
           return
+        }
+        client.socketCallBackResponse(frame.headers.messageId, EventAck.SUCCESS)
+        if (message?.conversationType !== '1' || message.msgtype !== 'text') {
+          diagnose?.('已忽略非私聊纯文本回调。')
+          return
+        }
+        if (message.senderCorpId !== corpId) {
+          // 员工 ID 属于其所在组织，不能用其他组织的成员身份发卡或绑定。
+          if (message.chatbotCorpId === corpId)
+            diagnose?.('机器人组织与配置一致，但发送者不是该组织成员或回调缺少发送者组织。')
+          else diagnose?.('发送者组织与 DINGTALK_CORP_ID 不匹配，请核对机器人所在组织。')
+          return
+        }
         const text = (message.text as { content?: unknown } | undefined)?.content
         if (
           typeof message.senderStaffId !== 'string' ||
           !message.senderStaffId ||
           typeof message.msgId !== 'string' ||
           typeof text !== 'string'
-        )
+        ) {
+          diagnose?.('私聊回调缺少员工 ID、消息 ID 或正文。')
           return
+        }
         void events
           .message({
             conversation: { botId: id, userId: message.senderStaffId },
@@ -228,15 +270,22 @@ export function createAdapter(options: DingtalkOptions): BotAdapter {
         success?: boolean
         result?: { deliverResults?: { success?: boolean; errorMsg?: string }[] }
       }
-      // 一次仅向一个单聊投放，接口成功仍需检查实际投放结果。
-      const deliveries = result.result?.deliverResults
-      if (!result.success || deliveries?.length !== 1 || deliveries[0].success !== true) {
-        const code = deliveries?.[0]?.errorMsg
-        const detail = code && safeErrorCodes.has(code) ? `（${code}）` : ''
-        throw new DingtalkApiError(
-          `钉钉未确认私聊卡片投递${detail}。请检查互动卡片权限、模板发布和应用可见范围。`,
-        )
+      // HTTP 成功只表示接口可调用，仍需检查钉钉返回的单聊投递结果。
+      const deliveries = result?.result?.deliverResults
+      if (!Array.isArray(deliveries) || deliveries.length !== 1) {
+        const count = Array.isArray(deliveries) ? deliveries.length : '未返回'
+        throw new DingtalkApiError(`钉钉未确认私聊卡片投递（投递结果条数：${count}，预期 1 条）。`)
       }
+      const delivery = deliveries[0]
+      if (typeof delivery?.errorMsg === 'string' && delivery.success !== true && delivery.errorMsg)
+        options.onDeliveryFailureDetail?.(delivery.errorMsg)
+      if (delivery?.success === false) {
+        const code = delivery.errorMsg
+        const detail = code && safeErrorCodes.has(code) ? `（${code}）` : ''
+        throw new DingtalkApiError(`钉钉未确认私聊卡片投递：平台返回投递失败${detail}。`)
+      }
+      if (result.success !== true || delivery?.success !== true)
+        throw new DingtalkApiError('钉钉未确认私聊卡片投递（接口或投递结果未返回成功标记）。')
       return outTrackId
     },
     async updateCard(ref, card) {

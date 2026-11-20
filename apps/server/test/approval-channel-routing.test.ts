@@ -39,11 +39,29 @@ test.each(['feishu', 'dingtalk', 'wecom'] as const)('结算后保留 %s 卡片�
     summary: '工作区：项目\n完整命令：node --version',
   }
   await service.deliver(recipient, notice, '测试电脑', async () => true)
+  expect(bot.sendCard.mock.calls[0][1].buttons.map(({ id }: { id: string }) => id)).toEqual(
+    channel === 'dingtalk' ? ['approve', 'deny'] : ['deny', 'approve'],
+  )
   const original = bot.sendCard.mock.calls[0][1].body
   await service.close(ref, 'approved')
-  if (channel === 'wecom')
-    expect(bot.sendText).toHaveBeenCalledWith(ref, expect.stringContaining(original))
-  else
+  if (channel === 'wecom') {
+    const reference = `审批编号 ${notice.approvalId.slice(0, 8)}`
+    const details = `设备：测试电脑\n${notice.summary}`
+    expect(original).toContain(reference)
+    expect(bot.sendText).toHaveBeenNthCalledWith(
+      1,
+      { botId: channel, userId: recipient.platformUserId },
+      `RCM 操作审批\n${reference}\n${details}`,
+    )
+    expect(bot.sendText.mock.invocationCallOrder[0]).toBeLessThan(
+      bot.sendCard.mock.invocationCallOrder[0],
+    )
+    expect(bot.sendText).toHaveBeenNthCalledWith(
+      2,
+      ref,
+      expect.stringContaining(`${reference}\n${details}`),
+    )
+  } else
     expect(bot.updateCard).toHaveBeenCalledWith(
       ref,
       expect.objectContaining({

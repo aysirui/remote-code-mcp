@@ -95,6 +95,7 @@ test('飞书映射单聊、主动消息、原生按钮回调与主动更新', as
 })
 
 test('企微等待认证、将 task_id 关联到点击并使用原回调帧更新', async ({ mock }) => {
+  const diagnose = mock.fn()
   const connect = mock.method(WSClient.prototype, 'connect', function (this: WSClient) {
     this.emit('authenticated')
     return this
@@ -103,7 +104,15 @@ test('企微等待认证、将 task_id 关联到点击并使用原回调帧更�
   const send = mock.method(WSClient.prototype, 'sendMessage', async () => ({}))
   const update = mock.method(WSClient.prototype, 'updateTemplateCard', async () => ({}))
   const bot = createBot({
-    adapters: [createWecomAdapter({ id: 'wecom', botId: 'robot', secret: 'fake' })],
+    adapters: [
+      createWecomAdapter({
+        id: 'wecom',
+        botId: 'robot',
+        secret: 'fake',
+        textNoticeUrl: 'https://example.com/console',
+        onDiagnostic: diagnose,
+      }),
+    ],
   })
   const texts: TextEvent[] = []
   const actions: ActionEvent[] = []
@@ -134,7 +143,14 @@ test('企微等待认证、将 task_id 关联到点击并使用原回调帧更�
   ])
   const body =
     '设备：开发电脑\n工作区：示例\n操作：执行命令\n完整命令：node --version\n工作目录：工作区根目录\n授权范围：仅本次，不会登记到命令列表。'
-  const ref = await bot.sendCard(user, { ...card, body })
+  const ref = await bot.sendCard(user, {
+    ...card,
+    body: '模拟审批详情\n' + body,
+    buttons: [
+      { id: 'deny', label: '拒绝', style: 'secondary' },
+      { ...card.buttons[0], style: 'primary' },
+    ],
+  })
   assert.deepEqual(send.mock.calls[1].arguments, [
     'member',
     {
@@ -143,8 +159,19 @@ test('企微等待认证、将 task_id 关联到点击并使用原回调帧更�
         card_type: 'button_interaction',
         task_id: ref.cardId,
         main_title: { title: card.title },
-        quote_area: { quote_text: body },
-        button_list: [{ key: 'approve', text: card.buttons[0].label }],
+        sub_title_text: '模拟审批详情',
+        horizontal_content_list: [
+          { keyname: '设备', value: '开发电脑' },
+          { keyname: '工作区', value: '示例' },
+          { keyname: '操作', value: '执行命令' },
+          { keyname: '完整命令', value: 'node --version' },
+          { keyname: '工作目录', value: '工作区根目录' },
+          { keyname: '授权范围', value: '仅本次，不会登记到命令列表。' },
+        ],
+        button_list: [
+          { key: 'deny', text: '拒绝', style: 4 },
+          { key: 'approve', text: '批准', style: 1 },
+        ],
       },
     },
   ])
@@ -154,12 +181,20 @@ test('企微等待认证、将 task_id 关联到点击并使用原回调帧更�
       aibotid: 'robot',
       chattype: 'single',
       from: { userid: 'member' },
-      event: { task_id: ref.cardId, event_key: 'approve' },
+      chatid: 'member',
+      event: {
+        eventtype: 'template_card_event',
+        template_card_event: { task_id: ref.cardId, event_key: 'approve' },
+      },
     },
   }
   client.emit('event.template_card_event', {
     ...frame,
     body: { ...frame.body, chattype: 'group' },
+  } as never)
+  client.emit('event.template_card_event', {
+    ...frame,
+    body: { ...frame.body, chattype: undefined },
   } as never)
   client.emit('event.template_card_event', frame as never)
   await setImmediate()
@@ -173,15 +208,32 @@ test('企微等待认证、将 task_id 关联到点击并使用原回调帧更�
       card_type: 'text_notice',
       task_id: ref.cardId,
       main_title: { title: '模拟' },
-      quote_area: { quote_text: '处理完成' },
+      sub_title_text: '处理完成',
+      card_action: { type: 1, url: 'https://example.com/console' },
     },
     ['member'],
   ])
+  assert.deepEqual(
+    diagnose.mock.calls.map(({ arguments: args }) => args[0]),
+    [
+      '企微长连接认证成功',
+      '企微已接受私聊文本',
+      '企微已接受审批卡片',
+      '企微已推送卡片按钮回调',
+      '企微按钮回调未通过机器人或私聊身份校验',
+      '企微已推送卡片按钮回调',
+      '企微按钮回调未通过机器人或私聊身份校验',
+      '企微已推送卡片按钮回调',
+      '企微已确认卡片更新',
+    ],
+  )
   await assert.rejects(bot.updateCard(ref, done), /不支持主动更新/)
   await bot.stop()
 })
 
 test('钉钉 OpenAPI 主动投放、Stream 点击回执、主动更新和平台拒绝', async ({ mock }) => {
+  const deliveryFailureDetail = mock.fn()
+  const messageDiagnostic = mock.fn()
   const connect = mock.method(DWClient.prototype, 'connect', async function (this: DWClient) {
     this.connected = true
   })
@@ -208,6 +260,8 @@ test('钉钉 OpenAPI 主动投放、Stream 点击回执、主动更新和平台�
         corpId: 'corp',
         cardTemplateId: 'template',
         robotCode: 'card-robot',
+        onDeliveryFailureDetail: deliveryFailureDetail,
+        onMessageDiagnostic: messageDiagnostic,
       }),
     ],
   })
@@ -261,6 +315,24 @@ test('钉钉 OpenAPI 主动投放、Stream 点击回执、主动更新和平台�
   ])
   assert.deepEqual(ack.mock.calls[1].arguments, [TOPIC_CARD, {}])
   assert.match(JSON.stringify(ack.mock.calls[2].arguments), /处理完成/)
+  emit(TOPIC_ROBOT, {
+    conversationType: '1',
+    msgtype: 'text',
+    chatbotCorpId: 'corp',
+    senderCorpId: 'other-org',
+    senderStaffId: 'other-member',
+    msgId: 'm2',
+    text: { content: '私聊内容' },
+  })
+  assert.equal(texts.length, 1)
+  assert.deepEqual(
+    messageDiagnostic.mock.calls.map(({ arguments: args }) => args),
+    [
+      ['已收到钉钉机器人消息回调。'],
+      ['已收到钉钉机器人消息回调。'],
+      ['机器人组织与配置一致，但发送者不是该组织成员或回调缺少发送者组织。'],
+    ],
+  )
   await bot.updateCard(ref, done)
   assert.match(JSON.stringify(http.mock.calls[3].arguments), /PUT/)
   textRejected = true
@@ -270,9 +342,20 @@ test('钉钉 OpenAPI 主动投放、Stream 点击回执、主动更新和平台�
       success: true,
       result: { deliverResults: [{ success: false, errorMsg: 'param.userIdNotExist' }] },
     })
-  await assert.rejects(bot.sendCard(user, card), /未确认私聊卡片投递（param.userIdNotExist）/)
+  await assert.rejects(bot.sendCard(user, card), /平台返回投递失败（param.userIdNotExist）/)
+  cardResponse = () =>
+    Response.json({
+      success: true,
+      result: { deliverResults: [{ success: false, errorMsg: '平台回显的私聊内容' }] },
+    })
+  await assert.rejects(
+    bot.sendCard(user, card),
+    (error: Error) =>
+      error.message.includes('平台返回投递失败') && !error.message.includes('平台回显的私聊内容'),
+  )
+  assert.deepEqual(deliveryFailureDetail.mock.calls[1].arguments, ['平台回显的私聊内容'])
   cardResponse = () => Response.json({ success: true })
-  await assert.rejects(bot.sendCard(user, card), /未确认私聊卡片投递/)
+  await assert.rejects(bot.sendCard(user, card), /投递结果条数：未返回/)
   cardResponse = () =>
     Response.json({ code: 'param.templateUnpublished', message: '审批正文示例' }, { status: 400 })
   await assert.rejects(
@@ -280,6 +363,25 @@ test('钉钉 OpenAPI 主动投放、Stream 点击回执、主动更新和平台�
     (error: Error) =>
       error.message.includes('HTTP 400，param.templateUnpublished') &&
       !error.message.includes('审批正文示例'),
+  )
+  const requestId = 'e64a36ef-2fb4-4bc5-bbd8-80e0f54218f9'
+  cardResponse = () =>
+    Response.json(
+      {
+        code: 'Forbidden.AccessDenied.AccessTokenPermissionDenied',
+        requestid: requestId,
+        message: '审批正文示例',
+        accessdenieddetail: { requiredScopes: ['Card.Instance.Write', '未识别值'] },
+      },
+      { status: 403 },
+    )
+  await assert.rejects(
+    bot.sendCard(user, card),
+    (error: Error) =>
+      error.message.includes('HTTP 403，Forbidden.AccessDenied.AccessTokenPermissionDenied') &&
+      error.message.includes('Card.Instance.Write') &&
+      error.message.includes(requestId) &&
+      !/审批正文示例|未识别值/.test(error.message),
   )
   await bot.stop()
 })

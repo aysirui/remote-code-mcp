@@ -121,7 +121,6 @@ export const ApprovalNoticeSchema = z.object({
   approvalId: z.string().uuid(),
   summary: z.string().min(1).max(3000),
   expiresAt: z.number().int(),
-  canApprove: z.boolean(),
 })
 
 /** Runtime 结算审批后同步结果；批准不代表执行成功。 */

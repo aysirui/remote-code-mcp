@@ -9,7 +9,8 @@ export interface WriteApprovalView {
   preview: string
   truncated: boolean
   itemCount: number
-  riskLevel: 'normal' | 'high'
+  /** 命令审批专用详情，仅显示在本机。 */
+  command?: { text: string; purpose: string; risk: string; cwd: string; registered: boolean }
   createdAt: number
   expiresAt: number
 }

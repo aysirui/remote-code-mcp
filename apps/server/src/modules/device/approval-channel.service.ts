@@ -26,7 +26,6 @@ export type ApprovalRecipient = typeof bindings.$inferSelect
 interface Delivery {
   recipient: ApprovalRecipient
   expiresAt: number
-  canApprove: boolean
   answer: (approved: boolean) => Promise<boolean>
 }
 
@@ -151,7 +150,6 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
         }
         if (actorId !== delivery.recipient.platformUserId) return
         if (actionId !== 'approve' && actionId !== 'deny') return
-        if (actionId === 'approve' && !delivery.canApprove) return
         const forwarded = await delivery.answer(actionId === 'approve')
         if (!bot.capabilities(channel).proactiveCardUpdate)
           return {
@@ -344,17 +342,22 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
     )
   }
 
-  /** 私发审批卡，返回临时消息引用；失败不影响 Runtime 本地审批。 */
-  async deliver(recipient: ApprovalRecipient, notice: ApprovalNotice, answer: Delivery['answer']) {
+  /** 私发审批卡；设备显示名由 Server 提供，失败不影响 Runtime 本地审批。 */
+  async deliver(
+    recipient: ApprovalRecipient,
+    notice: ApprovalNotice,
+    deviceName: string,
+    answer: Delivery['answer'],
+  ) {
     const bot = this.channels.get(recipient.channel)?.bot
     if (!bot || notice.expiresAt <= Date.now() || !(await this.isCurrent(recipient))) return
     const ref = await bot.sendCard(
       { botId: recipient.channel, userId: recipient.platformUserId },
       {
         title: 'RCM 操作审批',
-        body: notice.summary + (notice.canApprove ? '' : '\n如需批准，请在 Runtime 查看完整详情。'),
+        body: `设备：${deviceName.replace(/[\p{Cc}\p{Cf}\s]+/gu, ' ').trim() || '未命名设备'}\n${notice.summary}`,
         buttons: [
-          ...(notice.canApprove ? [{ id: 'approve', label: '批准' }] : []),
+          { id: 'approve', label: '批准' },
           { id: 'deny', label: '拒绝' },
         ],
       },
@@ -363,7 +366,6 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
       this.deliveries.set(recipient.channel + ':' + ref.cardId, {
         recipient,
         expiresAt: notice.expiresAt,
-        canApprove: notice.canApprove,
         answer,
       })
     return ref

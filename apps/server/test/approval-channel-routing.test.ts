@@ -25,6 +25,7 @@ test('多渠道独立投递，绑定变更后旧卡片失效，审批结果同�
     async (
       recipient: ApprovalRecipient,
       _notice: unknown,
+      _deviceName: string,
       decide: (approved: boolean) => Promise<boolean>,
     ) => {
       if (recipient.channel === 'dingtalk') throw new Error('平台故障')
@@ -43,6 +44,7 @@ test('多渠道独立投递，绑定变更后旧卡片失效，审批结果同�
         localRead: true,
         localWrite: true,
         status: 'active',
+        name: '办公室电脑',
       }),
       logOperation: jest.fn().mockResolvedValue(undefined),
     } as never,
@@ -75,13 +77,18 @@ test('多渠道独立投递，绑定变更后旧卡片失效，审批结果同�
       approvalId,
       summary: '路径：demo.txt',
       expiresAt: Date.now() + 60_000,
-      canApprove: true,
     }
     other.emit('message', JSON.stringify(notice))
     expect(deliver).not.toHaveBeenCalled()
     socket.emit('message', JSON.stringify(notice))
     socket.emit('message', JSON.stringify(notice))
     expect(deliver).toHaveBeenCalledTimes(3)
+    expect(deliver).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: 'feishu' }),
+      notice,
+      '办公室电脑',
+      expect.any(Function),
+    )
     await answers.get('feishu')!(true)
     expect(JSON.parse(String(send.mock.calls[1][0]))).toEqual({
       kind: 'approval-answer',

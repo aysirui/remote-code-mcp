@@ -4,13 +4,13 @@ import { operationRequiresWrite, type RpcRequest } from '@rcm/protocol'
 import * as S from '../../infrastructure/database/schema'
 import { Store } from '../../infrastructure/database/store'
 
-/** 服务端执行前验证工作区归属、启用状态、读写权限及设备有效性。 */
+/** 校验工作区和设备权限，返回授权设备的 ID 及控制台显示名。 */
 export async function authorizeDeviceRpc(
   store: Store,
   userId: string,
   workspaceId: string,
   operation: RpcRequest['operation'],
-): Promise<string> {
+) {
   const workspace = await store.one(
     store.db
       .select()
@@ -35,5 +35,5 @@ export async function authorizeDeviceRpc(
       .limit(1),
   )
   if (!device || device.status !== 'active') throw new ForbiddenException('DEVICE_REVOKED')
-  return device.id
+  return { id: device.id, name: device.name }
 }

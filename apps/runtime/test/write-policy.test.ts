@@ -192,8 +192,7 @@ test('命令审批区分已登记与临时执行', async () => {
   )
   try {
     const [item] = queue.list()
-    expect(item.riskLevel).toBe('normal')
-    expect(item.preview).toContain('已登记命令')
+    expect(item.command).toMatchObject({ text: 'pnpm run typecheck', registered: true })
   } finally {
     queue.cancelAll()
     await registered
@@ -209,8 +208,7 @@ test('命令审批区分已登记与临时执行', async () => {
   )
   try {
     const [item] = queue.list()
-    expect(item.riskLevel).toBe('high')
-    expect(item.preview).toContain('仅本次执行')
+    expect(item.command).toMatchObject({ text: 'pnpm run typecheck', registered: false })
   } finally {
     queue.cancelAll()
     await temporary

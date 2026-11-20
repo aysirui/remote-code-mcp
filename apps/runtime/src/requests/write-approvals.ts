@@ -10,10 +10,11 @@ import type { LocalWorkspace } from '../workspace/state'
 import {
   resolveCommandRequest,
   commandFingerprint,
+  formatApprovalCommand,
   commandCanBeDisplayedInApproval,
 } from '../operations/command/command-operations'
 import { gitApprovalContext } from '../operations/git/git-operations'
-import { inspectDeleteTarget, HIGH_RISK_DELETE_THRESHOLD } from '../operations/file/file-operations'
+import { inspectDeleteTarget } from '../operations/file/file-operations'
 import { resolveSafe, assertSafeRelativePath } from '../operations/file/path-safety'
 
 /** 本地审批页面可展示的完整任务；不会把此对象上传或落库。 */
@@ -29,8 +30,8 @@ export interface WriteApprovalInfo {
   truncated: boolean
   /** 目录删除影响条目数；可包含在通知摘要中。 */
   itemCount: number
-  /** normal / high；风险等级由 Runtime 根据本地资源计算。 */
-  riskLevel: 'normal' | 'high'
+  /** 仅供本机 UI 展示的命令详情，不直接序列化到渠道。 */
+  command?: { text: string; purpose: string; risk: string; cwd: string; registered: boolean }
   createdAt: number
   expiresAt: number
 }
@@ -80,7 +81,7 @@ export class WriteApprovalQueue {
         preview,
         truncated,
         itemCount,
-        riskLevel,
+        command,
         createdAt,
         expiresAt,
       }) => ({
@@ -93,7 +94,7 @@ export class WriteApprovalQueue {
         preview,
         truncated,
         itemCount,
-        riskLevel,
+        command,
         createdAt,
         expiresAt,
       }),
@@ -112,10 +113,9 @@ export class WriteApprovalQueue {
     let bytes = 0
     let previewTruncated = false
     let itemCount = 0
-    let riskLevel: 'normal' | 'high' = 'normal'
+    let command: WriteApprovalInfo['command']
     let resourceHash: string | undefined
     let externalDetails = ''
-    let canApprove = false
     if (req.operation === 'file.write') {
       const payload = ToolInputs['file.write'].parse(req.payload)
       pathLabel = payload.path
@@ -128,13 +128,11 @@ export class WriteApprovalQueue {
       pathLabel = payload.path
       preview = '创建目录' + (payload.recursive ? '（含父目录）' : '')
       externalDetails = `路径：${payload.path}\n${preview}`
-      canApprove = true
     } else if (req.operation === 'file.move') {
       const payload = ToolInputs['file.move'].parse(req.payload)
       pathLabel = payload.from + ' → ' + payload.to
       preview = '移动或重命名本地文件/目录，不覆盖目标'
       externalDetails = `源路径：${payload.from}\n目标路径：${payload.to}\n${preview}`
-      canApprove = true
     } else if (req.operation === 'file.delete') {
       const payload = ToolInputs['file.delete'].parse(req.payload)
       assertSafeRelativePath(payload.path)
@@ -143,47 +141,36 @@ export class WriteApprovalQueue {
       const snapshot = await inspectDeleteTarget(target)
       itemCount = snapshot.entryCount
       resourceHash = snapshot.fingerprint
-      riskLevel = payload.recursive && itemCount > HIGH_RISK_DELETE_THRESHOLD ? 'high' : 'normal'
       preview = payload.recursive
         ? `递归删除目录（影响 ${itemCount} 个目录项，不可撤销）`
         : '删除文件或空目录（不可撤销）'
       externalDetails = `路径：${payload.path}\n${preview}\n影响项数：${itemCount}`
-      canApprove = riskLevel === 'normal'
     } else if (req.operation === 'command.run') {
       const { command: selected, registered } = resolveCommandRequest(workspace, req.payload)
       resourceHash = commandFingerprint(selected)
-      // 已登记命令在 approval 策略下属于常规审批；未登记命令始终高风险。
-      riskLevel = registered ? 'normal' : 'high'
-      pathLabel = registered ? selected.name + ' (' + selected.id + ')' : selected.name
-      canApprove = registered && commandCanBeDisplayedInApproval(selected.id)
-      externalDetails = canApprove
-        ? `程序：${selected.executable}\n参数：${JSON.stringify(selected.args)}\n工作目录：.\n程序以 Runtime 账号权限运行，没有 OS 沙箱隔离。`
-        : '命令参数可能含私密信息，请在 Runtime 查看完整命令。'
-      preview =
-        '程序：' +
-        selected.executable +
-        '\n参数：' +
-        JSON.stringify(selected.args) +
-        '\n工作区：' +
-        workspace.name +
-        '\n工作目录：' +
-        workspace.root +
-        (registered
-          ? '\n授权范围：已登记命令，本次操作需确认。'
-          : '\n授权范围：仅本次执行，不会自动登记命令。') +
-        '\n风险：程序将以 Runtime 当前账号权限运行，无文件、网络及 CPU/内存隔离；可能读写项目外文件、访问凭据、连接外网或内网、启动其他程序并消耗系统资源。审批仅确认程序与参数，不保证项目脚本及依赖的实际行为。'
+      const builtin = registered && commandCanBeDisplayedInApproval(selected.id)
+      const text = formatApprovalCommand(selected.executable, selected.args)
+      const purpose = builtin
+        ? `运行项目的 ${selected.args[1]} 脚本。`
+        : registered
+          ? `运行本机登记任务「${selected.name}」。`
+          : '运行未登记命令，用途请结合命令本身核对。'
+      const risk =
+        '以 Runtime 账号权限运行，无系统隔离，可能读写项目内外文件、访问网络或启动其他进程。'
+      command = { text, purpose, risk, cwd: workspace.root, registered }
+      externalDetails = builtin
+        ? `完整命令：${text}\n用途：${purpose}\n执行影响：${risk}`
+        : '完整命令可能包含私密信息，仅在 Runtime 可见。批准前请先核对。'
     } else if (req.operation === 'file.list') {
       const payload = ToolInputs['file.list'].parse(req.payload)
       pathLabel = payload.path
       preview = '读取目录清单'
       externalDetails = `路径：${payload.path}\n${preview}`
-      canApprove = true
     } else if (req.operation === 'file.read') {
       const payload = ToolInputs['file.read'].parse(req.payload)
       pathLabel = payload.path
       preview = '读取文件内容'
       externalDetails = `路径：${payload.path}\n${preview}`
-      canApprove = true
     } else if (req.operation === 'file.search') {
       const payload = ToolInputs['file.search'].parse(req.payload)
       pathLabel = payload.path
@@ -192,17 +179,14 @@ export class WriteApprovalQueue {
     } else if (req.operation === 'git.status') {
       pathLabel = 'Git 工作区'
       preview = '读取 Git 工作区状态'
-      canApprove = true
     } else if (req.operation === 'git.log') {
       const payload = ToolInputs['git.log'].parse(req.payload)
       pathLabel = 'Git 提交历史'
       preview = '读取最近 ' + payload.limit + ' 条提交记录'
       externalDetails = preview
-      canApprove = true
     } else if (req.operation === 'git.diff') {
       pathLabel = 'Git 工作区 Diff'
       preview = '读取当前未暂存变更差异'
-      canApprove = true
     } else if (req.operation === 'git.add' || req.operation === 'git.commit') {
       const context = await gitApprovalContext(workspace, req.operation, req.payload)
       pathLabel = context.path
@@ -215,7 +199,6 @@ export class WriteApprovalQueue {
       ToolInputs['command.list'].parse(req.payload)
       pathLabel = '本地命令注册表'
       preview = '列出已登记的固定命令'
-      canApprove = true
     } else throw Error('UNSUPPORTED_APPROVAL_OPERATION')
 
     const id = randomUUID()
@@ -239,14 +222,11 @@ export class WriteApprovalQueue {
     const safeToDisplay = !/[\u061c\u200b-\u200f\u202a-\u202e\u2066-\u2069]/u.test(
       workspace.name + externalDetails,
     )
-    const summary = [
+    const source = [
+      `工作区：${workspace.name.replace(/[\p{Cc}\p{Cf}\s]+/gu, ' ').trim() || '未命名工作区'}`,
       `操作：${req.operation}`,
-      `工作区：${workspace.name.replace(/\s+/g, ' ')}`,
-      riskLevel === 'high' ? '风险：高，仅能在 Runtime 批准。' : '',
-      externalDetails,
-    ]
-      .filter(Boolean)
-      .join('\n')
+    ].join('\n')
+    const summary = externalDetails ? source + '\n' + externalDetails : source
     const showDetails = safeToDisplay && summary.length <= 3000
     const remote =
       req.notifyApproval && send && waitMs > 0
@@ -259,8 +239,7 @@ export class WriteApprovalQueue {
               expiresAt,
               summary: showDetails
                 ? summary
-                : `操作：${req.operation}\n此详情无法安全显示，请在 Runtime 中查看。`,
-              canApprove: canApprove && showDetails,
+                : source + '\n此详情无法安全显示，请在 Runtime 中查看。',
             },
           }
         : undefined
@@ -276,7 +255,7 @@ export class WriteApprovalQueue {
         preview,
         truncated: previewTruncated,
         itemCount,
-        riskLevel,
+        command,
         requestHash,
         resourceHash,
         createdAt,
@@ -301,10 +280,10 @@ export class WriteApprovalQueue {
     return this.complete(id, approved ? undefined : 'APPROVAL_DENIED')
   }
 
-  /** 渠道入口只能处理匹配的待审批 RPC，不能批准仅本机可审核的操作。 */
+  /** 渠道入口与本机共用一次性审批；只处理匹配的待审批 RPC。 */
   answerRemote(requestId: string, approvalId: string, approved: boolean): boolean {
     const notice = this.pending.get(approvalId)?.remote?.notice
-    if (!notice || notice.requestId !== requestId || (approved && !notice.canApprove)) return false
+    if (!notice || notice.requestId !== requestId) return false
     return this.answer(approvalId, approved)
   }
 

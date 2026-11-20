@@ -48,7 +48,14 @@ const builtins: Record<string, LocalCommand> = {
   },
 }
 
-/** 只有本机内置固定命令明确允许展示完整程序和参数；自定义登记参数可能含秘密。 */
+/** 将程序和参数按原顺序显示为一行；有空格或特殊字符的参数以引号区分，不作为 Shell 脚本执行。 */
+export function formatApprovalCommand(executable: string, args: readonly string[]): string {
+  return [executable, ...args]
+    .map((part) => (/^[a-zA-Z0-9_./:@=-]+$/.test(part) ? part : JSON.stringify(part)))
+    .join(' ')
+}
+
+/** 只有本机内置固定命令允许在通知渠道展示完整命令。 */
 export function commandCanBeDisplayedInApproval(commandId: string): boolean {
   return Object.hasOwn(builtins, commandId)
 }

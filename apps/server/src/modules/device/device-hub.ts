@@ -31,6 +31,8 @@ import type { ApprovalNotice, ApprovalEvent } from '@rcm/protocol'
 /** 连接身份和卡片关联均仅在当前 RPC 内存中有效。 */
 interface ApprovalRoute {
   socket: WebSocket
+  /** 原始 RPC 授权的设备及其控制台显示名，只用于通知。 */
+  deviceName: string
   recipients: ApprovalRecipient[]
   deadlineAt: number
   workspaceId: string
@@ -207,7 +209,7 @@ export class DeviceHub implements OnApplicationBootstrap, OnApplicationShutdown 
     const channels = this.channels
     route.deliveries = route.recipients.map((recipient) =>
       channels
-        .deliver(recipient, notice, async (approved) => {
+        .deliver(recipient, notice, route.deviceName, async (approved) => {
           const currentDevice = await authorizeDeviceRpc(
             this.store,
             recipient.userId,
@@ -216,7 +218,7 @@ export class DeviceHub implements OnApplicationBootstrap, OnApplicationShutdown 
           )
           const current = await channels.isCurrent(recipient)
           if (
-            currentDevice !== deviceId ||
+            currentDevice.id !== deviceId ||
             !current ||
             this.approvalRoutes.get(requestId) !== route ||
             this.sockets.get(deviceId) !== socket ||
@@ -280,7 +282,8 @@ export class DeviceHub implements OnApplicationBootstrap, OnApplicationShutdown 
     let errorCode: string | undefined
     let commandAudit: CommandAudit | undefined
     try {
-      deviceId = await authorizeDeviceRpc(this.store, userId, workspaceId, operation)
+      const device = await authorizeDeviceRpc(this.store, userId, workspaceId, operation)
+      deviceId = device.id
       const socket = this.sockets.get(deviceId)
       if (!socket || socket.readyState !== WebSocket.OPEN)
         throw new DeviceRpcError('DEVICE_OFFLINE')
@@ -306,6 +309,7 @@ export class DeviceHub implements OnApplicationBootstrap, OnApplicationShutdown 
       if (recipients.length)
         this.approvalRoutes.set(request.id, {
           socket,
+          deviceName: device.name,
           recipients,
           deadlineAt: request.deadlineAt,
           workspaceId,

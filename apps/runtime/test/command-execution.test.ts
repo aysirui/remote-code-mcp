@@ -87,17 +87,16 @@ test('临时命令必须先审批，完整程序与参数、工作目录和风�
   const queue = new WriteApprovalQueue()
   const pending = queue.request(request, w)
   const [item] = queue.list()
-  expect(item.riskLevel).toBe('high')
-  expect(item.truncated).toBe(false)
-  for (const value of [
-    process.execPath,
-    JSON.stringify(temporary().args),
-    root,
-    '网络',
-    '本次',
-    '凭据',
-  ])
-    expect(item.preview).toContain(value)
+  expect(item.command).toMatchObject({
+    cwd: root,
+    registered: false,
+    risk: expect.stringContaining('网络'),
+  })
+  expect(item.command?.text).toContain(
+    temporary()
+      .args.map((arg) => JSON.stringify(arg))
+      .at(-1),
+  )
   expect(queue.answer(item.id, true)).toBe(true)
   expect(queue.answer(item.id, true)).toBe(false)
   const decision = await pending

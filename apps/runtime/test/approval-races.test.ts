@@ -41,18 +41,19 @@ test('断开连接时取消全部待审批请求', async () => {
   await expect(pending).resolves.toMatchObject({ approved: false })
 })
 
-test('飞书通知只发送相对路径与写入大小，不发送内容且不能批准写入', async () => {
+test('飞书可批准写入，但通知不发送文件正文，决定仅结算一次', async () => {
   const queue = new WriteApprovalQueue()
   const events: ApprovalEvent[] = []
   const req = { ...request('one'), notifyApproval: true as const }
   const pending = queue.request(req, workspace('one'), (event) => events.push(event))
   const approvalId = queue.list()[0].id
-  expect(events[0]).toMatchObject({ kind: 'approval-notice', canApprove: false })
+  expect(events[0]).toMatchObject({ kind: 'approval-notice' })
   expect(JSON.stringify(events)).toContain('README.md')
+  expect(JSON.stringify(events)).toContain('工作区：测试工作区')
   expect(JSON.stringify(events)).not.toMatch(/hello|\/tmp\/demo/)
-  expect(queue.answerRemote(req.id, approvalId, true)).toBe(false)
   expect(queue.answerRemote('different-request', approvalId, false)).toBe(false)
-  expect(queue.answer(approvalId, true)).toBe(true)
+  expect(queue.answerRemote(req.id, approvalId, true)).toBe(true)
+  expect(queue.answer(approvalId, true)).toBe(false)
   expect(queue.answerRemote(req.id, approvalId, false)).toBe(false)
   await expect(pending).resolves.toMatchObject({ approved: true })
   expect(events[1]).toMatchObject({ kind: 'approval-closed', status: 'approved' })
@@ -71,8 +72,7 @@ test('只展示明确允许外发的内置命令，飞书和本地审批共享�
   const approvalId = queue.list()[0].id
   expect(events[0]).toMatchObject({
     kind: 'approval-notice',
-    canApprove: true,
-    summary: expect.stringContaining('["run","test"]'),
+    summary: expect.stringContaining('完整命令：pnpm run test'),
   })
   expect(JSON.stringify(events)).not.toContain('/tmp/demo')
   expect(queue.answerRemote(req.id, approvalId, true)).toBe(true)
@@ -96,8 +96,8 @@ test('未订阅时不回传审批通知，临时命令参数从不外发', async
     payload: { executable: 'tool', args: ['secret-value'] },
   }
   const pending = queue.request(req, workspace('one'), (event) => events.push(event))
-  expect(events[0]).toMatchObject({ kind: 'approval-notice', canApprove: false })
+  expect(events[0]).toMatchObject({ kind: 'approval-notice' })
   expect(JSON.stringify(events)).not.toContain('secret-value')
-  queue.cancelAll()
-  await expect(pending).resolves.toMatchObject({ approved: false })
+  expect(queue.answerRemote(req.id, queue.list()[0].id, true)).toBe(true)
+  await expect(pending).resolves.toMatchObject({ approved: true })
 })

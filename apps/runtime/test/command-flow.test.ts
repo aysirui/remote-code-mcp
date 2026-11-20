@@ -148,8 +148,8 @@ test('远程临时命令必须经本机审批；拒绝、过期和权限撤销�
     })
     const approvedId = send(payload('approved.txt'))
     const item = await approval()
-    expect(item.preview).toContain('approved.txt')
-    expect(item.riskLevel).toBe('high')
+    expect(item.command?.text).toContain('approved.txt')
+    expect(item.command?.registered).toBe(false)
     await expect(fs.stat(path.join(root, 'approved.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
     await api('write-approvals/' + item.id, { approve: true })
     expect(await waitFor(() => responses.get(approvedId))).toMatchObject({

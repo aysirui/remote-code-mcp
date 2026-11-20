@@ -144,7 +144,7 @@ Server 容器启动顺序：
 | 企业微信 | `WECOM_BOT_ID`、`WECOM_SECRET`                                                                  | 启用支持长连接的智能机器人，将目标成员纳入可用范围；可选 `WECOM_BOT_LINK`。                                                                               |
 | 钉钉     | `DINGTALK_CLIENT_ID`、`DINGTALK_CLIENT_SECRET`、`DINGTALK_CORP_ID`、`DINGTALK_CARD_TEMPLATE_ID` | 企业内部应用开启机器人和 Stream，授予私聊和互动卡片权限，按 SDK README 发布模板；可选 `DINGTALK_BOT_LINK`、`DINGTALK_ROBOT_CODE`（默认 Client ID）。      |
 
-用户绑定及多选方式见[使用指南](usage.md#审批通知渠道)。渠道可能留存消息。Runtime 仅临时转发相对路径、风险、影响范围及内置固定命令的完整程序和参数；不发文件正文、本机绝对路径或自定义命令参数。未登记命令、自定义登记命令、高风险删除及缺少判断依据的操作只能本地批准，已绑定渠道仍可拒绝。
+用户绑定及多选方式见[使用指南](usage.md#审批通知渠道)。渠道可能留存消息。Runtime 仅临时转发相对路径、操作影响及内置固定命令的完整命令；不发文件正文、本机绝对路径或自定义命令参数。进入审批队列的请求均可通过已绑定渠道批准或拒绝；摘要不足时，应先在 Runtime 核对完整详情。
 
 #### 轮换飞书凭证或更换应用
 

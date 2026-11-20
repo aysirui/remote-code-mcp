@@ -99,14 +99,10 @@ function formatBytes(bytes: number) {
     </div>
 
     <section v-if="writeApprovals.length" class="approval-list">
-      <article
-        v-for="approval in writeApprovals"
-        :key="approval.id"
-        class="approval-card"
-        :class="{ 'is-high-risk': approval.riskLevel === 'high' }">
+      <article v-for="approval in writeApprovals" :key="approval.id" class="approval-card">
         <div class="card-topline">
           <div class="operation-heading">
-            <span class="operation-symbol" :class="{ danger: approval.riskLevel === 'high' }">
+            <span class="operation-symbol">
               {{
                 approval.operation === 'file.delete'
                   ? '−'
@@ -122,18 +118,42 @@ function formatBytes(bytes: number) {
               <span class="request-time">请求于 {{ formatTime(approval.createdAt) }}</span>
             </div>
           </div>
-          <span class="risk-pill" :class="approval.riskLevel">
-            {{ approval.riskLevel === 'high' ? '高风险 · 需要确认' : '等待确认' }}
-          </span>
+          <span class="risk-pill">等待确认</span>
         </div>
 
         <div class="workspace-block">
           <span class="field-label">工作区</span>
           <strong>{{ approval.workspaceName }}</strong>
-          <span class="workspace-id">ID：{{ approval.workspaceId }}</span>
+          <span v-if="!approval.command" class="workspace-id">ID：{{ approval.workspaceId }}</span>
         </div>
 
-        <div class="target-block">
+        <template v-if="approval.command">
+          <div class="target-block">
+            <span class="field-label">完整命令</span>
+            <code class="command-text">{{ approval.command.text }}</code>
+          </div>
+          <dl class="command-details">
+            <div>
+              <dt>用途</dt>
+              <dd>{{ approval.command.purpose }}</dd>
+            </div>
+            <div>
+              <dt>工作目录</dt>
+              <dd>
+                <code>{{ approval.command.cwd }}</code>
+              </dd>
+            </div>
+            <div>
+              <dt>执行影响</dt>
+              <dd>{{ approval.command.risk }}</dd>
+            </div>
+            <div v-if="!approval.command.registered">
+              <dt>授权范围</dt>
+              <dd>仅本次，不会登记到命令列表。</dd>
+            </div>
+          </dl>
+        </template>
+        <div v-else class="target-block">
           <span class="field-label">操作目标</span>
           <code>{{ approval.path || '—' }}</code>
         </div>
@@ -157,28 +177,13 @@ function formatBytes(bytes: number) {
           <strong>{{ formatBytes(approval.bytes) }}</strong>
         </div>
 
-        <details
-          v-if="approval.preview"
-          class="detail-panel"
-          :open="approval.operation === 'command.run'">
-          <summary>
-            {{ approval.operation === 'command.run' ? '执行命令与风险' : '查看操作详情' }}
-          </summary>
+        <details v-if="approval.preview" class="detail-panel">
+          <summary>查看操作详情</summary>
           <pre>{{ approval.preview }}</pre>
           <span v-if="approval.truncated" class="truncated-note">
             内容较长，仅展示前 2000 个字符。
           </span>
         </details>
-
-        <div v-if="approval.riskLevel === 'high'" class="high-risk-note">
-          {{
-            approval.operation === 'command.run'
-              ? '命令以本机账号权限运行，可访问项目外文件和网络。请核对完整程序、参数和工作目录后，仅批准可信请求。'
-              : approval.operation === 'file.delete'
-                ? '该请求涉及批量删除。请确认目标路径、影响条目和不可撤销的后果。'
-                : '请核对操作目标与详细变更内容，确认本次高风险操作确实符合预期。'
-          }}
-        </div>
 
         <footer class="approval-actions">
           <span class="expiry-note">{{ remaining(approval.expiresAt) }}</span>
@@ -192,9 +197,9 @@ function formatBytes(bytes: number) {
             <el-button
               :disabled="submitting.has(approval.id) || now >= approval.expiresAt"
               :loading="submitting.has(approval.id)"
-              :type="approval.riskLevel === 'high' ? 'danger' : 'primary'"
+              type="primary"
               @click="answer(approval.id, true)">
-              {{ approval.riskLevel === 'high' ? '确认并执行' : '批准本次操作' }}
+              批准本次操作
             </el-button>
           </div>
         </footer>
@@ -207,7 +212,7 @@ function formatBytes(bytes: number) {
       <p>新的本地访问或修改请求到达时，会显示在这里。</p>
     </section>
 
-    <p class="privacy-note">审批详情仅保存在 Runtime 本机内存中，不会上传或持久化到云端。</p>
+    <p class="privacy-note">完整详情只保留在 Runtime。启用通知时，机器人会收到审批摘要。</p>
   </main>
 </template>
 
@@ -360,10 +365,6 @@ function formatBytes(bytes: number) {
   background: #fff;
   box-shadow: 0 3px 12px rgb(22 34 51 / 3%);
 }
-.approval-card.is-high-risk {
-  border-color: #f0c8c5;
-  box-shadow: 0 3px 14px rgb(185 55 45 / 6%);
-}
 .card-topline {
   display: flex;
   align-items: flex-start;
@@ -389,10 +390,6 @@ function formatBytes(bytes: number) {
   font-size: 17px;
   font-weight: 750;
 }
-.operation-symbol.danger {
-  background: #fff0ef;
-  color: #c24136;
-}
 .operation-heading h2 {
   margin: 0;
   font-size: 14px;
@@ -413,9 +410,27 @@ function formatBytes(bytes: number) {
   font-weight: 650;
   white-space: nowrap;
 }
-.risk-pill.high {
-  background: #fff0ef;
-  color: #bd3e34;
+.target-block .command-text {
+  white-space: pre-wrap;
+  font-size: 13px;
+}
+.command-details {
+  margin: 12px 0 0;
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+}
+.command-details > div {
+  display: grid;
+  grid-template-columns: 5em minmax(0, 1fr);
+  gap: 8px;
+}
+.command-details dt {
+  color: #475569;
+}
+.command-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 .workspace-block,
 .target-block {
@@ -522,15 +537,6 @@ function formatBytes(bytes: number) {
   margin-bottom: 9px;
   color: #9a7a39;
   font-size: 10px;
-}
-.high-risk-note {
-  margin-top: 13px;
-  padding: 10px 11px;
-  border-radius: 8px;
-  background: #fff5f4;
-  color: #a43c34;
-  font-size: 11px;
-  line-height: 1.55;
 }
 .approval-actions {
   display: flex;

@@ -154,11 +154,11 @@ Docker Compose 从部署目录的 `.env` 或启动时指定的 `--env-file` 传�
 
 本地联调时，将测试机器人配置放在 `apps/server/.env`，在仓库根目录先执行 `pnpm --filter @rcm/protocol --filter @rcm/bot-sdk build`，再执行 `pnpm dev:server`。打开本地 Console 完成绑定并启用渠道，通过连接该 Server 的 Runtime 发起一条新的待审批请求。可在 Server 日志中查看「审批机器人已连接」「审批卡片已投递」和「收到审批按钮事件」。重启前发出的历史卡片仍可查看，本地进程只处理它自己发出的未结算卡片。
 
-若只测试企业微信，在终端设置 `BOT_DEMO_USER_ID` 为企微通讯录成员账号，再运行 `node --env-file=apps/server/.env packages/bot-sdk/dist/demo/wecom.js`。请用测试机器人，或先停掉使用同一企微凭证的其他进程。演示发送一张带多行详情的按钮卡片。点击后按终端的「企微已推送卡片按钮回调」「模拟审批按钮已处理」和「企微已确认卡片更新」区分消息到达、审批决定和卡片更新。正式审批的企微结果卡跳转链接由 `CONSOLE_URL` 生成。
+若只测试企业微信，在终端设置 `BOT_DEMO_USER_ID` 为企微通讯录成员账号，再运行 `node --env-file=apps/server/.env packages/bot-sdk/dist/demo/wecom.js`。请用测试机器人，或先停掉使用同一企微凭证的其他进程。演示发送一张带多行详情的按钮卡片。点击后按终端的「企微已推送卡片按钮回调」「演示按钮已处理」和「企微已确认卡片更新」区分消息到达、按钮处理和卡片更新。企微结果卡默认不跳转，避免点击结果时打开控制台登录或网关拦截页面；点击窗口内更新原卡后不再补发结果文本，窗口不可用时才发送文本通知。
 
 若只测试钉钉发卡，在 PowerShell 中设置 `$env:BOT_DEMO_USER_ID` 为当前组织中测试用户的 `staffId`，再运行 `node --env-file=apps/server/.env packages/bot-sdk/dist/demo/dingtalk.js`。演示发出模拟卡片，不执行工作区操作。使用同一凭证的 Server 和演示应分开运行。
 
-RCM 使用 `DINGTALK_CARD_TEMPLATE_ID` 创建审批场景的卡片绑定，再使用独立的应用凭证建立连接。只用 SDK 接收或发送钉钉文本，以及运行 `--lookup-user-id` 时，无需设置卡片模板。
+RCM 使用 `DINGTALK_CARD_TEMPLATE_ID` 创建审批场景的卡片绑定，再使用独立的应用凭证建立连接。Server 显式适配现有审批模板：第一个组件 `reject` 绑定 `firstLable` / `firstId` / `showFirst`，显示「拒绝」并对应 `deny`；第二个组件 `agree` 绑定 `secondLable` / `secondId` / `showSecond`，显示「批准」并对应 `approve`。其中 `Lable` 是现有模板的实际拼写，不能改成 SDK 默认的 `Label`。两个按钮均使用服务端回传，参数名为 `botSdkAction`；参数值可分别绑定 `firstId`、`secondId`，SDK 也可直接通过组件 ID 映射动作。SDK 通用默认组件仍为 `button1`、`button2`，不包含审批模板的专用配置。只用 SDK 接收或发送钉钉文本，以及运行 `--lookup-user-id` 时，无需设置卡片模板。
 
 若投递说明为 `spaceId is illegal`，可在上述命令末尾加上 `--lookup-user-id`，到测试机器人私聊只发送本次终端给出的一次性口令。该模式只接收私聊并在终端显示钉钉回调中的员工 ID，不发送卡片，也不修改绑定。
 

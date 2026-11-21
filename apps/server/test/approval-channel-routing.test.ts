@@ -20,7 +20,7 @@ test.each(['feishu', 'dingtalk', 'wecom'] as const)(
     }
     const cardOptions = {
       feishu: undefined,
-      wecom: { textNoticeUrl: 'https://example.test/console/approval-channels' },
+      wecom: undefined,
       dingtalk: { templateId: 'test-template' },
     }[channel]
     service['channels'].set(channel, { appId: 'test-app', cardOptions })

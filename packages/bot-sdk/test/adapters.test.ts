@@ -126,7 +126,7 @@ test('企微等待认证、将 task_id 关联到点击并使用原回调帧更�
   const bot = createBot({ adapter })
   const text = bot.install(new TextCapability())
   const cardCapability = bot.install(new CardCapability())
-  const cards = cardCapability.withOptions({ textNoticeUrl: 'https://example.com/console' })
+  const cards = cardCapability
   const texts: TextEvent[] = []
   const actions: ActionEvent[] = []
   text.onMessage((event) => {
@@ -225,7 +225,7 @@ test('企微等待认证、将 task_id 关联到点击并使用原回调帧更�
       task_id: ref.cardId,
       main_title: { title: '模拟' },
       sub_title_text: '处理完成',
-      card_action: { type: 1, url: 'https://example.com/console' },
+      card_action: { type: 0 },
     },
     ['member'],
   ])
@@ -243,6 +243,15 @@ test('企微等待认证、将 task_id 关联到点击并使用原回调帧更�
       '企微已确认卡片更新',
     ],
   )
+  // 显式链接仍由调用方按业务需要提供，SDK 不强制跳转。
+  await cards.send(user, done, { textNoticeUrl: 'https://example.com/details' })
+  const linkedCard = send.mock.calls.at(-1)?.arguments[1] as {
+    template_card: { card_action: { type: number; url?: string } }
+  }
+  assert.deepEqual(linkedCard.template_card.card_action, {
+    type: 1,
+    url: 'https://example.com/details',
+  })
   await assert.rejects(cards.update(ref, done), { capability: 'cards.update' })
   await bot.stop()
 })
@@ -357,6 +366,92 @@ test('同一个钉钉连接使用两套模板，更新和点击各自沿用原�
   await bot.stop()
 })
 
+test('钉钉现有模板按 Lable 变量和 reject、agree 组件对应拒绝与批准', async ({ mock }) => {
+  const connect = mock.method(DWClient.prototype, 'connect', async function (this: DWClient) {
+    this.connected = true
+  })
+  mock.method(DWClient.prototype, 'disconnect', () => undefined)
+  mock.method(DWClient.prototype, 'socketCallBackResponse', () => undefined)
+  const http = mock.method(globalThis, 'fetch', async (url: string, _init?: RequestInit) =>
+    url.endsWith('/accessToken')
+      ? Response.json({ accessToken: 'token', expireIn: 7200 })
+      : Response.json({ success: true, result: { deliverResults: [{ success: true }] } }),
+  )
+  const bot = createBot({
+    adapter: createDingtalkAdapter({ clientId: 'fake', clientSecret: 'fake', corpId: 'corp' }),
+  })
+  const cards = bot.install(new CardCapability())
+  const actions: string[] = []
+  cards.onAction(({ actionId }) => {
+    actions.push(actionId)
+  })
+  await bot.start()
+  const ref = await cards.send(
+    'member',
+    {
+      title: '操作审批',
+      body: '测试模板映射',
+      buttons: [
+        { id: 'deny', label: '拒绝' },
+        { id: 'approve', label: '批准' },
+      ],
+    },
+    {
+      templateId: 'existing-template',
+      buttonSlots: [
+        {
+          componentId: 'reject',
+          labelVariable: 'firstLable',
+          visibleVariable: 'showFirst',
+          actionIdVariable: 'firstId',
+        },
+        {
+          componentId: 'agree',
+          labelVariable: 'secondLable',
+          visibleVariable: 'showSecond',
+          actionIdVariable: 'secondId',
+        },
+      ],
+    } satisfies DingtalkCardOptions,
+  )
+  const payload = JSON.parse(http.mock.calls[1].arguments[1]?.body as string)
+  assert.deepEqual(payload.cardData.cardParamMap, {
+    title: '操作审批',
+    body: '测试模板映射',
+    firstLable: '拒绝',
+    showFirst: 'true',
+    firstId: 'deny',
+    secondLable: '批准',
+    showSecond: 'true',
+    secondId: 'approve',
+  })
+  const client = connect.mock.calls[0].this as DWClient
+  for (const [componentId, variable] of [
+    ['reject', 'firstId'],
+    ['agree', 'secondId'],
+  ]) {
+    // 模板参数值绑定 firstId、secondId 变量，平台回传变量展开后的业务动作。
+    client.emit(TOPIC_CARD, {
+      headers: { messageId: componentId },
+      data: JSON.stringify({
+        spaceType: 'IM_ROBOT',
+        corpId: 'corp',
+        userId: 'member',
+        outTrackId: ref.cardId,
+        content: JSON.stringify({
+          cardPrivateData: {
+            actionIds: [componentId],
+            params: { botSdkAction: payload.cardData.cardParamMap[variable] },
+          },
+        }),
+      }),
+    } as DWClientDownStream)
+  }
+  await setImmediate()
+  assert.deepEqual(actions, ['deny', 'approve'])
+  await bot.stop()
+})
+
 test('钉钉 OpenAPI 主动投放、Stream 点击回执、主动更新和平台拒绝', async ({ mock }) => {
   const deliveryFailureDetail = mock.fn()
   const messageDiagnostic = mock.fn()
@@ -366,6 +461,7 @@ test('钉钉 OpenAPI 主动投放、Stream 点击回执、主动更新和平台�
   mock.method(DWClient.prototype, 'disconnect', () => undefined)
   const ack = mock.method(DWClient.prototype, 'socketCallBackResponse', () => undefined)
   let textRejected = false
+  let updateSuccess = true
   let cardResponse = () =>
     Response.json({ success: true, result: { deliverResults: [{ success: true }] } })
   const http = mock.method(globalThis, 'fetch', async (url: string, _init?: RequestInit) => {
@@ -375,7 +471,9 @@ test('钉钉 OpenAPI 主动投放、Stream 点击回执、主动更新和平台�
       return Response.json(
         textRejected ? { invalidStaffIdList: ['member'] } : { processQueryKey: 'ok' },
       )
-    return url.endsWith('/createAndDeliver') ? cardResponse() : Response.json({ success: true })
+    return url.endsWith('/createAndDeliver')
+      ? cardResponse()
+      : Response.json({ success: updateSuccess })
   })
   const adapter = createDingtalkAdapter({
     id: 'ding',
@@ -447,6 +545,43 @@ test('钉钉 OpenAPI 主动投放、Stream 点击回执、主动更新和平台�
   ])
   assert.deepEqual(ack.mock.calls[1].arguments, [TOPIC_CARD, {}])
   assert.match(JSON.stringify(ack.mock.calls[2].arguments), /处理完成/)
+  // 平台原生组件 ID 可直接定位按钮；文案、数组位置与回调动作应保持一致。
+  for (const componentId of ['button1', 'button2']) {
+    const nativeRef = await cards.send(user, {
+      ...card,
+      buttons: [{ id: 'deny', label: '拒绝' }, card.buttons[0]],
+    })
+    if (componentId === 'button1') {
+      // 平台未接受交换按钮的更新时，仍按原卡显示的第一个按钮识别为拒绝。
+      updateSuccess = false
+      await assert.rejects(
+        cards.update(nativeRef, {
+          ...card,
+          buttons: [card.buttons[0], { id: 'deny', label: '拒绝' }],
+        }),
+        /钉钉卡片更新失败/,
+      )
+      updateSuccess = true
+    }
+    const nativeCallback = {
+      ...callback,
+      outTrackId: nativeRef.cardId,
+      content: JSON.stringify({
+        cardPrivateData: {
+          actionIds: [componentId],
+          // 第二个按钮故意回传过时参数，仍应按当前显示槽位识别为批准。
+          ...(componentId === 'button2' ? { params: { botSdkAction: 'deny' } } : {}),
+        },
+      }),
+    }
+    emit(TOPIC_CARD, { ...nativeCallback, corpId: 'elsewhere' })
+    emit(TOPIC_CARD, nativeCallback)
+    await setImmediate()
+  }
+  assert.deepEqual(
+    actions.map(({ actionId }) => actionId),
+    ['approve', 'deny', 'approve'],
+  )
   emit(TOPIC_ROBOT, {
     conversationType: '1',
     msgtype: 'text',
@@ -466,7 +601,7 @@ test('钉钉 OpenAPI 主动投放、Stream 点击回执、主动更新和平台�
     ],
   )
   await cards.update(ref, done)
-  assert.match(JSON.stringify(http.mock.calls[3].arguments), /PUT/)
+  assert.equal(http.mock.calls.at(-1)?.arguments[1]?.method, 'PUT')
   textRejected = true
   await assert.rejects(text.send(user, '不会投递'), /未接受/)
   cardResponse = () =>

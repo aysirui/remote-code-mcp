@@ -24,6 +24,8 @@ const diagnostics = {
 
 /** 钉钉卡片模板中一个按钮绑定的变量名。 */
 export interface DingtalkButtonSlot {
+  /** 模板按钮组件 ID；配置后可用平台 actionIds 直接识别该槽的动作。 */
+  componentId?: string
   /** 按钮文案变量。 */
   labelVariable: string
   /** 按钮可见性变量。 */
@@ -36,8 +38,9 @@ export interface DingtalkButtonSlot {
 export interface DingtalkCardOptions extends CardOptions {
   /** 已发布的互动卡片模板 ID。 */
   templateId: string
-  /** 标题和正文对应的模板变量，默认 title、body。 */
+  /** 标题对应的模板变量，默认 title。 */
   titleVariable?: string
+  /** 正文对应的模板变量，默认 body。 */
   bodyVariable?: string
   /** 按模板位置配置按钮；默认使用两个通用槽。 */
   buttonSlots?: readonly DingtalkButtonSlot[]
@@ -51,8 +54,18 @@ export interface DingtalkCardOptions extends CardOptions {
 
 /** 默认模板协议，槽位仅对应数组位置。 */
 const defaultButtonSlots: readonly DingtalkButtonSlot[] = [
-  { labelVariable: 'firstLabel', visibleVariable: 'showFirst', actionIdVariable: 'firstId' },
-  { labelVariable: 'secondLabel', visibleVariable: 'showSecond', actionIdVariable: 'secondId' },
+  {
+    componentId: 'button1',
+    labelVariable: 'firstLabel',
+    visibleVariable: 'showFirst',
+    actionIdVariable: 'firstId',
+  },
+  {
+    componentId: 'button2',
+    labelVariable: 'secondLabel',
+    visibleVariable: 'showSecond',
+    actionIdVariable: 'secondId',
+  },
 ]
 
 /** 发送前校验模板配置并复制按钮槽，点击和更新沿用这次投递的变量。 */
@@ -82,6 +95,11 @@ function prepareOptions(options?: CardOptions) {
     new Set(variableNames).size !== variableNames.length
   )
     throw new BotConfigurationError('钉钉卡片变量名须非空且不能重复')
+  const componentIds = buttonSlots.flatMap((slot) =>
+    slot.componentId === undefined ? [] : [slot.componentId],
+  )
+  if (componentIds.some((id) => !id.trim()) || new Set(componentIds).size !== componentIds.length)
+    throw new BotConfigurationError('钉钉按钮组件 ID 须非空且不能重复')
   return {
     templateId,
     titleVariable,
@@ -90,29 +108,35 @@ function prepareOptions(options?: CardOptions) {
     buttonActionParam,
     supportForward,
     onDeliveryFailureDetail,
+    // 仅记录当前卡片可见按钮与模板组件的对应关系，避免依赖审批等业务动作名。
+    buttonActions: new Map<string, string>(),
   }
 }
 
 /** SDK 发卡前已填充默认值，回调与更新读取发卡时的配置。 */
 type PreparedOptions = ReturnType<typeof prepareOptions>
 
-/** 以模板配置映射数组位置；隐藏按钮时保留后续按钮的槽位。 */
-function renderCard(card: Card, { buttonSlots, titleVariable, bodyVariable }: PreparedOptions) {
+/** 按数组位置生成模板数据与可见按钮映射；隐藏按钮时保留后续槽位，调用方成功发送后保存映射。 */
+function renderCard(card: Card, config: PreparedOptions) {
+  const { buttonSlots, titleVariable, bodyVariable } = config
   if (card.buttons.length > buttonSlots.length)
     throw new BotPlatformError(`钉钉模板仅配置了 ${buttonSlots.length} 个按钮槽`)
   const params: [string, string][] = [
     [titleVariable, card.title],
     [bodyVariable, card.body],
   ]
+  const buttonActions = new Map<string, string>()
   for (const [index, slot] of buttonSlots.entries()) {
     const button = card.buttons[index]
+    if (slot.componentId && button && button.visible !== false)
+      buttonActions.set(slot.componentId, button.id)
     params.push(
       [slot.labelVariable, button?.label ?? ''],
       [slot.visibleVariable, String(Boolean(button && button.visible !== false))],
       [slot.actionIdVariable, button?.id ?? ''],
     )
   }
-  return { cardParamMap: Object.fromEntries(params) }
+  return { cardData: { cardParamMap: Object.fromEntries(params) }, buttonActions }
 }
 
 /** 为该连接创建独立的卡片实现。 */
@@ -127,6 +151,9 @@ export function createCardAdapter(connection: DingtalkConnection): CardAdapter {
         const requestId = frame.headers.messageId
         if (!requestId) return
         let update: object = {}
+        // 回执写入成功后才切换本地动作映射，保持失败时原卡按钮的含义。
+        let acceptedUpdate:
+          { config: PreparedOptions; buttonActions: Map<string, string> } | undefined
         try {
           const event = decode(frame.data)
           if (
@@ -139,9 +166,28 @@ export function createCardAdapter(connection: DingtalkConnection): CardAdapter {
             typeof event.content === 'string'
           ) {
             const content = decode(event.content) as
-              { cardPrivateData?: { params?: Record<string, unknown> } } | undefined
+              | {
+                  /** 平台回传的按钮组件和调用方配置的参数。 */
+                  cardPrivateData?: {
+                    /** 本次交互触发的模板组件 ID；按钮点击只接受单个组件。 */
+                    actionIds?: unknown[]
+                    /** 模板显式配置的键值参数，兼容原有参数回传方式。 */
+                    params?: Record<string, unknown>
+                  }
+                }
+              | undefined
             const config = events.cardOptions(event.outTrackId) as PreparedOptions | undefined
-            const actionId = config && content?.cardPrivateData?.params?.[config.buttonActionParam]
+            const privateData = content?.cardPrivateData
+            const actionIds = privateData?.actionIds
+            const componentId =
+              Array.isArray(actionIds) && actionIds.length === 1 ? actionIds[0] : undefined
+            // 组件与显示槽位绑定，优先用它映射动作；旧模板仍可使用显式回传参数。
+            const actionId =
+              config &&
+              ((typeof componentId === 'string'
+                ? config.buttonActions.get(componentId)
+                : undefined) ??
+                privateData?.params?.[config.buttonActionParam])
             if (config && typeof actionId === 'string' && actionId) {
               const response = await events.action({
                 botId: id,
@@ -149,11 +195,14 @@ export function createCardAdapter(connection: DingtalkConnection): CardAdapter {
                 cardId: event.outTrackId,
                 actionId,
               })
-              if (response)
+              if (response) {
+                const rendered = renderCard(response.card, config)
                 update = {
                   cardUpdateOptions: { updateCardDataByKey: true },
-                  cardData: renderCard(response.card, config),
+                  cardData: rendered.cardData,
                 }
+                acceptedUpdate = { config, buttonActions: rendered.buttonActions }
+              }
             }
           }
         } catch {
@@ -161,6 +210,7 @@ export function createCardAdapter(connection: DingtalkConnection): CardAdapter {
         }
         try {
           client.socketCallBackResponse(requestId, update)
+          if (acceptedUpdate) acceptedUpdate.config.buttonActions = acceptedUpdate.buttonActions
         } catch {
           events.error(new Error('钉钉按钮回执发送失败'))
         }
@@ -175,7 +225,8 @@ export function createCardAdapter(connection: DingtalkConnection): CardAdapter {
     async send(userId, card, binding, register) {
       const config = binding as PreparedOptions
       const outTrackId = `rcm_${randomUUID()}`
-      const cardData = renderCard(card, config)
+      const { cardData, buttonActions } = renderCard(card, config)
+      config.buttonActions = buttonActions
       register(outTrackId)
       const result = (await connection.request(
         'card/instances/createAndDeliver',
@@ -215,16 +266,19 @@ export function createCardAdapter(connection: DingtalkConnection): CardAdapter {
       return outTrackId
     },
     async update(ref, card, binding) {
+      const config = binding as PreparedOptions
+      const { cardData, buttonActions } = renderCard(card, config)
       const result = (await connection.request(
         'card/instances',
         'PUT',
         {
           outTrackId: ref.cardId,
-          cardData: renderCard(card, binding as PreparedOptions),
+          cardData,
         },
         diagnostics,
       )) as { success?: boolean }
       if (!result.success) throw new Error('钉钉卡片更新失败')
+      config.buttonActions = buttonActions
     },
   }
 }

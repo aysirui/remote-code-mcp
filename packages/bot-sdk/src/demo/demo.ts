@@ -1,7 +1,7 @@
 import { BotPlatformError, createBot, type BotAdapter } from '../core/index.js'
-import type { Card, CardOptions } from '../core/capabilities/cards/index.js'
+import { defaultCard, type Card, type CardOptions } from '../core/capabilities/cards/index.js'
 import { TextCapability } from '../core/capabilities/text/index.js'
-import { demoDecision } from './decision.js'
+import { demoSelection } from './selection.js'
 
 /** 读取必填环境变量；错误只包含变量名。 */
 export function required(name: string): string {
@@ -10,13 +10,13 @@ export function required(name: string): string {
   return value
 }
 
-/** 为指定测试用户发送一张模拟审批卡。 */
+/** 为指定测试用户发送通用双按钮卡，点击后展示所选按钮。 */
 export async function runDemo(
   adapter: BotAdapter,
   options?: {
     /** 此演示使用的卡片配置。 */
     cardOptions?: CardOptions
-    /** 模拟审批卡的多行详情。 */
+    /** 演示卡片的多行详情。 */
     details?: string
     /** 只打印可公开的启动错误；返回是否已处理。 */
     onStartupError?: (error: Error) => boolean
@@ -34,12 +34,9 @@ export async function runDemo(
   const cards = options?.cardOptions
     ? cardCapability.withOptions(options.cardOptions)
     : cardCapability
-  const approve = { id: 'approve', label: '批准', style: 'primary' } as const
-  const deny = { id: 'deny', label: '拒绝', style: 'secondary' } as const
   const card: Card = {
-    title: '模拟审批',
-    body: options?.details ?? '测试卡片，不会执行文件或命令操作。五分钟后失效。',
-    buttons: [deny, approve],
+    ...defaultCard,
+    body: options?.details ?? defaultCard.body,
   }
 
   text.onMessage(async (event) => {
@@ -50,12 +47,15 @@ export async function runDemo(
   try {
     await bot.start()
     const ref = await cards.send(to, card)
-    const decide = demoDecision(adapter.id, userId, ref.cardId, Date.now() + 300_000)
+    const select = demoSelection(adapter.id, userId, ref.cardId, Date.now() + 300_000)
     cards.onAction(async (event) => {
-      const state = decide(event)
+      const state = select(event)
       if (!state) return
-      const status = { approved: '已批准', rejected: '已拒绝', expired: '已过期' }[state]
-      console.log(`模拟审批按钮已处理：${status}`)
+      const status =
+        state === 'expired'
+          ? '卡片已过期'
+          : `已选择${card.buttons.find((button) => button.id === state)!.label}`
+      console.log(`演示按钮已处理：${status}`)
       const updated = {
         title: card.title,
         body: options?.details ? `状态：${status}\n\n${card.body}` : status,
@@ -64,7 +64,7 @@ export async function runDemo(
       event.deferCardUpdate?.()
       await cards.settle(ref, updated)
     })
-    console.log('模拟审批卡已发送；可在私聊发送文字测试回声，按 Ctrl+C 停止。')
+    console.log('通用演示卡已发送；可在私聊发送文字测试回声，按 Ctrl+C 停止。')
   } catch (error) {
     await bot.stop().catch(() => undefined)
     // 仅由平台入口提取可公开的错误，避免 Node 默认打印原始异常链。

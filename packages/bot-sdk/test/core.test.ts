@@ -171,7 +171,7 @@ test('主动更新和点击内更新分别检查能力', async () => {
   await bot.stop()
 })
 
-test('回调渠道结算时更新可用的原卡，并按需发送结算文本', async () => {
+test('回调渠道有更新窗口时不重复通知，窗口不可用时补发文本', async () => {
   const { adapter, calls, cardEvents, cardAdapter } = fake('bot')
   const bot = createBot({ adapter })
   const text = bot.install(new TextCapability())
@@ -196,7 +196,9 @@ test('回调渠道结算时更新可用的原卡，并按需发送结算文本',
   const waiting = cardEvents().action(event)
   await assert.rejects(cards.settle({ ...ref }, result), /不属于/)
   assert.equal(
-    await cards.settle(ref, result, { resultText: async () => '审批已通过' }),
+    await cards.settle(ref, result, {
+      resultText: async () => assert.fail('已交付原卡更新时不应补发文本'),
+    }),
     'callback',
   )
   assert.deepEqual(await waiting, { card: result })
@@ -210,7 +212,6 @@ test('回调渠道结算时更新可用的原卡，并按需发送结算文本',
   assert.equal(await cancelled, undefined)
   assert.deepEqual(calls, [
     { userId: 'user', card },
-    { userId: 'user', text: '审批已通过' },
     { userId: 'user', text: '审批已拒绝' },
   ])
   await bot.stop()

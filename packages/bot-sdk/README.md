@@ -78,6 +78,25 @@ await cards.send(process.env.BOT_DEMO_USER_ID!, {
 
 处理按钮时使用 `cards.onAction(handler)`。企微和钉钉的卡片配置见下文。
 
+SDK 导出 `defaultCard` 作为通用双按钮预置，文案为「按钮1」「按钮2」，动作 ID 为 `button1`、`button2`。应用可通过对象展开定制标题、正文和按钮，并自行注册事件：
+
+```ts
+import { defaultCard } from '@rcm/bot-sdk/cards'
+
+await cards.send(userId, {
+  ...defaultCard,
+  title: '操作审批',
+  body: '请确认本次操作。',
+  buttons: [
+    { id: 'approve', label: '批准', style: 'primary' },
+    { id: 'deny', label: '拒绝', style: 'secondary' },
+  ],
+})
+// 在 cards.onAction 中校验点击者、有效期和动作，再调用应用自己的审批服务。
+```
+
+预置不包含业务状态机或审批处理器。请通过新对象覆盖预置，不要原地修改共享预置。
+
 ### 同时运行多个机器人
 
 每个机器人调用一次 `createBot()`，再交给 `BotManager` 统一安装能力、启动和关闭。
@@ -112,7 +131,7 @@ const dingCards = cards.get('dingtalk')!
 
 - **飞书**直接传卡片标题、正文和按钮。
 - **钉钉**用 `{ templateId }` 指定后台已发布的模板，也可以设置模板变量名来对应标题、正文和按钮。
-- **企业微信**用 `{ textNoticeUrl }` 指定无按钮通知卡的整卡跳转链接，例如审批结果卡。
+- **企业微信**默认不跳转；需要整卡跳转时，用 `{ textNoticeUrl }` 指定无按钮通知卡的链接。
 
 发卡时直接把平台选项作为第三个参数：
 
@@ -164,7 +183,7 @@ buttons: [
 
 `onMessage` 和 `onAction` 都返回取消订阅函数；同一 Bot 只能注册一个按钮处理器。点击者的 `actorId` 是平台身份，不是业务授权。应用应校验操作者、卡片、动作、有效期和重复提交，并尽快响应，避免在平台回调中等待耗时任务。
 
-业务结果异步返回时，可在按钮事件通过校验后调用 `event.deferCardUpdate?.()` 保留回调窗口。业务拒绝该操作时，调用返回的取消函数。得到结果后调用 `cards.settle(ref, card)`。返回 `callback` 表示内容已交付给回调处理器，平台确认由适配器负责。若需要为无法主动更新的渠道补发结算文本，在创建 `CardCapability` 时传入 `{ sendText: (to, text) => messages.send(to, text) }`，再在对应的 `settle` 调用中传入 `{ resultText: async () => '已完成' }`。
+业务结果异步返回时，可在按钮事件通过校验后调用 `event.deferCardUpdate?.()` 保留回调窗口。业务拒绝该操作时，调用返回的取消函数。得到结果后调用 `cards.settle(ref, card)`。返回 `callback` 表示内容已交付给回调处理器，平台确认由适配器负责。仅当主动更新和有效点击回调窗口均不可用时，才补发结算文本。若需要补发，在创建 `CardCapability` 时传入 `{ sendText: (to, text) => messages.send(to, text) }`，再在对应的 `settle` 调用中传入 `{ resultText: async () => '已完成' }`。
 
 ## 平台能力
 
@@ -181,23 +200,23 @@ buttons: [
 ## 平台配置
 
 - **飞书**：创建企业自建应用并启用机器人；使用长连接订阅 `im.message.receive_v1` 和卡片回调 `card.action.trigger`，开通单聊接收和应用发消息权限后发布。适配器接收 `{ id, appId, appSecret }`。测试用户应在应用可用范围内，用户 `open_id` 必须来自同一个应用。测试外部账号时，须先开启对外单聊并由用户建立会话，再分别验证收卡、点击和更新。
-- **企业微信**：创建支持长连接的智能机器人，确保测试成员在可用范围内。适配器接收 `{ id, botId, secret }`，其中 `botId` 是企微凭证中的机器人 ID。无按钮的通知卡（包括点击后替换的结果卡）需要在发卡选项中传入 `textNoticeUrl`。正文中最多六条形如「标签：内容」的行用原生字段展示。不要同时运行共享同一凭证的多个实例。
+- **企业微信**：创建支持长连接的智能机器人，确保测试成员在可用范围内。适配器接收 `{ id, botId, secret }`，其中 `botId` 是企微凭证中的机器人 ID。无按钮的通知卡（包括点击后替换的卡片）默认使用 `card_action.type = 0`，不打开网页；可选传入 `textNoticeUrl` 设置跳转。正文中最多六条形如「标签：内容」的行用原生字段展示。不要同时运行共享同一凭证的多个实例。
 - **钉钉**：开启企业内部应用机器人和 Stream，申请私聊消息及卡片接口权限。适配器接收 `{ id, clientId, clientSecret, corpId, robotCode? }`，未配置 `robotCode` 时使用 `clientId`。发卡时传入含 `templateId` 的选项。
 
 ### 钉钉模板
 
 在钉钉卡片平台创建并发布应用可用的互动模板，配置 Stream 回传。绑定纯文本标题 `title` 和正文 `body`。默认模板提供两个按钮槽：
 
-| 按钮   | 标签变量      | 显示条件               | 服务端回传参数               |
-| ------ | ------------- | ---------------------- | ---------------------------- |
-| 第一个 | `firstLabel`  | `showFirst` 为 `true`  | `botSdkAction` 取 `firstId`  |
-| 第二个 | `secondLabel` | `showSecond` 为 `true` | `botSdkAction` 取 `secondId` |
+| 按钮组件 ID | 标签变量      | 显示条件               | 可选服务端回传参数           |
+| ----------- | ------------- | ---------------------- | ---------------------------- |
+| `button1`   | `firstLabel`  | `showFirst` 为 `true`  | `botSdkAction` 取 `firstId`  |
+| `button2`   | `secondLabel` | `showSecond` 为 `true` | `botSdkAction` 取 `secondId` |
 
-数组中的第一个按钮对应第一个模板槽，模板决定槽位的实际位置。隐藏某个按钮时，后面的按钮仍使用各自的槽位。RCM 选择左侧「拒绝」、右侧「批准」，其他应用可传入自己的动作。
+数组中的第一个按钮对应第一个模板槽，模板决定槽位的实际位置。隐藏某个按钮时，后面的按钮仍使用各自的槽位。SDK 仅按数组顺序映射通用槽位，不决定业务动作。
 
-自定义模板可在卡片绑定中使用 `titleVariable` 和 `bodyVariable` 覆盖标题与正文变量，使用 `buttonSlots` 指定每个槽的 `labelVariable`、`visibleVariable` 和 `actionIdVariable`。数组长度决定该模板可接收多少个按钮。如果模板使用其他回传参数名，通过 `buttonActionParam` 指定，默认 `botSdkAction`。
+自定义模板可在卡片绑定中使用 `titleVariable` 和 `bodyVariable` 覆盖标题与正文变量，使用 `buttonSlots` 指定每个槽的 `componentId`、`labelVariable`、`visibleVariable` 和 `actionIdVariable`。`componentId` 是模板编辑器中的按钮组件 ID；默认依次为 `button1`、`button2`，不是显示文案或动作变量名。数组长度决定该模板可接收多少个按钮。如果模板使用其他回传参数名，通过 `buttonActionParam` 指定，默认 `botSdkAction`。
 
-可见性变量在 OpenAPI 的 `cardParamMap` 中以字符串 `"true"` / `"false"` 投递。模板用布尔变量绑定可见性。按钮使用服务端回传事件，回传参数值绑定该槽的动作变量，参数出现在 `content.cardPrivateData.params` 中。状态卡留空按钮数组。适配器依赖固定版 `dingtalk-stream`（`2.1.6-beta.1`），用于支持可关闭和可重连的 Stream 连接。
+可见性变量在 OpenAPI 的 `cardParamMap` 中以字符串 `"true"` / `"false"` 投递。模板用布尔变量绑定可见性。按钮必须配置为服务端回传事件。SDK 优先将 `content.cardPrivateData.actionIds` 中的单个组件 ID 映射为该槽当前的业务动作，无需额外回传参数；未匹配组件 ID 的旧模板仍使用 `content.cardPrivateData.params` 中的显式动作参数。使用参数方式时，回传参数值必须绑定该槽的动作变量，不能把 `firstId` / `secondId` 当成字面值或固定为某个业务动作。修改模板后应重新发布并发送新卡验证。状态卡留空按钮数组。适配器依赖固定版 `dingtalk-stream`（`2.1.6-beta.1`），用于支持可关闭和可重连的 Stream 连接。
 
 ## 运行内置演示
 
@@ -211,7 +230,7 @@ buttons: [
 
 如果在源码仓库中，可以运行 `pnpm --filter @rcm/bot-sdk demo:feishu`、`demo:wecom` 或 `demo:dingtalk`（后两者使用相同的 `pnpm --filter @rcm/bot-sdk` 前缀）。
 
-启动后会主动向指定用户发送一张五分钟内可处理的模拟审批卡。点击批准或拒绝，确认卡片显示对应状态；在私聊发一句话，确认机器人回复回声。按 `Ctrl+C` 停止。演示不会执行真实操作，也不读取 Runtime 审批或工作区数据。请使用测试凭证，不要把凭证提交到仓库。
+启动后会主动向指定用户发送一张五分钟内可处理的通用双按钮卡。点击「按钮1」或「按钮2」，确认原卡显示所选按钮；在私聊发一句话，确认机器人回复回声。按 `Ctrl+C` 停止。演示不会执行真实操作，也不读取 Runtime 审批或工作区数据。请使用测试凭证，不要把凭证提交到仓库。
 
 ## 许可证
 

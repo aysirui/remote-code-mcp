@@ -88,7 +88,7 @@ export class CardCapability extends BotCapability<CardAdapter> implements CardCl
     await adapter.update(ref, card, binding)
   }
 
-  /** 优先主动更新；回调渠道可使用等待中的点击窗口并按需补发结果。 */
+  /** 优先主动更新或交给有效点击窗口；两者均不可用时才按需补发结果。 */
   async settle(ref: CardRef, card: Card, options?: CardSettleOptions): Promise<CardSettlement> {
     this.requireIssued(ref)
     const adapter = this.requireAdapter(ref.botId, 'cards.settle')
@@ -97,12 +97,13 @@ export class CardCapability extends BotCapability<CardAdapter> implements CardCl
       return 'updated'
     }
     const handedOff = this.pending.get(ref.cardId)?.({ card })
+    if (handedOff) return 'callback'
     const text = await options?.resultText?.()
     if (text) {
       if (!this.options.sendText) throw new UnsupportedCapabilityError('text.send')
       await this.options.sendText(ref, text)
     }
-    return handedOff ? 'callback' : 'unavailable'
+    return 'unavailable'
   }
 
   /** 注册唯一的应用点击处理器，返回取消订阅函数。 */

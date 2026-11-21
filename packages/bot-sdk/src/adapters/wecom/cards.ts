@@ -7,14 +7,15 @@ import type { CardAdapter, Card, CardOptions } from '../../core/capabilities/car
 
 /** 企业微信无按钮通知卡使用的发卡选项。 */
 export interface WecomCardOptions extends CardOptions {
-  /** 点击整张卡片时打开的 HTTP(S) 链接。 */
-  readonly textNoticeUrl: string
+  /** 点击无按钮卡片时打开的 HTTP(S) 链接；不配置则不跳转。 */
+  readonly textNoticeUrl?: string
 }
 
 /** 发送前校验并保存供结果卡使用的链接。 */
 function prepareOptions(options?: CardOptions): WecomCardOptions | undefined {
   if (!options) return
   const { textNoticeUrl } = options
+  if (textNoticeUrl === undefined) return {}
   if (
     typeof textNoticeUrl !== 'string' ||
     !URL.canParse(textNoticeUrl) ||
@@ -44,8 +45,6 @@ function renderCard(card: Card, taskId: string, options?: WecomCardOptions): Tem
   const { rows, notes } = cardContent(card.body)
   const buttons = card.buttons.filter(({ visible }) => visible !== false)
   const hasButtons = buttons.length > 0
-  if (!hasButtons && !textNoticeUrl)
-    throw new BotConfigurationError('企微无按钮卡片需要配置 textNoticeUrl')
   return {
     card_type: hasButtons ? TemplateCardType.ButtonInteraction : TemplateCardType.TextNotice,
     task_id: taskId,
@@ -61,7 +60,8 @@ function renderCard(card: Card, taskId: string, options?: WecomCardOptions): Tem
             ...(button.style ? { style: button.style === 'primary' ? 1 : 4 } : {}),
           })),
         }
-      : { card_action: { type: 1, url: textNoticeUrl } }),
+      : // 通知卡要求提供 card_action；type 0 保留原卡内容但不打开外部页面。
+        { card_action: textNoticeUrl ? { type: 1, url: textNoticeUrl } : { type: 0 } }),
   }
 }
 

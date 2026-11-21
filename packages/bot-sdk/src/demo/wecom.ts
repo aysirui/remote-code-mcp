@@ -9,14 +9,10 @@ const adapter = createAdapter({
   onDiagnostic: (message) => console.log(message),
 })
 await runDemo(adapter, {
-  cardOptions: { textNoticeUrl: 'https://github.com/aysirui/remote-code-mcp' },
   details: [
-    '测试卡片，不会执行文件或命令操作。五分钟后失效。',
+    '通用测试卡片，五分钟后失效。',
     '设备：本地测试设备',
     '工作区：模拟工作区',
-    '操作：执行命令',
-    '完整命令：node --version',
-    '工作目录：工作区根目录',
-    '授权范围：仅本次',
+    '说明：点击任意按钮查看选择结果',
   ].join('\n'),
 })

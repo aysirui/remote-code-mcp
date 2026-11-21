@@ -15,7 +15,7 @@ export interface Card {
   title: string
   /** 允许向接收者披露的正文。 */
   body: string
-  /** 按数组顺序布局，空数组表示结果卡。 */
+  /** 按数组顺序布局，空数组表示无按钮通知卡。 */
   buttons: readonly {
     /** 卡片内唯一的动作标识。 */
     id: string
@@ -26,6 +26,16 @@ export interface Card {
     /** 为 false 时隐藏该按钮，保留模板槽位。 */
     visible?: boolean
   }[]
+}
+
+/** 通用双按钮卡片预置；应用可覆盖文案、按钮和事件处理，不附带业务决定。 */
+export const defaultCard: Card = {
+  title: '交互卡片',
+  body: '请选择一个按钮。',
+  buttons: [
+    { id: 'button1', label: '按钮1', style: 'primary' },
+    { id: 'button2', label: '按钮2', style: 'secondary' },
+  ],
 }
 
 /** 本能力实例发出的卡片引用，更新时须传回原对象。 */
@@ -98,7 +108,7 @@ export interface CardAdapter {
 /** 关闭卡片时原卡更新的可用结果。 */
 export type CardSettlement = 'updated' | 'callback' | 'unavailable'
 
-/** 仅在缺少主动更新时对结果追加文本通知。 */
+/** 主动更新和回调窗口均不可用时的文本通知选项。 */
 export interface CardSettleOptions {
   /** 返回应补发的结果正文，或返回 undefined 跳过。 */
   resultText?: () => string | undefined | Promise<string | undefined>

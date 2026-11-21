@@ -95,9 +95,6 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
       pendingBots.push(
         this.registerChannel(core, 'wecom', config, async () => {
           const { createAdapter } = await import('@rcm/bot-sdk/adapters/wecom')
-          config.cardOptions = {
-            textNoticeUrl: new URL('/console/approval-channels', env.consoleUrl).href,
-          }
           return createAdapter({ id: 'wecom', botId, secret })
         }),
       )
@@ -112,7 +109,24 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
           {
             appId: hash(JSON.stringify([corpId, clientId, robotCode])),
             botLink,
-            cardOptions: { templateId: cardTemplateId },
+            cardOptions: {
+              templateId: cardTemplateId,
+              // 兼容现有已发布模板的 Lable 拼写与组件 ID；这些绑定只属于审批业务。
+              buttonSlots: [
+                {
+                  componentId: 'reject',
+                  labelVariable: 'firstLable',
+                  visibleVariable: 'showFirst',
+                  actionIdVariable: 'firstId',
+                },
+                {
+                  componentId: 'agree',
+                  labelVariable: 'secondLable',
+                  visibleVariable: 'showSecond',
+                  actionIdVariable: 'secondId',
+                },
+              ],
+            },
           },
           async () => {
             const { createAdapter } = await import('@rcm/bot-sdk/adapters/dingtalk')
@@ -440,7 +454,12 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
     const deny = { id: 'deny', label: '拒绝', style: 'secondary' } as const
     const ref = await cards.send(
       recipient.platformUserId,
-      { title, body, buttons: [deny, approve] },
+      // 所有审批渠道统一左侧拒绝、右侧批准，按钮文案与动作保持同序。
+      {
+        title,
+        body,
+        buttons: [deny, approve],
+      },
       this.channels.get(recipient.channel)?.cardOptions,
     )
     this.logger.debug(`${recipient.channel} 审批卡片已投递`)
@@ -454,7 +473,7 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
     return ref
   }
 
-  /** 清除决策路由；仅向仍启用且未改变的绑定发送结算文本。 */
+  /** 清除决策路由并更新原卡；无法更新时，仅向仍有效的绑定补发结算文本。 */
   async close(ref: CardRef, status: ApprovalStatus) {
     const key = ref.botId + ':' + ref.cardId
     const delivery = this.deliveries.get(key)

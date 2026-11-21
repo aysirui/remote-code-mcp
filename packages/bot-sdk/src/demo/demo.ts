@@ -1,4 +1,4 @@
-import { BotPlatformError, createBot, type BotAdapter } from '../core/index.js'
+import { BotPlatformError, createBot, type BotAdapter, type Conversation } from '../core/index.js'
 import { defaultCard, type Card, type CardOptions } from '../core/capabilities/cards/index.js'
 import { TextCapability } from '../core/capabilities/text/index.js'
 import { demoSelection } from './selection.js'
@@ -10,7 +10,7 @@ export function required(name: string): string {
   return value
 }
 
-/** 为指定测试用户发送通用双按钮卡，点击后展示所选按钮。 */
+/** 为指定测试用户或群发送通用双按钮卡，仅由指定测试用户点击后展示结果。 */
 export async function runDemo(
   adapter: BotAdapter,
   options?: {
@@ -23,10 +23,17 @@ export async function runDemo(
   },
 ) {
   const userId = required('BOT_DEMO_USER_ID')
-  const to = { botId: adapter.id, userId }
+  const chatId = process.env.BOT_DEMO_CHAT_ID
+  const to: Conversation = chatId
+    ? { botId: adapter.id, type: 'group', chatId }
+    : { botId: adapter.id, userId }
   const bot = createBot({
     adapter,
-    onError: (error) => console.error(error.message),
+    onError: (error) => {
+      // 平台拒绝回调更新时也标记演示失败，不能仅凭业务处理日志或退出码 0 验收。
+      process.exitCode = 1
+      console.error(`演示失败：${error.message}`)
+    },
   })
   const { CardCapability } = await import('../core/capabilities/cards/index.js')
   const text = bot.install(new TextCapability())
@@ -40,7 +47,12 @@ export async function runDemo(
   }
 
   text.onMessage(async (event) => {
-    if (event.conversation.userId === userId)
+    if (
+      event.actorId === userId &&
+      (chatId
+        ? event.conversation.type === 'group' && event.conversation.chatId === chatId
+        : event.conversation.type !== 'group')
+    )
       await text.send(event.conversation, `收到：${event.text}`)
   })
 
@@ -48,9 +60,14 @@ export async function runDemo(
     await bot.start()
     const ref = await cards.send(to, card)
     const select = demoSelection(adapter.id, userId, ref.cardId, Date.now() + 300_000)
+    // 按钮事件由业务注册：先核验卡片和点击者，再把通用选择结果写回原卡。
     cards.onAction(async (event) => {
+      console.log('演示已收到卡片按钮事件，正在核验点击者、卡片和动作。')
       const state = select(event)
-      if (!state) return
+      if (!state) {
+        console.log('演示忽略未通过核验的按钮事件。')
+        return
+      }
       const status =
         state === 'expired'
           ? '卡片已过期'
@@ -62,7 +79,14 @@ export async function runDemo(
         buttons: [],
       }
       event.deferCardUpdate?.()
-      await cards.settle(ref, updated)
+      const settlement = await cards.settle(ref, updated)
+      console.log(
+        settlement === 'updated'
+          ? '平台已确认主动更新原卡。'
+          : settlement === 'callback'
+            ? '结果已交付点击回调，等待平台更新回执。'
+            : '原卡更新不可用，请检查平台回调窗口。',
+      )
     })
     console.log('通用演示卡已发送；可在私聊发送文字测试回声，按 Ctrl+C 停止。')
   } catch (error) {

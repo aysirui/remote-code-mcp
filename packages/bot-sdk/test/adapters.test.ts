@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { setImmediate } from 'node:timers/promises'
 import { LarkChannel, type EventMap } from '@larksuite/channel'
-import { WSClient, type WsFrame } from '@wecom/aibot-node-sdk'
+import { WSClient, type WsFrame, type TemplateCard } from '@wecom/aibot-node-sdk'
 import { DWClient, TOPIC_CARD, TOPIC_ROBOT, type DWClientDownStream } from 'dingtalk-stream'
 import { createAdapter as createFeishuAdapter } from '../src/adapters/feishu/index.js'
 import { createAdapter as createWecomAdapter } from '../src/adapters/wecom/index.js'
@@ -20,6 +20,191 @@ import { TextCapability, type TextEvent } from '../src/core/capabilities/text/in
 
 const card: Card = { title: '模拟', body: '详情', buttons: [{ id: 'approve', label: '批准' }] }
 const done: Card = { title: '模拟', body: '处理完成', buttons: [] }
+
+test('飞书群聊收发文字、发送卡片及按钮回调保留群目标和独立点击者', async ({ mock }) => {
+  let handlers: Partial<EventMap> = {}
+  mock.method(LarkChannel.prototype, 'on', (events: Partial<EventMap>) => {
+    handlers = { ...handlers, ...events }
+    return () => {}
+  })
+  mock.method(LarkChannel.prototype, 'connect', async () => undefined)
+  mock.method(LarkChannel.prototype, 'disconnect', async () => undefined)
+  const send = mock.method(LarkChannel.prototype, 'send', async () => ({ messageId: 'group-card' }))
+  const bot = createBot({ adapter: createFeishuAdapter({ appId: 'test', appSecret: 'test' }) })
+  const text = bot.install(new TextCapability())
+  const cards = bot.install(new CardCapability())
+  const received: TextEvent[] = []
+  const actions: ActionEvent[] = []
+  text.onMessage((event) => {
+    received.push(event)
+  })
+  cards.onAction((event) => {
+    actions.push(event)
+    return { card: done }
+  })
+  await bot.start()
+  const group = { botId: 'feishu', type: 'group' as const, chatId: 'oc_group' }
+  await handlers.message?.({
+    chatType: 'group',
+    chatId: group.chatId,
+    senderId: 'ou_member',
+    rawContentType: 'text',
+    content: '群消息',
+    messageId: 'm-group',
+  } as never)
+  assert.deepEqual(received, [
+    { conversation: group, actorId: 'ou_member', text: '群消息', messageId: 'm-group' },
+  ])
+  await text.send(received[0].conversation, '群回复')
+  const ref = await cards.send(group, card)
+  assert.deepEqual(send.mock.calls[0].arguments, ['oc_group', { text: '群回复' }])
+  assert.equal(send.mock.calls[1].arguments[0], 'oc_group')
+  const result = await handlers.cardAction?.({
+    messageId: ref.cardId,
+    chatId: 'oc_group',
+    operator: { openId: 'ou_other' },
+    action: { tag: 'button', value: { botSdkAction: 'approve' } },
+  })
+  assert.deepEqual(actions[0].conversation, group)
+  assert.equal(actions[0].actorId, 'ou_other')
+  assert.match(JSON.stringify(result), /处理完成/)
+  await bot.stop()
+})
+
+test('企微群聊发送和回复使用 chatid，允许群按钮回调并可更新所有接收者', async ({ mock }) => {
+  const connect = mock.method(WSClient.prototype, 'connect', function (this: WSClient) {
+    this.emit('authenticated')
+    return this
+  })
+  mock.method(WSClient.prototype, 'disconnect', () => undefined)
+  const send = mock.method(WSClient.prototype, 'sendMessage', async () => ({}))
+  const update = mock.method(WSClient.prototype, 'updateTemplateCard', async () => ({}))
+  const bot = createBot({ adapter: createWecomAdapter({ botId: 'robot', secret: 'test' }) })
+  const text = bot.install(new TextCapability())
+  const cards = bot
+    .install(new CardCapability())
+    .withOptions({ textNoticeUrl: 'https://example.com/', updateScope: 'all' })
+  const received: TextEvent[] = []
+  const actions: ActionEvent[] = []
+  text.onMessage((event) => {
+    received.push(event)
+  })
+  cards.onAction((event) => {
+    actions.push(event)
+    return { card: done }
+  })
+  await bot.start()
+  const client = connect.mock.calls[0].this as WSClient
+  const group = { botId: 'wecom', type: 'group' as const, chatId: 'group-room' }
+  client.emit('message.text', {
+    headers: { req_id: 'text' },
+    body: {
+      aibotid: 'robot',
+      chattype: 'group',
+      chatid: group.chatId,
+      from: { userid: 'member' },
+      msgid: 'm-group',
+      text: { content: '群消息' },
+    },
+  } as never)
+  await setImmediate()
+  assert.deepEqual(received, [
+    { conversation: group, actorId: 'member', text: '群消息', messageId: 'm-group' },
+  ])
+  await text.send(received[0].conversation, '群回复')
+  const ref = await cards.send(group, card)
+  assert.equal(send.mock.calls[0].arguments[0], 'group-room')
+  assert.equal(send.mock.calls[1].arguments[0], 'group-room')
+  const frame = {
+    headers: { req_id: 'click' },
+    body: {
+      aibotid: 'robot',
+      chattype: 'group',
+      chatid: group.chatId,
+      from: { userid: 'other-member' },
+      event: { template_card_event: { task_id: ref.cardId, event_key: 'approve' } },
+    },
+  }
+  client.emit('event.template_card_event', frame as never)
+  await setImmediate()
+  assert.deepEqual(actions[0].conversation, group)
+  assert.equal(actions[0].actorId, 'other-member')
+  assert.equal(update.mock.calls[0].arguments[0], frame)
+  assert.equal(update.mock.calls[0].arguments[2], undefined)
+  await bot.stop()
+})
+
+test('钉钉群文字使用群接口，卡片投放使用群模型，IM_GROUP 点击正常交付', async ({ mock }) => {
+  const connect = mock.method(DWClient.prototype, 'connect', async function (this: DWClient) {
+    this.connected = true
+  })
+  mock.method(DWClient.prototype, 'disconnect', () => undefined)
+  const ack = mock.method(DWClient.prototype, 'socketCallBackResponse', () => undefined)
+  const http = mock.method(globalThis, 'fetch', async (url: string, _init?: RequestInit) => {
+    if (url.endsWith('/accessToken')) return Response.json({ accessToken: 'token', expireIn: 7200 })
+    if (url.endsWith('/groupMessages/send')) return Response.json({ processQueryKey: 'sent' })
+    return Response.json({ success: true, result: { deliverResults: [{ success: true }] } })
+  })
+  const bot = createBot({
+    adapter: createDingtalkAdapter({ clientId: 'test', clientSecret: 'test', corpId: 'corp' }),
+  })
+  const text = bot.install(new TextCapability())
+  const cards = bot.install(new CardCapability()).withOptions({ templateId: 'template' })
+  const received: TextEvent[] = []
+  const actions: ActionEvent[] = []
+  text.onMessage((event) => {
+    received.push(event)
+  })
+  cards.onAction((event) => {
+    actions.push(event)
+    return { card: done }
+  })
+  await bot.start()
+  const group = { botId: 'dingtalk', type: 'group' as const, chatId: 'cid-room' }
+  const client = connect.mock.calls[0].this as DWClient
+  client.emit(TOPIC_ROBOT, {
+    headers: { messageId: 'text' },
+    data: JSON.stringify({
+      conversationType: '2',
+      conversationId: group.chatId,
+      senderCorpId: 'corp',
+      senderStaffId: 'member',
+      msgId: 'm-group',
+      msgtype: 'text',
+      text: { content: '群消息' },
+    }),
+  } as DWClientDownStream)
+  await setImmediate()
+  assert.deepEqual(received, [
+    { conversation: group, actorId: 'member', messageId: 'm-group', text: '群消息' },
+  ])
+  await text.send(received[0].conversation, '群回复')
+  const ref = await cards.send(group, card)
+  assert.match(String(http.mock.calls[1].arguments[0]), /robot\/groupMessages\/send$/)
+  const textBody = JSON.parse(http.mock.calls[1].arguments[1]?.body as string)
+  assert.equal(textBody.openConversationId, 'cid-room')
+  assert.equal(textBody.userIds, undefined)
+  const body = JSON.parse(http.mock.calls[2].arguments[1]?.body as string)
+  assert.equal(body.openSpaceId, 'dtv1.card//IM_GROUP.cid-room')
+  assert.deepEqual(body.imGroupOpenDeliverModel, { robotCode: 'test' })
+  assert.equal(body.imRobotOpenDeliverModel, undefined)
+  client.emit(TOPIC_CARD, {
+    headers: { messageId: 'click' },
+    data: JSON.stringify({
+      spaceType: 'IM_GROUP',
+      spaceId: body.openSpaceId,
+      corpId: 'corp',
+      userId: 'other-member',
+      outTrackId: ref.cardId,
+      content: JSON.stringify({ cardPrivateData: { params: { botSdkAction: 'approve' } } }),
+    }),
+  } as DWClientDownStream)
+  await setImmediate()
+  assert.deepEqual(actions[0].conversation, group)
+  assert.equal(actions[0].actorId, 'other-member')
+  assert.match(JSON.stringify(ack.mock.calls.at(-1)?.arguments), /处理完成/)
+  await bot.stop()
+})
 
 test('飞书映射单聊、主动消息、原生按钮回调与主动更新', async ({ mock }) => {
   let handlers: Partial<EventMap> = {}
@@ -67,7 +252,15 @@ test('飞书映射单聊、主动消息、原生按钮回调与主动更新', as
   }
   await handlers.message?.({ ...row, chatType: 'group' })
   await handlers.message?.(row)
-  assert.deepEqual(texts, [{ conversation: user, text: '你好', messageId: 'om_in' }])
+  assert.deepEqual(texts, [
+    {
+      conversation: { botId: 'feishu', type: 'group', chatId: 'oc_test' },
+      actorId: 'ou_user',
+      text: '你好',
+      messageId: 'om_in',
+    },
+    { conversation: user, actorId: 'ou_user', text: '你好', messageId: 'om_in' },
+  ])
   await text.send(user, '回应')
   assert.deepEqual(send.mock.calls[0].arguments, [user.userId, { text: '回应' }])
   const hidden = { id: 'snooze', label: '稍后查看', visible: false }
@@ -90,7 +283,14 @@ test('飞书映射单聊、主动消息、原生按钮回调与主动更新', as
   )
   assert.match(JSON.stringify(await handlers.cardAction?.(click)), /处理完成/)
   assert.deepEqual(actions, [
-    { botId: 'feishu', cardId: ref.cardId, actorId: 'ou_user', actionId: 'approve' },
+    {
+      botId: 'feishu',
+      cardId: ref.cardId,
+      actorId: 'ou_user',
+      actionId: 'approve',
+      conversation: user,
+      chatId: 'oc_test',
+    },
   ])
   assert.match(
     JSON.stringify(
@@ -116,7 +316,19 @@ test('企微等待认证、将 task_id 关联到点击并使用原回调帧更�
   })
   mock.method(WSClient.prototype, 'disconnect', () => undefined)
   const send = mock.method(WSClient.prototype, 'sendMessage', async () => ({}))
-  const update = mock.method(WSClient.prototype, 'updateTemplateCard', async () => ({}))
+  const update = mock.method(
+    WSClient.prototype,
+    'updateTemplateCard',
+    async (_frame: WsFrame, updated: TemplateCard) => {
+      // 复现线上 42045 的边界：文本通知卡必须带 type 1 及有效链接，不能仅信任 SDK 的类型声明。
+      if (
+        updated.card_type === 'text_notice' &&
+        (updated.card_action?.type !== 1 || !updated.card_action.url)
+      )
+        throw { errcode: 42045 }
+      return {} as WsFrame
+    },
+  )
   const adapter = createWecomAdapter({
     id: 'wecom',
     botId: 'robot',
@@ -126,7 +338,7 @@ test('企微等待认证、将 task_id 关联到点击并使用原回调帧更�
   const bot = createBot({ adapter })
   const text = bot.install(new TextCapability())
   const cardCapability = bot.install(new CardCapability())
-  const cards = cardCapability
+  const cards = cardCapability.withOptions({ textNoticeUrl: 'https://example.com/' })
   const texts: TextEvent[] = []
   const actions: ActionEvent[] = []
   text.onMessage((event) => {
@@ -206,17 +418,26 @@ test('企微等待认证、将 task_id 关联到点击并使用原回调帧更�
   }
   client.emit('event.template_card_event', {
     ...frame,
-    body: { ...frame.body, chattype: 'group' },
+    body: { ...frame.body, aibotid: 'other-bot' },
   } as never)
   client.emit('event.template_card_event', {
     ...frame,
-    body: { ...frame.body, chattype: undefined },
+    body: { ...frame.body, from: undefined },
   } as never)
   client.emit('event.template_card_event', frame as never)
   await setImmediate()
-  assert.deepEqual(texts, [{ conversation: user, messageId: 'm1', text: '你好' }])
+  assert.deepEqual(texts, [
+    { conversation: user, actorId: 'member', messageId: 'm1', text: '你好' },
+  ])
   assert.deepEqual(actions, [
-    { botId: 'wecom', cardId: ref.cardId, actorId: 'member', actionId: 'approve' },
+    {
+      botId: 'wecom',
+      cardId: ref.cardId,
+      actorId: 'member',
+      actionId: 'approve',
+      conversation: user,
+      chatId: 'member',
+    },
   ])
   assert.deepEqual(update.mock.calls[0].arguments, [
     frame,
@@ -225,7 +446,7 @@ test('企微等待认证、将 task_id 关联到点击并使用原回调帧更�
       task_id: ref.cardId,
       main_title: { title: '模拟' },
       sub_title_text: '处理完成',
-      card_action: { type: 0 },
+      card_action: { type: 1, url: 'https://example.com/' },
     },
     ['member'],
   ])
@@ -233,17 +454,18 @@ test('企微等待认证、将 task_id 关联到点击并使用原回调帧更�
     diagnose.mock.calls.map(({ arguments: args }) => args[0]),
     [
       '企微长连接认证成功',
-      '企微已接受私聊文本',
+      '企微已接受文本',
       '企微已接受卡片',
       '企微已推送卡片按钮回调',
-      '企微按钮回调未通过机器人或私聊身份校验',
+      '企微按钮回调未通过机器人或点击者校验',
       '企微已推送卡片按钮回调',
-      '企微按钮回调未通过机器人或私聊身份校验',
+      '企微按钮回调未通过机器人或点击者校验',
       '企微已推送卡片按钮回调',
       '企微已确认卡片更新',
     ],
   )
-  // 显式链接仍由调用方按业务需要提供，SDK 不强制跳转。
+  // 通知卡缺少链接时应在本地报错，避免发送已知会被平台拒绝的 type 0。
+  await assert.rejects(cardCapability.send(user, done), /必须配置/)
   await cards.send(user, done, { textNoticeUrl: 'https://example.com/details' })
   const linkedCard = send.mock.calls.at(-1)?.arguments[1] as {
     template_card: { card_action: { type: number; url?: string } }
@@ -360,13 +582,19 @@ test('同一个钉钉连接使用两套模板，更新和点击各自沿用原�
   } as DWClientDownStream)
   await setImmediate()
   assert.deepEqual(actions, [
-    { botId: 'ding', cardId: ref.cardId, actorId: 'member', actionId: 'resolve' },
-    { botId: 'ding', cardId: second.cardId, actorId: 'member', actionId: 'approve' },
+    { botId: 'ding', cardId: ref.cardId, actorId: 'member', actionId: 'resolve', conversation: to },
+    {
+      botId: 'ding',
+      cardId: second.cardId,
+      actorId: 'member',
+      actionId: 'approve',
+      conversation: to,
+    },
   ])
   await bot.stop()
 })
 
-test('钉钉现有模板按 Lable 变量和 reject、agree 组件对应拒绝与批准', async ({ mock }) => {
+test('钉钉真实回调缺少场域字段时仍按原卡识别动作，拒绝跨企业及未知卡片', async ({ mock }) => {
   const connect = mock.method(DWClient.prototype, 'connect', async function (this: DWClient) {
     this.connected = true
   })
@@ -401,13 +629,13 @@ test('钉钉现有模板按 Lable 变量和 reject、agree 组件对应拒绝与
       buttonSlots: [
         {
           componentId: 'reject',
-          labelVariable: 'firstLable',
+          labelVariable: 'firstLabel',
           visibleVariable: 'showFirst',
           actionIdVariable: 'firstId',
         },
         {
           componentId: 'agree',
-          labelVariable: 'secondLable',
+          labelVariable: 'secondLabel',
           visibleVariable: 'showSecond',
           actionIdVariable: 'secondId',
         },
@@ -418,10 +646,10 @@ test('钉钉现有模板按 Lable 变量和 reject、agree 组件对应拒绝与
   assert.deepEqual(payload.cardData.cardParamMap, {
     title: '操作审批',
     body: '测试模板映射',
-    firstLable: '拒绝',
+    firstLabel: '拒绝',
     showFirst: 'true',
     firstId: 'deny',
-    secondLable: '批准',
+    secondLabel: '批准',
     showSecond: 'true',
     secondId: 'approve',
   })
@@ -431,21 +659,28 @@ test('钉钉现有模板按 Lable 变量和 reject、agree 组件对应拒绝与
     ['agree', 'secondId'],
   ]) {
     // 模板参数值绑定 firstId、secondId 变量，平台回传变量展开后的业务动作。
-    client.emit(TOPIC_CARD, {
-      headers: { messageId: componentId },
-      data: JSON.stringify({
-        spaceType: 'IM_ROBOT',
-        corpId: 'corp',
-        userId: 'member',
-        outTrackId: ref.cardId,
-        content: JSON.stringify({
-          cardPrivateData: {
-            actionIds: [componentId],
-            params: { botSdkAction: payload.cardData.cardParamMap[variable] },
-          },
-        }),
+    const callback = {
+      corpId: 'corp',
+      userId: 'member',
+      outTrackId: ref.cardId,
+      content: JSON.stringify({
+        cardPrivateData: {
+          actionIds: [componentId],
+          params: { botSdkAction: payload.cardData.cardParamMap[variable] },
+        },
       }),
-    } as DWClientDownStream)
+    }
+    // 真实回调可不带 spaceType；不得因此丢弃已投放原卡的合法点击。
+    for (const data of [
+      { ...callback, corpId: 'other-corp' },
+      { ...callback, outTrackId: 'rcm_unknown' },
+      callback,
+    ]) {
+      client.emit(TOPIC_CARD, {
+        headers: { messageId: componentId },
+        data: JSON.stringify(data),
+      } as DWClientDownStream)
+    }
   }
   await setImmediate()
   assert.deepEqual(actions, ['deny', 'approve'])
@@ -539,9 +774,17 @@ test('钉钉 OpenAPI 主动投放、Stream 点击回执、主动更新和平台�
   emit(TOPIC_CARD, { ...callback, corpId: 'elsewhere' })
   emit(TOPIC_CARD, callback)
   await setImmediate()
-  assert.deepEqual(texts, [{ conversation: user, messageId: 'm1', text: '你好' }])
+  assert.deepEqual(texts, [
+    { conversation: user, actorId: 'member', messageId: 'm1', text: '你好' },
+  ])
   assert.deepEqual(actions, [
-    { botId: 'ding', cardId: ref.cardId, actorId: 'member', actionId: 'approve' },
+    {
+      botId: 'ding',
+      cardId: ref.cardId,
+      actorId: 'member',
+      actionId: 'approve',
+      conversation: user,
+    },
   ])
   assert.deepEqual(ack.mock.calls[1].arguments, [TOPIC_CARD, {}])
   assert.match(JSON.stringify(ack.mock.calls[2].arguments), /处理完成/)
@@ -593,13 +836,23 @@ test('钉钉 OpenAPI 主动投放、Stream 点击回执、主动更新和平台�
   })
   assert.equal(texts.length, 1)
   assert.deepEqual(
-    messageDiagnostic.mock.calls.map(({ arguments: args }) => args),
+    messageDiagnostic.mock.calls
+      .map(({ arguments: args }) => args)
+      .filter(
+        ([message]) =>
+          message === '已收到钉钉机器人消息回调。' || message.startsWith('机器人组织与配置一致'),
+      ),
     [
       ['已收到钉钉机器人消息回调。'],
       ['已收到钉钉机器人消息回调。'],
       ['机器人组织与配置一致，但发送者不是该组织成员或回调缺少发送者组织。'],
     ],
   )
+  const cardDiagnostics = messageDiagnostic.mock.calls.map(({ arguments: args }) => args[0])
+  assert.ok(cardDiagnostics.includes('已收到钉钉卡片按钮回调。'))
+  assert.ok(cardDiagnostics.some((message) => message.includes('企业匹配":false')))
+  assert.ok(cardDiagnostics.includes('钉钉卡片按钮已交付业务处理。'))
+  assert.ok(cardDiagnostics.every((message) => !/member|elsewhere|私聊内容/.test(message)))
   await cards.update(ref, done)
   assert.equal(http.mock.calls.at(-1)?.arguments[1]?.method, 'PUT')
   textRejected = true

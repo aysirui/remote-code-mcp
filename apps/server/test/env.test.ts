@@ -4,6 +4,14 @@ import path from 'node:path'
 import { Env } from '../src/config/env'
 
 describe('Server 环境配置', () => {
+  test('企微结果卡使用官网首页，不能把控制台路径或查询参数带入链接', () => {
+    expect(new Env({ WEBSITE_URL: 'https://www.example.com/path?from=test' }, []).websiteUrl).toBe(
+      'https://www.example.com/',
+    )
+    expect(new Env({ PUBLIC_URL: 'https://rcm.example.com/api' }, []).websiteUrl).toBe(
+      'https://rcm.example.com/',
+    )
+  })
   let directory: string
   let localFile: string
   let rootFile: string

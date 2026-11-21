@@ -39,7 +39,7 @@ export const defaultCard: Card = {
 }
 
 /** 本能力实例发出的卡片引用，更新时须传回原对象。 */
-export interface CardRef extends Conversation {
+export type CardRef = Conversation & {
   /** 平台消息 ID 或适配器生成的投放 ID。 */
   readonly cardId: string
 }
@@ -60,6 +60,10 @@ export interface ActionEvent {
   cardId: string
   /** 被点击按钮的业务标识。 */
   actionId: string
+  /** 原卡所属会话；优先采用平台回调上下文，否则使用本进程的发卡记录。 */
+  conversation?: Conversation
+  /** 平台回调中的当前会话 ID；可能是私聊会话，不根据 ID 本身推断为群聊。 */
+  chatId?: string
   /** 验证成功后可申请等待异步结果，返回取消等待的函数。 */
   deferCardUpdate?: () => (() => void) | undefined
 }
@@ -96,7 +100,7 @@ export interface CardAdapter {
   prepareOptions?(options?: CardOptions): CardOptions | undefined
   /** 主动发卡；如提前知道投放 ID，可在平台请求前登记。 */
   send(
-    userId: string,
+    to: Conversation,
     card: Card,
     binding: CardOptions | undefined,
     register: (cardId: string) => void,

@@ -7,22 +7,26 @@ import type { CardAdapter, Card, CardOptions } from '../../core/capabilities/car
 
 /** 企业微信无按钮通知卡使用的发卡选项。 */
 export interface WecomCardOptions extends CardOptions {
-  /** 点击无按钮卡片时打开的 HTTP(S) 链接；不配置则不跳转。 */
+  /** 点击无按钮卡片时打开的 HTTP(S) 链接；通知卡必须提供有效跳转。 */
   readonly textNoticeUrl?: string
+  /** 回调更新影响范围；默认仅点击者，all 替换群卡的全部接收者。 */
+  readonly updateScope?: 'actor' | 'all'
 }
 
 /** 发送前校验并保存供结果卡使用的链接。 */
 function prepareOptions(options?: CardOptions): WecomCardOptions | undefined {
   if (!options) return
-  const { textNoticeUrl } = options
-  if (textNoticeUrl === undefined) return {}
+  const { textNoticeUrl, updateScope } = options
   if (
-    typeof textNoticeUrl !== 'string' ||
-    !URL.canParse(textNoticeUrl) ||
-    !/^https?:$/u.test(new URL(textNoticeUrl).protocol)
+    textNoticeUrl !== undefined &&
+    (typeof textNoticeUrl !== 'string' ||
+      !URL.canParse(textNoticeUrl) ||
+      !/^https?:$/u.test(new URL(textNoticeUrl).protocol))
   )
     throw new BotConfigurationError('企微文本通知卡需要有效的 HTTP(S) 跳转链接')
-  return { textNoticeUrl }
+  if (updateScope !== undefined && updateScope !== 'actor' && updateScope !== 'all')
+    throw new BotConfigurationError('企微更新范围必须是 actor 或 all')
+  return { ...(textNoticeUrl ? { textNoticeUrl } : {}), ...(updateScope ? { updateScope } : {}) }
 }
 
 /** 按企微原生字段拆分正文，并记录超出原生字段条数的详情。 */
@@ -45,6 +49,9 @@ function renderCard(card: Card, taskId: string, options?: WecomCardOptions): Tem
   const { rows, notes } = cardContent(card.body)
   const buttons = card.buttons.filter(({ visible }) => visible !== false)
   const hasButtons = buttons.length > 0
+  // 智能机器人实际接口拒绝 type 0（42045）；不能用无跳转动作替代通知卡链接。
+  if (!hasButtons && !textNoticeUrl)
+    throw new BotConfigurationError('企微无按钮通知卡必须配置有效的 textNoticeUrl')
   return {
     card_type: hasButtons ? TemplateCardType.ButtonInteraction : TemplateCardType.TextNotice,
     task_id: taskId,
@@ -60,8 +67,7 @@ function renderCard(card: Card, taskId: string, options?: WecomCardOptions): Tem
             ...(button.style ? { style: button.style === 'primary' ? 1 : 4 } : {}),
           })),
         }
-      : // 通知卡要求提供 card_action；type 0 保留原卡内容但不打开外部页面。
-        { card_action: textNoticeUrl ? { type: 1, url: textNoticeUrl } : { type: 0 } }),
+      : { card_action: { type: 1, url: textNoticeUrl } }),
   }
 }
 
@@ -76,14 +82,8 @@ export function createCardAdapter(connection: WecomConnection): CardAdapter {
       listener = async (frame) => {
         onDiagnostic?.('企微已推送卡片按钮回调')
         const body = frame.body
-        if (
-          !body ||
-          body.aibotid !== botId ||
-          body.chattype === 'group' ||
-          (!body.chattype && body.chatid) ||
-          !body.from?.userid
-        ) {
-          onDiagnostic?.('企微按钮回调未通过机器人或私聊身份校验')
+        if (!body || body.aibotid !== botId || !body.from?.userid) {
+          onDiagnostic?.('企微按钮回调未通过机器人或点击者校验')
           return
         }
         // WebSocket 回调可将按钮参数放在 template_card_event 中，SDK 类型还声明了平铺形式。
@@ -91,13 +91,8 @@ export function createCardAdapter(connection: WecomConnection): CardAdapter {
           template_card_event?: Pick<typeof body.event, 'task_id' | 'event_key'>
         }
         const { task_id: cardId, event_key: actionId } = event?.template_card_event ?? event ?? {}
-        if (
-          typeof cardId !== 'string' ||
-          !cardId.startsWith('rcm_') ||
-          typeof actionId !== 'string' ||
-          !actionId
-        ) {
-          onDiagnostic?.('企微按钮回调缺少本 SDK 发出的卡片编号或按钮键')
+        if (typeof cardId !== 'string' || !cardId || typeof actionId !== 'string' || !actionId) {
+          onDiagnostic?.('企微按钮回调缺少卡片编号或按钮键')
           return
         }
         const binding = events.cardOptions(cardId) as WecomCardOptions | undefined
@@ -107,11 +102,17 @@ export function createCardAdapter(connection: WecomConnection): CardAdapter {
             cardId,
             actionId,
             actorId: body.from.userid,
+            ...(body.chatid ? { chatId: body.chatid } : {}),
+            ...(body.chatid && body.chattype !== 'single'
+              ? { conversation: { botId: id, type: 'group' as const, chatId: body.chatid } }
+              : {}),
           })
           if (response) {
-            await client.updateTemplateCard(frame, renderCard(response.card, cardId, binding), [
-              body.from.userid,
-            ])
+            await client.updateTemplateCard(
+              frame,
+              renderCard(response.card, cardId, binding),
+              binding?.updateScope === 'all' ? undefined : [body.from.userid],
+            )
             onDiagnostic?.('企微已确认卡片更新')
           } else onDiagnostic?.('企微按钮回调未产生卡片更新')
         } catch (error) {
@@ -128,12 +129,12 @@ export function createCardAdapter(connection: WecomConnection): CardAdapter {
     prepareOptions,
     // 企微要求五秒内提交更新，保留 2.5 秒等待业务结果，其余时间用于发送回执。
     callbackUpdateWaitMs: 2_500,
-    async send(userId, card, binding, register) {
+    async send(to, card, binding, register) {
       const taskId = `rcm_${randomUUID()}`
       const templateCard = renderCard(card, taskId, binding as WecomCardOptions | undefined)
       register(taskId)
       try {
-        await client.sendMessage(userId, {
+        await client.sendMessage(to.type === 'group' ? to.chatId : to.userId, {
           msgtype: 'template_card',
           template_card: templateCard,
         })

@@ -1,5 +1,5 @@
-import { createLarkChannel } from '@larksuite/channel'
-import type { BotAdapter } from '../../core/index.js'
+import { createLarkChannel, type PolicyConfig } from '@larksuite/channel'
+import type { BotAdapter, Conversation } from '../../core/index.js'
 
 /** 国内飞书应用机器人配置。 */
 export interface FeishuOptions {
@@ -9,6 +9,8 @@ export interface FeishuOptions {
   appId: string
   /** 飞书应用 App Secret。 */
   appSecret: string
+  /** 可选平台消息策略，如群白名单、是否要求提及；默认交付私聊及可接收的群消息。 */
+  messagePolicy?: PolicyConfig
 }
 
 /** 平台连接的认证、基础接口及资源由实例管理。 */
@@ -20,13 +22,13 @@ export class FeishuConnection implements BotAdapter {
   private unsubscribe?: () => void
 
   /** 初始化连接所需的客户端及凭证。 */
-  constructor({ id = 'feishu', appId, appSecret }: FeishuOptions) {
+  constructor({ id = 'feishu', appId, appSecret, messagePolicy }: FeishuOptions) {
     this.id = id
     this.channel = createLarkChannel({
       appId,
       appSecret,
       transport: 'websocket',
-      policy: { dmMode: 'open' },
+      policy: { dmMode: 'open', requireMention: false, ...messagePolicy },
       safety: { chatQueue: { cardActions: 'separate' } },
       logger: { trace() {}, debug() {}, info() {}, warn() {}, error() {} },
     })
@@ -44,9 +46,13 @@ export class FeishuConnection implements BotAdapter {
     await this.channel.disconnect()
   }
 
-  /** @internal 校验私聊目标必须是本应用的 open_id。 */
-  recipient(userId: string) {
-    if (!userId.startsWith('ou_')) throw new Error('飞书私聊目标必须是用户 open_id')
-    return userId
+  /** @internal 将明确的私聊或群聊目标转换为飞书支持的 ID。 */
+  recipient(to: Conversation) {
+    if (to.type === 'group') {
+      if (!to.chatId.startsWith('oc_')) throw new Error('飞书群聊目标必须是 chat_id')
+      return to.chatId
+    }
+    if (!to.userId.startsWith('ou_')) throw new Error('飞书私聊目标必须是用户 open_id')
+    return to.userId
   }
 }

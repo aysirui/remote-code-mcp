@@ -26,7 +26,10 @@ export class CardCapability extends BotCapability<CardAdapter> implements CardCl
   /** 同一个 Bot 共用一个卡片引用和点击路由。 */
   readonly id = 'cards'
   private readonly issued = new WeakMap<CardRef, { binding?: CardOptions }>()
-  private readonly optionsByCard = new Map<string, CardOptions>()
+  private readonly cardsById = new Map<
+    string,
+    { binding?: CardOptions; conversation: Conversation }
+  >()
   private readonly pending = new Map<string, (response?: ActionResponse) => boolean>()
   private handler?: Parameters<CardClient['onAction']>[0]
 
@@ -56,25 +59,24 @@ export class CardCapability extends BotCapability<CardAdapter> implements CardCl
 
   /** 向目标用户发卡，预先登记模板配置供快速回调使用。 */
   async send(to: Conversation | string, card: Card, options?: CardOptions): Promise<CardRef> {
-    const { botId, userId } = this.recipient(to)
+    const conversation = this.recipient(to)
+    const { botId } = conversation
     const adapter = this.requireAdapter(botId, 'cards.send')
     let registered: string | undefined
     try {
       const binding = adapter.prepareOptions ? adapter.prepareOptions(options) : options
       const register = (cardId: string) => {
-        if (!binding) return
         registered = cardId
-        this.optionsByCard.set(cardId, binding)
-        if (this.optionsByCard.size > 10_000)
-          this.optionsByCard.delete(this.optionsByCard.keys().next().value!)
+        this.cardsById.set(cardId, { binding, conversation })
+        if (this.cardsById.size > 10_000) this.cardsById.delete(this.cardsById.keys().next().value!)
       }
-      const cardId = await adapter.send(userId, card, binding, register)
+      const cardId = await adapter.send(conversation, card, binding, register)
       if (!registered) register(cardId)
-      const ref = Object.freeze({ botId, userId, cardId })
+      const ref = Object.freeze({ ...conversation, cardId })
       this.issued.set(ref, { binding })
       return ref
     } catch (error) {
-      if (registered) this.optionsByCard.delete(registered)
+      if (registered) this.cardsById.delete(registered)
       this.context.error(error instanceof BotPlatformError ? error : new Error('卡片发送失败'))
       throw error
     }
@@ -125,7 +127,7 @@ export class CardCapability extends BotCapability<CardAdapter> implements CardCl
   protected subscribe(adapter: CardAdapter) {
     return adapter.start({
       action: (event) => this.dispatch(adapter, event),
-      cardOptions: (cardId) => this.optionsByCard.get(cardId),
+      cardOptions: (cardId) => this.cardsById.get(cardId)?.binding,
       error: (error) => this.context.error(error),
     })
   }
@@ -133,6 +135,11 @@ export class CardCapability extends BotCapability<CardAdapter> implements CardCl
   /** 回调预算从收到点击开始计时，只在应用授权后为该卡保留响应窗口。 */
   private async dispatch(adapter: CardAdapter, event: ActionEvent): Promise<ActionResponse | void> {
     if (!this.context.running || event.botId !== adapter.connection.id || !this.handler) return
+    // 回调中的点击者不等于会话目标；缺少平台会话字段时沿用发卡目标，不猜测为私聊。
+    event = {
+      ...event,
+      conversation: event.conversation ?? this.cardsById.get(event.cardId)?.conversation,
+    }
     const waitMs = adapter.callbackUpdateWaitMs
     const key = event.cardId
     const deadline = Date.now() + (waitMs ?? 0)

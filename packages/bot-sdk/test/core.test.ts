@@ -46,7 +46,8 @@ function fake(id: string, lifecycle: string[] = []) {
       textEvents = sink
     },
     async stop() {},
-    async send(userId, text) {
+    async send(to, text) {
+      const userId = to.type === 'group' ? to.chatId : to.userId
       calls.push({ userId, text })
     },
   }
@@ -56,7 +57,8 @@ function fake(id: string, lifecycle: string[] = []) {
       cardEvents = sink
     },
     async stop() {},
-    async send(userId, card) {
+    async send(to, card) {
+      const userId = to.type === 'group' ? to.chatId : to.userId
       calls.push({ userId, card })
       return 'same-platform-id'
     },
@@ -110,12 +112,19 @@ test('实例路由与卡片引用隔离，不接受伪造、跨 Bot 或错误实
     observed.push(text)
   })
   await assert.rejects(text.send({ ...user, botId: 'beta' }, '错误连接'), /不属于/)
+  await alpha.textEvents().message({
+    actorId: 'user',
+    conversation: { ...user, botId: 'beta' },
+    text: '错误来源',
+    messageId: 'other',
+  })
   await alpha
     .textEvents()
-    .message({ conversation: { ...user, botId: 'beta' }, text: '错误来源', messageId: 'other' })
-  await alpha.textEvents().message({ conversation: user, text: '正确来源', messageId: 'first' })
+    .message({ actorId: 'user', conversation: user, text: '正确来源', messageId: 'first' })
   unsubscribe()
-  await alpha.textEvents().message({ conversation: user, text: '已取消订阅', messageId: 'second' })
+  await alpha
+    .textEvents()
+    .message({ actorId: 'user', conversation: user, text: '已取消订阅', messageId: 'second' })
   assert.deepEqual(observed, ['正确来源'])
   await manager.stop()
 })
@@ -283,7 +292,8 @@ test('Telegram 内联键盘与会话内消息 ID 可映射到同一套卡片能�
       events = sink
     },
     async stop() {},
-    async send(chatId, card) {
+    async send(to, card) {
+      const chatId = to.type === 'group' ? to.chatId : to.userId
       const key = JSON.stringify([chatId, 1])
       messages.set(key, {
         text: `${card.title}\n${card.body}`,
@@ -316,7 +326,12 @@ test('Telegram 内联键盘与会话内消息 ID 可映射到同一套卡片能�
   const action = messages.get(ref.cardId)?.reply_markup.inline_keyboard[0][0]
   assert.deepEqual(action, { text: '确定', callback_data: 'ok' })
   cards.onAction(async ({ cardId, actorId, actionId }) => {
-    if (cardId === ref.cardId && actorId === ref.userId && actionId === 'ok')
+    if (
+      cardId === ref.cardId &&
+      ref.type !== 'group' &&
+      actorId === ref.userId &&
+      actionId === 'ok'
+    )
       assert.equal(await cards.settle(ref, { ...card, title: '完成', buttons: [] }), 'updated')
   })
   await events.action({

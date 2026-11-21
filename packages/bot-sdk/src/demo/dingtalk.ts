@@ -20,6 +20,8 @@ async function lookupUserId(adapter: BotAdapter): Promise<void> {
     const userId = await new Promise<string | undefined>((resolve) => {
       const timeout = setTimeout(() => resolve(undefined), 300_000)
       textCapability.onMessage(({ conversation, text }) => {
+        // 此演示查询的是私聊用户 ID；群聊回调仍由 SDK 正常交付，演示自行过滤。
+        if (conversation.type === 'group') return
         // 兼容用户沿用旧版提示输入「查询ID」前缀，只接受本次随机口令。
         const submitted = text
           .trim()
@@ -53,13 +55,33 @@ const adapter = createAdapter({
   clientSecret: required('DINGTALK_CLIENT_SECRET'),
   corpId: required('DINGTALK_CORP_ID'),
   robotCode: process.env.DINGTALK_ROBOT_CODE,
-  onDiagnostic: lookup ? (message) => console.log(message) : undefined,
+  onDiagnostic: (message) => console.log(message),
 })
 if (lookup) await lookupUserId(adapter)
 else {
+  // 模板组件 ID 可自定义；变量名沿用通用模板，避免把审批业务写入 SDK 演示。
+  const componentIds = (process.env.DINGTALK_DEMO_BUTTON_IDS ?? 'button1,button2')
+    .split(',')
+    .map((id) => id.trim())
+  if (componentIds.length !== 2 || componentIds.some((id) => !id))
+    throw new Error('DINGTALK_DEMO_BUTTON_IDS 需要两个逗号分隔的模板组件 ID')
   await runDemo(adapter, {
     cardOptions: {
       templateId: required('DINGTALK_CARD_TEMPLATE_ID'),
+      buttonSlots: [
+        {
+          componentId: componentIds[0],
+          labelVariable: 'firstLabel',
+          visibleVariable: 'showFirst',
+          actionIdVariable: 'firstId',
+        },
+        {
+          componentId: componentIds[1],
+          labelVariable: 'secondLabel',
+          visibleVariable: 'showSecond',
+          actionIdVariable: 'secondId',
+        },
+      ],
       onDeliveryFailureDetail:
         process.env.DINGTALK_DEMO_DEBUG === '1'
           ? // 仅在本地模拟卡片中打印平台单条拒投说明。

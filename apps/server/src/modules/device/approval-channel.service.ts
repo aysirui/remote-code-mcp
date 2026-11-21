@@ -91,12 +91,20 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
 
     if (wecom) {
       const { botId, secret, botLink } = wecom
-      const config: ChannelConfig = { appId: botId, botLink }
       pendingBots.push(
-        this.registerChannel(core, 'wecom', config, async () => {
-          const { createAdapter } = await import('@rcm/bot-sdk/adapters/wecom')
-          return createAdapter({ id: 'wecom', botId, secret })
-        }),
+        this.registerChannel(
+          core,
+          'wecom',
+          {
+            appId: botId,
+            botLink,
+            cardOptions: { textNoticeUrl: env.websiteUrl },
+          },
+          async () => {
+            const { createAdapter } = await import('@rcm/bot-sdk/adapters/wecom')
+            return createAdapter({ id: 'wecom', botId, secret })
+          },
+        ),
       )
     }
 
@@ -111,17 +119,17 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
             botLink,
             cardOptions: {
               templateId: cardTemplateId,
-              // 兼容现有已发布模板的 Lable 拼写与组件 ID；这些绑定只属于审批业务。
+              // 与已发布模板的 Label 变量及 reject、agree 组件保持一致，业务动作由调用方提供。
               buttonSlots: [
                 {
                   componentId: 'reject',
-                  labelVariable: 'firstLable',
+                  labelVariable: 'firstLabel',
                   visibleVariable: 'showFirst',
                   actionIdVariable: 'firstId',
                 },
                 {
                   componentId: 'agree',
-                  labelVariable: 'secondLable',
+                  labelVariable: 'secondLabel',
                   visibleVariable: 'showSecond',
                   actionIdVariable: 'secondId',
                 },
@@ -130,7 +138,15 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
           },
           async () => {
             const { createAdapter } = await import('@rcm/bot-sdk/adapters/dingtalk')
-            return createAdapter({ id: 'dingtalk', clientId, clientSecret, corpId, robotCode })
+            return createAdapter({
+              id: 'dingtalk',
+              clientId,
+              clientSecret,
+              corpId,
+              robotCode,
+              // 卡片适配器只提供字段名和校验结果，供排查真实模板及回调问题。
+              onDiagnostic: (message) => this.logger.debug(`dingtalk：${message}`),
+            })
           },
         ),
       )
@@ -193,6 +209,8 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
       const textsByBot = manager.install(() => {
         const texts = new TextCapability()
         texts.onMessage(async ({ conversation, text }) => {
+          // SDK 支持群消息；RCM 账号绑定只允许私聊，防止群内暴露绑定确认码。
+          if (conversation.type === 'group') return
           const channel = conversation.botId as ApprovalChannel
           const config = this.channels.get(channel)
           const code = /^绑定\s+([a-f0-9]{32})$/.exec(text.trim())?.[1]
@@ -234,7 +252,10 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
     actorId,
     actionId,
     deferCardUpdate,
+    conversation,
   }: ActionEvent): Promise<void> {
+    // 审批渠道使用私发原卡；SDK 只提供会话上下文，审批是否允许群聊由本业务明确决定。
+    if (conversation?.type === 'group') return
     this.logger.debug(`${channel} 收到审批按钮事件`)
     const delivery = this.deliveries.get(channel + ':' + cardId)
     if (!delivery || delivery.expiresAt <= Date.now()) {

@@ -10,16 +10,15 @@ export function createTextAdapter(connection: FeishuConnection): TextAdapter {
     async start(events) {
       unsubscribe = channel.on({
         async message(message) {
-          if (
-            message.chatType !== 'p2p' ||
-            message.rawContentType !== 'text' ||
-            message.senderIsBot ||
-            !message.senderId.startsWith('ou_')
-          )
+          if (!['p2p', 'group'].includes(message.chatType) || message.rawContentType !== 'text')
             return
           try {
             await events.message({
-              conversation: { botId: id, userId: message.senderId },
+              conversation:
+                message.chatType === 'group'
+                  ? { botId: id, type: 'group', chatId: message.chatId }
+                  : { botId: id, userId: message.senderId },
+              actorId: message.senderId,
               messageId: message.messageId,
               text: message.content,
             })
@@ -33,8 +32,8 @@ export function createTextAdapter(connection: FeishuConnection): TextAdapter {
       unsubscribe?.()
       unsubscribe = undefined
     },
-    async send(userId, text) {
-      await channel.send(connection.recipient(userId), { text })
+    async send(to, text) {
+      await channel.send(connection.recipient(to), { text })
     },
   }
 }

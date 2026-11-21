@@ -9,10 +9,12 @@ export interface TextConnection extends BotAdapter {
   [textAdapter]?: () => TextAdapter
 }
 
-/** 单聊文字及平台发送者。 */
+/** 文字消息及所属会话；会话目标与实际发送者分别提供。 */
 export interface TextEvent {
-  /** 可用于回复的私聊目标。 */
+  /** 可直接用于回复的私聊或群聊目标。 */
   conversation: Conversation
+  /** 实际发送者的平台用户标识；群聊中不能用群 ID 代替。 */
+  actorId: string
   /** 平台入站消息 ID，可用于排重。 */
   messageId: string
   /** 消息纯文本。 */
@@ -21,7 +23,7 @@ export interface TextEvent {
 
 /** 文本适配器的事件出口。 */
 export interface TextAdapterEvents {
-  /** 交付收到的单聊文字。 */
+  /** 交付平台允许机器人接收的文字，不在 SDK 中限定业务场景。 */
   message(event: TextEvent): Promise<void>
   /** 汇报不含正文和凭证的错误。 */
   error(error: Error): void
@@ -35,6 +37,6 @@ export interface TextAdapter {
   start(events: TextAdapterEvents): Promise<void>
   /** 取消文本订阅。 */
   stop(): Promise<void>
-  /** 向所属平台用户主动发送文字。 */
-  send(userId: string, text: string): Promise<void>
+  /** 向指定会话发送文字，群聊与私聊使用各平台对应接口。 */
+  send(to: Conversation, text: string): Promise<void>
 }

@@ -58,6 +58,11 @@ export class Env {
     return this.source.CONSOLE_URL || 'http://localhost:5173'
   }
 
+  /** 公开官网首页，供企微结果卡跳转；未单独配置时与 Compose 一样使用 PUBLIC_URL 的根路径。 */
+  get websiteUrl(): string {
+    return new URL('/', this.source.WEBSITE_URL || this.publicUrl).href
+  }
+
   /** 可选飞书企业自建应用；凭证不下发到 Console 或 Runtime。 */
   get feishuApproval() {
     const appId = this.source.FEISHU_APP_ID

@@ -139,8 +139,11 @@ function renderCard(card: Card, config: PreparedOptions) {
   return { cardData: { cardParamMap: Object.fromEntries(params) }, buttonActions }
 }
 
-/** 为该连接创建独立的卡片实现。 */
-export function createCardAdapter(connection: DingtalkConnection): CardAdapter {
+/** 为该连接创建卡片实现；诊断仅报告字段映射和处理阶段，不输出身份或卡片内容。 */
+export function createCardAdapter(
+  connection: DingtalkConnection,
+  diagnose?: (message: string) => void,
+): CardAdapter {
   const { id, client, corpId, robotCode } = connection
   let unsubscribe: (() => void) | undefined
 
@@ -148,21 +151,25 @@ export function createCardAdapter(connection: DingtalkConnection): CardAdapter {
     connection,
     async start(events) {
       unsubscribe = connection.subscribeCallback(TOPIC_CARD, async (frame) => {
+        diagnose?.('已收到钉钉卡片按钮回调。')
         const requestId = frame.headers.messageId
-        if (!requestId) return
+        if (!requestId) {
+          diagnose?.('钉钉卡片回调缺少消息确认标识。')
+          return
+        }
         let update: object = {}
         // 回执写入成功后才切换本地动作映射，保持失败时原卡按钮的含义。
         let acceptedUpdate:
           { config: PreparedOptions; buttonActions: Map<string, string> } | undefined
         try {
           const event = decode(frame.data)
+          // 群聊与私聊都支持交互；场域是上下文，不作为业务授权条件，点击权限由调用方核验。
           if (
-            event?.spaceType === 'IM_ROBOT' &&
-            event.corpId === corpId &&
+            event?.corpId === corpId &&
             typeof event.userId === 'string' &&
             event.userId &&
             typeof event.outTrackId === 'string' &&
-            event.outTrackId.startsWith('rcm_') &&
+            event.outTrackId &&
             typeof event.content === 'string'
           ) {
             const content = decode(event.content) as
@@ -188,13 +195,27 @@ export function createCardAdapter(connection: DingtalkConnection): CardAdapter {
                 ? config.buttonActions.get(componentId)
                 : undefined) ??
                 privateData?.params?.[config.buttonActionParam])
+            if (!config) diagnose?.('钉钉卡片配置不在当前进程，无法解析按钮。')
+            else if (typeof actionId !== 'string' || !actionId)
+              diagnose?.('钉钉卡片回调未匹配按钮组件或有效动作参数。')
             if (config && typeof actionId === 'string' && actionId) {
               const response = await events.action({
                 botId: id,
                 actorId: event.userId,
                 cardId: event.outTrackId,
                 actionId,
+                ...(typeof event.spaceId === 'string' &&
+                event.spaceId.startsWith('dtv1.card//IM_GROUP.')
+                  ? {
+                      conversation: {
+                        botId: id,
+                        type: 'group' as const,
+                        chatId: event.spaceId.slice('dtv1.card//IM_GROUP.'.length),
+                      },
+                    }
+                  : {}),
               })
+              diagnose?.('钉钉卡片按钮已交付业务处理。')
               if (response) {
                 const rendered = renderCard(response.card, config)
                 update = {
@@ -204,6 +225,16 @@ export function createCardAdapter(connection: DingtalkConnection): CardAdapter {
                 acceptedUpdate = { config, buttonActions: rendered.buttonActions }
               }
             }
+          } else {
+            // 只报告各项校验是否通过，便于区分回调未到达与已到达但被过滤。
+            diagnose?.(
+              `钉钉卡片回调校验未通过：${JSON.stringify({
+                企业匹配: event?.corpId === corpId,
+                点击者存在: typeof event?.userId === 'string' && Boolean(event.userId),
+                卡片编号有效: typeof event?.outTrackId === 'string' && Boolean(event.outTrackId),
+                交互内容为字符串: typeof event?.content === 'string',
+              })}`,
+            )
           }
         } catch {
           events.error(new Error('钉钉按钮处理失败'))
@@ -222,10 +253,17 @@ export function createCardAdapter(connection: DingtalkConnection): CardAdapter {
     },
     callbackUpdate: true,
     prepareOptions,
-    async send(userId, card, binding, register) {
+    async send(to, card, binding, register) {
       const config = binding as PreparedOptions
       const outTrackId = `rcm_${randomUUID()}`
       const { cardData, buttonActions } = renderCard(card, config)
+      diagnose?.(
+        `钉钉发卡按钮字段：${config.buttonSlots
+          .map((slot) =>
+            [slot.labelVariable, slot.actionIdVariable, slot.visibleVariable].join('/'),
+          )
+          .join('；')}`,
+      )
       config.buttonActions = buttonActions
       register(outTrackId)
       const result = (await connection.request(
@@ -237,21 +275,28 @@ export function createCardAdapter(connection: DingtalkConnection): CardAdapter {
           callbackType: 'STREAM',
           userIdType: 1,
           cardData,
-          openSpaceId: `dtv1.card//IM_ROBOT.${userId}`,
-          imRobotOpenSpaceModel: { supportForward: config.supportForward },
-          // 绑定回执走文字接口，卡片投放也需要明确指定单聊机器人编码。
-          imRobotOpenDeliverModel: { spaceType: 'IM_ROBOT', robotCode },
+          ...(to.type === 'group'
+            ? {
+                openSpaceId: `dtv1.card//IM_GROUP.${to.chatId}`,
+                imGroupOpenSpaceModel: { supportForward: config.supportForward },
+                imGroupOpenDeliverModel: { robotCode },
+              }
+            : {
+                openSpaceId: `dtv1.card//IM_ROBOT.${to.userId}`,
+                imRobotOpenSpaceModel: { supportForward: config.supportForward },
+                imRobotOpenDeliverModel: { spaceType: 'IM_ROBOT', robotCode },
+              }),
         },
         diagnostics,
       )) as {
         success?: boolean
         result?: { deliverResults?: { success?: boolean; errorMsg?: string }[] }
       }
-      // HTTP 成功只表示接口可调用，仍需检查钉钉返回的单聊投递结果。
+      // HTTP 成功只表示接口可调用，仍需检查钉钉返回的目标会话投递结果。
       const deliveries = result?.result?.deliverResults
       if (!Array.isArray(deliveries) || deliveries.length !== 1) {
         const count = Array.isArray(deliveries) ? deliveries.length : '未返回'
-        throw new DingtalkApiError(`钉钉未确认私聊卡片投递（投递结果条数：${count}，预期 1 条）。`)
+        throw new DingtalkApiError(`钉钉未确认卡片投递（投递结果条数：${count}，预期 1 条）。`)
       }
       const delivery = deliveries[0]
       if (typeof delivery?.errorMsg === 'string' && delivery.success !== true && delivery.errorMsg)
@@ -259,10 +304,10 @@ export function createCardAdapter(connection: DingtalkConnection): CardAdapter {
       if (delivery?.success === false) {
         const code = delivery.errorMsg
         const detail = code && diagnostics.codes.has(code) ? `（${code}）` : ''
-        throw new DingtalkApiError(`钉钉未确认私聊卡片投递：平台返回投递失败${detail}。`)
+        throw new DingtalkApiError(`钉钉未确认卡片投递：平台返回投递失败${detail}。`)
       }
       if (result.success !== true || delivery?.success !== true)
-        throw new DingtalkApiError('钉钉未确认私聊卡片投递（接口或投递结果未返回成功标记）。')
+        throw new DingtalkApiError('钉钉未确认卡片投递（接口或投递结果未返回成功标记）。')
       return outTrackId
     },
     async update(ref, card, binding) {
@@ -279,6 +324,7 @@ export function createCardAdapter(connection: DingtalkConnection): CardAdapter {
       )) as { success?: boolean }
       if (!result.success) throw new Error('钉钉卡片更新失败')
       config.buttonActions = buttonActions
+      diagnose?.('钉钉已确认主动更新原卡。')
     },
   }
 }

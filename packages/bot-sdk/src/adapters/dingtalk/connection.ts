@@ -12,7 +12,7 @@ export interface DingtalkOptions {
   corpId: string
   /** 机器人编码，缺省时使用 Client ID。 */
   robotCode?: string
-  /** 输出固定的连接与私聊排查提示，不含平台消息或用户身份。 */
+  /** 输出连接、私聊、卡片处理阶段和模板字段名，不含平台正文、凭证或用户身份。 */
   onDiagnostic?: (message: string) => void
 }
 

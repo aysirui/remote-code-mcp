@@ -9,6 +9,7 @@ const adapter = createAdapter({
   onDiagnostic: (message) => console.log(message),
 })
 await runDemo(adapter, {
+  cardOptions: { textNoticeUrl: 'https://github.com/aysirui/remote-code-mcp' },
   details: [
     '通用测试卡片，五分钟后失效。',
     '设备：本地测试设备',

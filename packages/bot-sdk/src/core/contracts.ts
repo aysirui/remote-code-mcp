@@ -1,10 +1,21 @@
-/** 私聊目标标识仅在指定机器人连接内使用。 */
-export interface Conversation {
+/** 平台会话仅在指定机器人连接内使用；群 ID 与用户 ID 明确区分。 */
+export type Conversation = {
   /** 已注册的机器人实例 ID。 */
   readonly botId: string
-  /** 平台用户标识。 */
-  readonly userId: string
-}
+} & (
+  | {
+      /** 私聊类型；省略时保持原有用户目标写法。 */
+      readonly type?: 'private'
+      /** 平台用户标识。 */
+      readonly userId: string
+    }
+  | {
+      /** 群聊目标必须显式声明，不能把群 ID 当作用户 ID。 */
+      readonly type: 'group'
+      /** 平台群会话标识，如飞书 chat_id、企微 chatid、钉钉 openConversationId。 */
+      readonly chatId: string
+    }
+)
 
 /** 平台连接的生命周期，不依赖任何业务能力。 */
 export interface BotAdapter {

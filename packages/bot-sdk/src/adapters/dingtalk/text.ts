@@ -21,8 +21,12 @@ export function createTextAdapter(
           return
         }
         client.socketCallBackResponse(frame.headers.messageId, EventAck.SUCCESS)
-        if (message?.conversationType !== '1' || message.msgtype !== 'text') {
-          diagnose?.('已忽略非私聊纯文本回调。')
+        if (
+          !message ||
+          (message.conversationType !== '1' && message.conversationType !== '2') ||
+          message.msgtype !== 'text'
+        ) {
+          diagnose?.('已忽略非会话纯文本回调。')
           return
         }
         if (message.senderCorpId !== corpId) {
@@ -33,18 +37,23 @@ export function createTextAdapter(
           return
         }
         const text = (message.text as { content?: unknown } | undefined)?.content
+        const group = message.conversationType === '2'
         if (
           typeof message.senderStaffId !== 'string' ||
           !message.senderStaffId ||
           typeof message.msgId !== 'string' ||
-          typeof text !== 'string'
+          typeof text !== 'string' ||
+          (group && (typeof message.conversationId !== 'string' || !message.conversationId))
         ) {
-          diagnose?.('私聊回调缺少员工 ID、消息 ID 或正文。')
+          diagnose?.('会话回调缺少员工 ID、消息 ID、群会话 ID 或正文。')
           return
         }
         void events
           .message({
-            conversation: { botId: id, userId: message.senderStaffId },
+            conversation: group
+              ? { botId: id, type: 'group', chatId: message.conversationId as string }
+              : { botId: id, userId: message.senderStaffId },
+            actorId: message.senderStaffId,
             messageId: message.msgId,
             text,
           })
@@ -55,13 +64,18 @@ export function createTextAdapter(
       unsubscribe?.()
       unsubscribe = undefined
     },
-    async send(userId, text) {
-      const result = (await connection.request('robot/oToMessages/batchSend', 'POST', {
-        robotCode,
-        userIds: [userId],
-        msgKey: 'sampleText',
-        msgParam: JSON.stringify({ content: text }),
-      })) as {
+    async send(to, text) {
+      const group = to.type === 'group'
+      const result = (await connection.request(
+        group ? 'robot/groupMessages/send' : 'robot/oToMessages/batchSend',
+        'POST',
+        {
+          robotCode,
+          ...(group ? { openConversationId: to.chatId } : { userIds: [to.userId] }),
+          msgKey: 'sampleText',
+          msgParam: JSON.stringify({ content: text }),
+        },
+      )) as {
         processQueryKey?: string
         invalidStaffIdList?: string[]
         flowControlledStaffIdList?: string[]
@@ -71,7 +85,7 @@ export function createTextAdapter(
         result.invalidStaffIdList?.length ||
         result.flowControlledStaffIdList?.length
       )
-        throw new Error('钉钉未接受私聊文字投递')
+        throw new Error('钉钉未接受文字投递')
     },
   }
 }

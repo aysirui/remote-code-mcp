@@ -65,6 +65,16 @@ test.each(['feishu', 'dingtalk', 'wecom'] as const)(
       deferCardUpdate,
     })
     expect(deferCardUpdate).not.toHaveBeenCalled()
+    // SDK 允许群卡回调，但 RCM 审批业务只接受私发场景，即使点击者身份相同也拒绝群事件。
+    await service['handleAction']({
+      botId: channel,
+      cardId: ref.cardId,
+      actorId: recipient.platformUserId,
+      actionId: 'approve',
+      deferCardUpdate,
+      conversation: { botId: channel, type: 'group', chatId: 'group-room' },
+    })
+    expect(deferCardUpdate).not.toHaveBeenCalled()
     await service['handleAction']({
       botId: channel,
       cardId: ref.cardId,

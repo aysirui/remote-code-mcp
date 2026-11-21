@@ -13,6 +13,6 @@ export function createAdapter(options: DingtalkOptions) {
   const connection = new DingtalkConnection(options)
   return Object.assign(connection, {
     [textAdapter]: () => createTextAdapter(connection, options.onDiagnostic),
-    [cardAdapter]: () => createCardAdapter(connection),
+    [cardAdapter]: () => createCardAdapter(connection, options.onDiagnostic),
   })
 }

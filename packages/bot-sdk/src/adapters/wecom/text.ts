@@ -12,11 +12,21 @@ export function createTextAdapter(connection: WecomConnection): TextAdapter {
     connection,
     async start(events) {
       listener = async ({ body }) => {
-        if (!body || body.aibotid !== botId || body.chattype !== 'single' || !body.from?.userid)
+        if (
+          !body ||
+          body.aibotid !== botId ||
+          !['single', 'group'].includes(body.chattype) ||
+          !body.from?.userid
+        )
           return
+        if (body.chattype === 'group' && !body.chatid) return
         try {
           await events.message({
-            conversation: { botId: id, userId: body.from.userid },
+            conversation:
+              body.chattype === 'group'
+                ? { botId: id, type: 'group', chatId: body.chatid! }
+                : { botId: id, userId: body.from.userid },
+            actorId: body.from.userid,
             messageId: body.msgid,
             text: body.text.content,
           })
@@ -30,14 +40,17 @@ export function createTextAdapter(connection: WecomConnection): TextAdapter {
       if (listener) client.off('message.text', listener)
       listener = undefined
     },
-    async send(userId, text) {
+    async send(to, text) {
       // 主动接口只接受 Markdown；转义标记，避免把收到的文本当格式或链接回送。
       const content = text.replace(/[\\`*_{}[\]()<>#+\-.!|~]/g, '\\$&')
       try {
-        await client.sendMessage(userId, { msgtype: 'markdown', markdown: { content } })
-        onDiagnostic?.('企微已接受私聊文本')
+        await client.sendMessage(to.type === 'group' ? to.chatId : to.userId, {
+          msgtype: 'markdown',
+          markdown: { content },
+        })
+        onDiagnostic?.('企微已接受文本')
       } catch (error) {
-        const message = describeFailure('企微私聊文本发送失败', error)
+        const message = describeFailure('企微文本发送失败', error)
         onDiagnostic?.(message)
         throw new BotPlatformError(message)
       }

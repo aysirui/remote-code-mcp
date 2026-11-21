@@ -1,6 +1,6 @@
 # @rcm/bot-sdk
 
-面向 Node.js 22+ 的跨平台 TypeScript 机器人 SDK。用同一套 API 为飞书、企业微信和钉钉开发通知机器人、客服助手或 AI Agent：收发私聊文字、主动发送交互卡片、处理原生按钮点击，并按平台能力更新卡片。
+面向 Node.js 22+ 的跨平台 TypeScript 机器人 SDK。用同一套 API 为飞书、企业微信和钉钉开发通知机器人、客服助手或 AI Agent：收发私聊和群聊文字、主动发送交互卡片、处理原生按钮点击，并按平台能力更新卡片。
 
 SDK 不依赖 RCM 服务，不负责账号绑定、业务审批、持久化或 Agent 编排。应用自行决定向谁发消息，以及如何授权按钮动作。
 
@@ -50,9 +50,8 @@ try {
 用同一个 `messages` 注册回调。在上例的 `await bot.start()` 前添加：
 
 ```ts
-messages.onMessage(async ({ conversation, text }) => {
-  if (conversation.userId === process.env.BOT_DEMO_USER_ID)
-    await messages.send(conversation, `收到：${text}`)
+messages.onMessage(async ({ conversation, actorId, text }) => {
+  if (actorId === process.env.BOT_DEMO_USER_ID) await messages.send(conversation, `收到：${text}`)
 })
 ```
 
@@ -97,6 +96,34 @@ await cards.send(userId, {
 
 预置不包含业务状态机或审批处理器。请通过新对象覆盖预置，不要原地修改共享预置。
 
+### 私聊与群聊
+
+`Conversation` 明确区分会话目标，避免将群 ID 当作用户 ID。已有 `messages.send(userId, text)`、`cards.send(userId, card)` 和 `{ botId, userId }` 均继续表示私聊。发送群消息或群卡时使用：
+
+```ts
+const group = { botId: 'dingtalk', type: 'group' as const, chatId: '群 openConversationId' }
+await messages.send(group, '群消息')
+const ref = await cards.send(
+  group,
+  {
+    title: '协作提醒',
+    body: '请选择操作。',
+    buttons: [{ id: 'acknowledge', label: '收到' }],
+  },
+  { templateId: '已发布模板 ID' },
+)
+```
+
+飞书群 ID 为 `chat_id`（`oc_…`），企微群 ID 为 `chatid`，钉钉群 ID 为 `openConversationId`。平台仍要求机器人在群内且具有相应权限；SDK 不会绕过平台权限。
+
+`onMessage` 提供 `conversation` 和独立的 `actorId`。群消息中前者是群目标，后者是发送人；使用 `messages.send(event.conversation, text)` 会回复原群。`onAction` 同样提供点击者 `actorId`，以及可获得时的 `conversation`：优先采用平台上下文，平台字段缺失时使用本进程发卡记录。无法确定会话时保留未指定，不根据点击者猜测为私聊。回调可提供原始 `chatId`（例如飞书的当前聊天 ID），它与发卡记录中的目标分别保留，不能仅凭存在聊天 ID 就认定为群聊。
+
+SDK 不限定哪些用户可以点击群卡，不限定只能处理审批；应用应在回调中自行核验点击者、会话、有效期及动作。RCM Server 自己保留私聊绑定与审批规则。
+
+企微 `WecomCardOptions.updateScope` 可设为 `actor`（默认，仅更新点击者的卡）或 `all`（更新全部接收者，适合共享群卡结果）。无按钮通知卡仍必须提供 `textNoticeUrl`。飞书可通过 `messagePolicy` 配置是否要求提及、群白名单等平台消息策略，默认不要求群消息提及机器人。平台消息订阅和授权范围仍生效。
+
+自定义平台适配器的 `TextAdapter.send` 和 `CardAdapter.send` 现在接收完整 `Conversation`，需要按 `type` 使用 `userId` 或 `chatId`；不能再将第一个参数当作字符串。
+
 ### 同时运行多个机器人
 
 每个机器人调用一次 `createBot()`，再交给 `BotManager` 统一安装能力、启动和关闭。
@@ -131,7 +158,7 @@ const dingCards = cards.get('dingtalk')!
 
 - **飞书**直接传卡片标题、正文和按钮。
 - **钉钉**用 `{ templateId }` 指定后台已发布的模板，也可以设置模板变量名来对应标题、正文和按钮。
-- **企业微信**默认不跳转；需要整卡跳转时，用 `{ textNoticeUrl }` 指定无按钮通知卡的链接。
+- **企业微信**用 `{ textNoticeUrl }` 指定无按钮通知卡的有效 HTTP(S) 链接；智能机器人接口要求通知卡带有效跳转，不接受 `card_action.type = 0`。
 
 发卡时直接把平台选项作为第三个参数：
 
@@ -144,7 +171,7 @@ await dingCards.send(
 )
 ```
 
-同一种卡片发很多次时，可以用 `const reminders = dingCards.withOptions(template)`，之后调用 `reminders.send(userId, card)`。SDK 发卡时校验并保存该次配置，更新和点击回调会继续使用这份配置。点击回调可以查找最近最多 10,000 张带平台选项的卡片，记录保存在当前进程内。
+同一种卡片发很多次时，可以用 `const reminders = dingCards.withOptions(template)`，之后调用 `reminders.send(userId, card)`。SDK 发卡时校验并保存该次配置和会话目标，更新和点击回调会继续使用它们。点击回调可以查找最近最多 10,000 张卡片的配置和原始会话，记录保存在当前进程内。
 
 ## API 速查
 
@@ -156,7 +183,7 @@ await dingCards.send(
 | `manager.install(factory)`                | 在启动前给所有 Bot 安装能力，返回各 Bot 的能力实例。                                                    |
 | `bot.isConnected()`                       | 查询当前机器人是否已完成连接。                                                                          |
 | `bot.install(capability)`                 | 安装能力并返回对应实例。请在启停切换之外的停止状态安装。                                                |
-| `messages.onMessage(handler)`             | 订阅单聊文字。事件包含 `conversation`、`messageId` 和 `text`。                                          |
+| `messages.onMessage(handler)`             | 订阅私聊及群聊文字。事件包含 `conversation`、`actorId`、`messageId` 和 `text`。                         |
 | `messages.send(userId, text)`             | 主动向平台用户发送文字。回复时也可直接传入收到的会话。                                                  |
 | `cards.onAction(handler)`                 | 订阅原生按钮。事件包含 `botId`、`actorId`、`cardId` 和 `actionId`，可返回 `{ card }` 在回调内替换卡片。 |
 | `cards.send(userId, card, options?)`      | 主动发卡并返回 `CardRef`，第三个参数可指定平台卡片配置。                                                |
@@ -187,11 +214,11 @@ buttons: [
 
 ## 平台能力
 
-| 导入子路径                       | 长连接与私聊接收人                             | 点击回调内更新 | 主动更新 |
-| -------------------------------- | ---------------------------------------------- | -------------- | -------- |
-| `@rcm/bot-sdk/adapters/feishu`   | 国内飞书应用机器人；应用范围内的用户 `open_id` | 支持           | 支持     |
-| `@rcm/bot-sdk/adapters/wecom`    | 企业微信智能机器人；企业成员 `userid`          | 支持           | 不支持   |
-| `@rcm/bot-sdk/adapters/dingtalk` | 钉钉企业内部应用；指定企业的成员 `staffId`     | 支持           | 支持     |
+| 导入子路径                       | 长连接与会话目标                                           | 点击回调内更新 | 主动更新 |
+| -------------------------------- | ---------------------------------------------------------- | -------------- | -------- |
+| `@rcm/bot-sdk/adapters/feishu`   | 国内飞书应用机器人；用户 `open_id` 或群 `chat_id`          | 支持           | 支持     |
+| `@rcm/bot-sdk/adapters/wecom`    | 企业微信智能机器人；成员 `userid` 或群 `chatid`            | 支持           | 不支持   |
+| `@rcm/bot-sdk/adapters/dingtalk` | 钉钉企业内部应用；成员 `staffId` 或群 `openConversationId` | 支持           | 支持     |
 
 企微的主动文字接口使用 Markdown，适配器转义常用格式标记。平台仍可能拒绝超过自身大小或数量限制的消息和卡片。
 
@@ -199,9 +226,9 @@ buttons: [
 
 ## 平台配置
 
-- **飞书**：创建企业自建应用并启用机器人；使用长连接订阅 `im.message.receive_v1` 和卡片回调 `card.action.trigger`，开通单聊接收和应用发消息权限后发布。适配器接收 `{ id, appId, appSecret }`。测试用户应在应用可用范围内，用户 `open_id` 必须来自同一个应用。测试外部账号时，须先开启对外单聊并由用户建立会话，再分别验证收卡、点击和更新。
-- **企业微信**：创建支持长连接的智能机器人，确保测试成员在可用范围内。适配器接收 `{ id, botId, secret }`，其中 `botId` 是企微凭证中的机器人 ID。无按钮的通知卡（包括点击后替换的卡片）默认使用 `card_action.type = 0`，不打开网页；可选传入 `textNoticeUrl` 设置跳转。正文中最多六条形如「标签：内容」的行用原生字段展示。不要同时运行共享同一凭证的多个实例。
-- **钉钉**：开启企业内部应用机器人和 Stream，申请私聊消息及卡片接口权限。适配器接收 `{ id, clientId, clientSecret, corpId, robotCode? }`，未配置 `robotCode` 时使用 `clientId`。发卡时传入含 `templateId` 的选项。
+- **飞书**：创建企业自建应用并启用机器人；使用长连接订阅 `im.message.receive_v1` 和卡片回调 `card.action.trigger`，开通单聊接收和应用发消息权限后发布。适配器接收 `{ id, appId, appSecret, messagePolicy? }`；`messagePolicy` 可设置群白名单、是否要求提及等平台策略，默认不额外要求群消息提及。测试用户应在应用可用范围内，用户 `open_id` 必须来自同一个应用。测试外部账号时，须先开启对外单聊并由用户建立会话，再分别验证收卡、点击和更新。
+- **企业微信**：创建支持长连接的智能机器人，确保测试成员在可用范围内。适配器接收 `{ id, botId, secret }`，其中 `botId` 是企微凭证中的机器人 ID。无按钮的通知卡（包括点击后替换的卡片）必须传入 `textNoticeUrl`，生成 `card_action.type = 1` 及有效链接。实际智能机器人接口会以 `42045` 拒绝 `type = 0`，不能仅依赖上游 SDK 的类型声明。正文中最多六条形如「标签：内容」的行用原生字段展示。不要同时运行共享同一凭证的多个实例。
+- **钉钉**：开启企业内部应用机器人和 Stream，申请使用场景对应的私聊、群聊消息及卡片接口权限，并把机器人添加到目标群。适配器接收 `{ id, clientId, clientSecret, corpId, robotCode? }`，未配置 `robotCode` 时使用 `clientId`。发卡时传入含 `templateId` 的选项。
 
 ### 钉钉模板
 
@@ -218,6 +245,8 @@ buttons: [
 
 可见性变量在 OpenAPI 的 `cardParamMap` 中以字符串 `"true"` / `"false"` 投递。模板用布尔变量绑定可见性。按钮必须配置为服务端回传事件。SDK 优先将 `content.cardPrivateData.actionIds` 中的单个组件 ID 映射为该槽当前的业务动作，无需额外回传参数；未匹配组件 ID 的旧模板仍使用 `content.cardPrivateData.params` 中的显式动作参数。使用参数方式时，回传参数值必须绑定该槽的动作变量，不能把 `firstId` / `secondId` 当成字面值或固定为某个业务动作。修改模板后应重新发布并发送新卡验证。状态卡留空按钮数组。适配器依赖固定版 `dingtalk-stream`（`2.1.6-beta.1`），用于支持可关闭和可重连的 Stream 连接。
 
+`IM_ROBOT` 是发送时的投放场域，点击回调不保证包含同值的 `spaceType`，不能把该相等条件作为回调前置要求。SDK 同时处理群聊和私聊回调，校验企业、点击者字段及模板配置；不通过 `spaceType` 限制业务场景。应用仍须核验点击者是否有权执行该动作。
+
 ## 运行内置演示
 
 安装 SDK 后，在当前终端配置环境变量，然后从项目根目录启动。演示运行包内的 JavaScript，不需要安装 `tsx` 或下载源码。
@@ -230,7 +259,51 @@ buttons: [
 
 如果在源码仓库中，可以运行 `pnpm --filter @rcm/bot-sdk demo:feishu`、`demo:wecom` 或 `demo:dingtalk`（后两者使用相同的 `pnpm --filter @rcm/bot-sdk` 前缀）。
 
-启动后会主动向指定用户发送一张五分钟内可处理的通用双按钮卡。点击「按钮1」或「按钮2」，确认原卡显示所选按钮；在私聊发一句话，确认机器人回复回声。按 `Ctrl+C` 停止。演示不会执行真实操作，也不读取 Runtime 审批或工作区数据。请使用测试凭证，不要把凭证提交到仓库。
+启动后会主动向指定用户发送一张五分钟内可处理的通用双按钮卡。点击「按钮1」或「按钮2」，确认原卡显示所选按钮；在所选会话中由测试用户发一句话，确认机器人回复回声。按 `Ctrl+C` 停止。演示不会执行真实操作，也不读取 Runtime 审批或工作区数据。请使用测试凭证，不要把凭证提交到仓库。
+
+### 用现有模板验证按钮回调
+
+钉钉 demo 默认组件 ID 为 `button1`、`button2`。如果已发布模板的组件 ID 为 `reject`、`agree`，在 PowerShell 中配置后运行（仍显示通用文案「按钮1」「按钮2」，不执行审批）：
+
+```powershell
+$env:DINGTALK_DEMO_BUTTON_IDS = 'reject,agree'
+# 如凭证已配置在 apps/server/.env，可先在仓库根目录构建，再直接运行 demo。
+pnpm --filter @rcm/bot-sdk build
+node --env-file=apps/server/.env packages/bot-sdk/dist/demo/dingtalk.js
+```
+
+变量必须与已发布模板一致：`firstLabel`、`secondLabel`、`showFirst`、`showSecond`、`firstId`、`secondId`；两个按钮的 `botSdkAction` 参数值分别绑定 `firstId`、`secondId` 变量。`DINGTALK_DEMO_BUTTON_IDS` 只覆盖组件 ID，不改变 SDK 的业务动作。不要同时运行使用同一凭证的 Server 和 demo。
+
+企微运行 `node --env-file=apps/server/.env packages/bot-sdk/dist/demo/wecom.js`。demo 为结果卡指定项目仓库链接，避免打开部署环境的控制台路径。
+
+`src/demo/demo.ts` 中的 `cards.onAction` 是可运行的通用回调示例：核验点击者、机器人、卡片和有效期，读取 `actionId`，然后通过 `cards.settle` 替换原卡。每次启动测试一个按钮，再重启测试另一个按钮；首次选择会保留，重复点击不应改变结果。
+
+演示中的事件处理顺序如下；`select` 是绑定当前测试用户、机器人、卡片和有效期的 `demoSelection` 返回值，`ref` 是发卡引用：
+
+```ts
+cards.onAction(async (event) => {
+  const choice = select(event)
+  if (!choice) return
+  const body = choice === 'expired' ? '卡片已过期' : `已选择 ${choice}`
+  // 企微需在点击窗口内返回结果，钉钉使用主动更新接口。
+  event.deferCardUpdate?.()
+  const settlement = await cards.settle(ref, {
+    title: '按钮事件结果',
+    body,
+    buttons: [],
+  })
+  console.log('结果交付方式：', settlement)
+})
+```
+
+可选设置 `BOT_DEMO_CHAT_ID` 为对应平台的群 ID，让三个平台的同一套 demo 向群发卡；`BOT_DEMO_USER_ID` 仍表示允许测试按钮和回声的用户。省略群 ID 时使用私聊。
+
+部署前应实际确认：
+
+1. 两个按钮都显示正确文案，点击后打印「演示已收到卡片按钮事件」。
+2. 点击「按钮1」「按钮2」分别显示对应选择，原卡不再包含按钮。
+3. 钉钉打印「钉钉已确认主动更新原卡」；企微打印「企微已确认卡片更新」。只有「演示按钮已处理」或「结果已交付点击回调」还不能证明平台更新成功。
+4. 若钉钉只有收卡没有回调，查看新增的回调校验诊断；若企微出现 `42045`，检查结果卡链接和实际 `card_action`，不要将该次测试视为通过。
 
 ## 许可证
 

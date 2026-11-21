@@ -48,6 +48,7 @@ export function createCardAdapter(connection: FeishuConnection): CardAdapter {
               cardId: event.messageId,
               actorId: event.operator.openId,
               actionId: value.botSdkAction,
+              chatId: event.chatId,
             })
             if (response) return { card: { type: 'raw', data: renderCard(response.card) } }
           } catch {
@@ -62,9 +63,9 @@ export function createCardAdapter(connection: FeishuConnection): CardAdapter {
       unsubscribe = undefined
     },
     callbackUpdate: true,
-    async send(userId, card, binding) {
+    async send(to, card, binding) {
       if (binding) throw new BotConfigurationError('当前飞书卡片使用原生 JSON，无需模板配置')
-      const result = await channel.send(connection.recipient(userId), { card: renderCard(card) })
+      const result = await channel.send(connection.recipient(to), { card: renderCard(card) })
       return result.messageId
     },
     async update(ref, card) {

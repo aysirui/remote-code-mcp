@@ -2,7 +2,7 @@ import type { Conversation } from '../../contracts.js'
 import { BotCapability } from '../bot-capability.js'
 import { textAdapter, type TextConnection, type TextAdapter, type TextEvent } from './contracts.js'
 
-/** 可独立安装的私聊文本能力。 */
+/** 可独立安装的私聊与群聊文本能力。 */
 export class TextCapability extends BotCapability<TextAdapter> {
   /** 同一个 Bot 只安装一个文本路由。 */
   readonly id = 'text'
@@ -13,7 +13,7 @@ export class TextCapability extends BotCapability<TextAdapter> {
     super((connection: TextConnection) => connection[textAdapter]?.())
   }
 
-  /** 订阅单聊文字，返回取消订阅函数。 */
+  /** 订阅文字消息，业务自行决定回复及授权范围，返回取消订阅函数。 */
   onMessage(handler: (event: TextEvent) => void | Promise<void>): () => void {
     this.handlers.add(handler)
     return () => {
@@ -23,8 +23,8 @@ export class TextCapability extends BotCapability<TextAdapter> {
 
   /** 发送文字，可传平台用户 ID 或入站会话。 */
   async send(to: Conversation | string, text: string) {
-    const { botId, userId } = this.recipient(to)
-    await this.requireAdapter(botId, 'text.send').send(userId, text)
+    const conversation = this.recipient(to)
+    await this.requireAdapter(conversation.botId, 'text.send').send(conversation, text)
   }
 
   /** 只交付来自当前连接的文字事件。 */

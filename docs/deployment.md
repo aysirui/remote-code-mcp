@@ -8,23 +8,23 @@
 
 Server 环境变量优先级为：系统环境变量 → `apps/server/.env` → 根目录 `.env` → 默认值。服务、迁移及管理员初始化统一使用 `apps/server/src/config/env.ts`；执行数据库命令前务必确认目标库。
 
-| 变量                                      | 用途及默认行为                                                                    |
-| ----------------------------------------- | --------------------------------------------------------------------------------- |
-| `DATABASE_URL`                            | Server 数据库连接；Compose 根据 MySQL 配置构造                                    |
-| `APP_SECRET`                              | 必填，至少 32 字符的随机密钥                                                      |
-| `PUBLIC_URL`                              | Server 外部地址；本地默认 `http://localhost:3000`                                 |
-| `CONSOLE_URL`                             | Console 外部地址，也用于邮箱激活链接；本地默认 `http://localhost:5173`            |
-| `ADMIN_EMAIL`                             | 首个管理员邮箱；该地址不能通过公开注册获得管理员权限                              |
-| `PORT`                                    | Server 端口，默认 3000；Compose 固定为 3000                                       |
-| `SMTP_HOST`、`SMTP_USER`、`SMTP_PASSWORD` | 注册激活邮件所需的 SMTP 地址、账号和密码 / 授权码                                 |
-| `SMTP_PORT`、`SMTP_SECURE`                | 默认 587 / false，强制 STARTTLS；465 使用 true，启用隐式 TLS                      |
-| `MAIL_FROM`                               | 可选，默认使用 `SMTP_USER`，须为服务商允许的发件地址                              |
-| `MYSQL_PASSWORD`、`MYSQL_ROOT_PASSWORD`   | Compose 必填的数据库密码，使用不同的强密码                                        |
-| `VITE_API_URL`                            | Console 构建时使用的 API 地址；Compose 自动使用 `PUBLIC_URL`                      |
-| `WEBSITE_URL`                             | 官网公开 URL，供 Astro 生成规范地址；默认使用 `PUBLIC_URL`                        |
-| `DOCS_URL`                                | 在线文档完整 URL，供 Console 导航使用；默认 `${WEBSITE_URL:-${PUBLIC_URL}}/docs/` |
-| `VITE_DOCS_URL`                           | Console 构建期文档地址，Compose 从 `DOCS_URL` 自动传入                            |
-| `PUBLIC_SITE_URL`、`PUBLIC_CONSOLE_URL`   | Astro 构建期官网和控制台地址，由 Compose 自动注入                                 |
+| 变量                                      | 用途及默认行为                                                                     |
+| ----------------------------------------- | ---------------------------------------------------------------------------------- |
+| `DATABASE_URL`                            | Server 数据库连接；Compose 根据 MySQL 配置构造                                     |
+| `APP_SECRET`                              | 必填，至少 32 字符的随机密钥                                                       |
+| `PUBLIC_URL`                              | Server 外部地址；本地默认 `http://localhost:3000`                                  |
+| `WEBSITE_URL`                             | 官网公开地址，供 Astro 生成规范地址及企微结果卡跳转首页；未配置时使用 `PUBLIC_URL` |
+| `CONSOLE_URL`                             | Console 外部地址，也用于邮箱激活链接；本地默认 `http://localhost:5173`             |
+| `ADMIN_EMAIL`                             | 首个管理员邮箱；该地址不能通过公开注册获得管理员权限                               |
+| `PORT`                                    | Server 端口，默认 3000；Compose 固定为 3000                                        |
+| `SMTP_HOST`、`SMTP_USER`、`SMTP_PASSWORD` | 注册激活邮件所需的 SMTP 地址、账号和密码 / 授权码                                  |
+| `SMTP_PORT`、`SMTP_SECURE`                | 默认 587 / false，强制 STARTTLS；465 使用 true，启用隐式 TLS                       |
+| `MAIL_FROM`                               | 可选，默认使用 `SMTP_USER`，须为服务商允许的发件地址                               |
+| `MYSQL_PASSWORD`、`MYSQL_ROOT_PASSWORD`   | Compose 必填的数据库密码，使用不同的强密码                                         |
+| `VITE_API_URL`                            | Console 构建时使用的 API 地址；Compose 自动使用 `PUBLIC_URL`                       |
+| `DOCS_URL`                                | 在线文档完整 URL，供 Console 导航使用；默认 `${WEBSITE_URL:-${PUBLIC_URL}}/docs/`  |
+| `VITE_DOCS_URL`                           | Console 构建期文档地址，Compose 从 `DOCS_URL` 自动传入                             |
+| `PUBLIC_SITE_URL`、`PUBLIC_CONSOLE_URL`   | Astro 构建期官网和控制台地址，由 Compose 自动注入                                  |
 
 若数据库密码含 URL 保留字符，`DATABASE_URL` 中的密码段需要 URL 编码。当前 Compose 直接插值 `MYSQL_PASSWORD` 构造连接串，应使用足够长且无需 URL 编码的随机密码，或自行调整连接串配置。
 
@@ -154,11 +154,11 @@ Docker Compose 从部署目录的 `.env` 或启动时指定的 `--env-file` 传�
 
 本地联调时，将测试机器人配置放在 `apps/server/.env`，在仓库根目录先执行 `pnpm --filter @rcm/protocol --filter @rcm/bot-sdk build`，再执行 `pnpm dev:server`。打开本地 Console 完成绑定并启用渠道，通过连接该 Server 的 Runtime 发起一条新的待审批请求。可在 Server 日志中查看「审批机器人已连接」「审批卡片已投递」和「收到审批按钮事件」。重启前发出的历史卡片仍可查看，本地进程只处理它自己发出的未结算卡片。
 
-若只测试企业微信，在终端设置 `BOT_DEMO_USER_ID` 为企微通讯录成员账号，再运行 `node --env-file=apps/server/.env packages/bot-sdk/dist/demo/wecom.js`。请用测试机器人，或先停掉使用同一企微凭证的其他进程。演示发送一张带多行详情的按钮卡片。点击后按终端的「企微已推送卡片按钮回调」「演示按钮已处理」和「企微已确认卡片更新」区分消息到达、按钮处理和卡片更新。企微结果卡默认不跳转，避免点击结果时打开控制台登录或网关拦截页面；点击窗口内更新原卡后不再补发结果文本，窗口不可用时才发送文本通知。
+若只测试企业微信，在终端设置 `BOT_DEMO_USER_ID` 为企微通讯录成员账号，再运行 `node --env-file=apps/server/.env packages/bot-sdk/dist/demo/wecom.js`。请用测试机器人，或先停掉使用同一企微凭证的其他进程。演示发送一张带多行详情的按钮卡片。点击后按终端的「企微已推送卡片按钮回调」「演示按钮已处理」和「企微已确认卡片更新」区分消息到达、按钮处理和卡片更新。企微结果卡必须带有效链接：Server 使用 `WEBSITE_URL` 的官网首页，不再使用控制台审批路径；未配置时与 Compose 官网一样使用 `PUBLIC_URL` 根路径，官网独立部署时必须显式设置 `WEBSITE_URL`。`card_action.type = 0` 会被实际接口以 `42045` 拒绝。点击窗口内更新原卡后不再补发结果文本，窗口不可用时才发送文本通知。
 
-若只测试钉钉发卡，在 PowerShell 中设置 `$env:BOT_DEMO_USER_ID` 为当前组织中测试用户的 `staffId`，再运行 `node --env-file=apps/server/.env packages/bot-sdk/dist/demo/dingtalk.js`。演示发出模拟卡片，不执行工作区操作。使用同一凭证的 Server 和演示应分开运行。
+若只测试钉钉发卡，在 PowerShell 中设置 `$env:BOT_DEMO_USER_ID` 为当前组织中测试用户的 `staffId`，再运行 `node --env-file=apps/server/.env packages/bot-sdk/dist/demo/dingtalk.js`。演示发出通用卡片，不执行工作区操作。当前模板组件 ID 为 `reject`、`agree` 时，先设置 `$env:DINGTALK_DEMO_BUTTON_IDS = 'reject,agree'`。分别重启 demo 测试两个按钮，确认原卡替换且平台回执成功后再部署；具体阶段提示见 Bot SDK README。使用同一凭证的 Server 和演示应分开运行。
 
-RCM 使用 `DINGTALK_CARD_TEMPLATE_ID` 创建审批场景的卡片绑定，再使用独立的应用凭证建立连接。Server 显式适配现有审批模板：第一个组件 `reject` 绑定 `firstLable` / `firstId` / `showFirst`，显示「拒绝」并对应 `deny`；第二个组件 `agree` 绑定 `secondLable` / `secondId` / `showSecond`，显示「批准」并对应 `approve`。其中 `Lable` 是现有模板的实际拼写，不能改成 SDK 默认的 `Label`。两个按钮均使用服务端回传，参数名为 `botSdkAction`；参数值可分别绑定 `firstId`、`secondId`，SDK 也可直接通过组件 ID 映射动作。SDK 通用默认组件仍为 `button1`、`button2`，不包含审批模板的专用配置。只用 SDK 接收或发送钉钉文本，以及运行 `--lookup-user-id` 时，无需设置卡片模板。
+RCM 使用 `DINGTALK_CARD_TEMPLATE_ID` 创建审批场景的卡片绑定，再使用独立的应用凭证建立连接。Server 显式适配现有审批模板：第一个组件 `reject` 绑定 `firstLabel` / `firstId` / `showFirst`，显示「拒绝」并对应 `deny`；第二个组件 `agree` 绑定 `secondLabel` / `secondId` / `showSecond`，显示「批准」并对应 `approve`。变量名必须是 `Label` 拼写；误用 `Lable` 会使按钮取不到文案。两个按钮均使用服务端回传，参数名为 `botSdkAction`；参数值可分别绑定 `firstId`、`secondId`，SDK 也可直接通过组件 ID 映射动作。SDK 通用默认组件仍为 `button1`、`button2`，不包含审批模板的专用配置。Bot SDK 本身支持群聊和私聊；RCM Server 在自己的绑定和审批处理器中显式限制私聊，群卡业务应自行调用 SDK。钉钉新增诊断只记录模板字段名及回调校验结果，不记录用户 ID 或卡片正文；收到卡片不代表收到按钮回调。只用 SDK 接收或发送钉钉文本，以及运行 `--lookup-user-id` 时，无需设置卡片模板。
 
 若投递说明为 `spaceId is illegal`，可在上述命令末尾加上 `--lookup-user-id`，到测试机器人私聊只发送本次终端给出的一次性口令。该模式只接收私聊并在终端显示钉钉回调中的员工 ID，不发送卡片，也不修改绑定。
 

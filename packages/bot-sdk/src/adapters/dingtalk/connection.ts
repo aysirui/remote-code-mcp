@@ -1,3 +1,4 @@
+import type { DingtalkCardOptions } from './cards.js'
 import { DWClient, type DWClientDownStream } from 'dingtalk-stream'
 import { BotPlatformError, type BotAdapter } from '../../core/index.js'
 /** 钉钉企业内部应用连接配置。 */
@@ -12,6 +13,8 @@ export interface DingtalkOptions {
   corpId: string
   /** 机器人编码，缺省时使用 Client ID。 */
   robotCode?: string
+  /** 默认卡片渲染配置；业务发卡无需传入平台字段。 */
+  cards?: DingtalkCardOptions
   /** 输出连接、私聊、卡片处理阶段和模板字段名，不含平台正文、凭证或用户身份。 */
   onDiagnostic?: (message: string) => void
 }
@@ -95,6 +98,10 @@ export class DingtalkConnection implements BotAdapter {
   readonly corpId: string
   /** @internal 出站接口使用的机器人编码。 */
   readonly robotCode: string
+  /** 原生平台客户端；统一 API 不覆盖的操作可直接使用，启停仍由 Bot 管理。 */
+  get native() {
+    return this.client
+  }
   private token?: { value: string; expiresAt: number }
 
   /** 初始化连接所需的客户端及凭证。 */

@@ -12,6 +12,6 @@ export function createAdapter(options: WecomOptions) {
   const connection = new WecomConnection(options)
   return Object.assign(connection, {
     [textAdapter]: () => createTextAdapter(connection),
-    [cardAdapter]: () => createCardAdapter(connection),
+    [cardAdapter]: () => createCardAdapter(connection, options.cards),
   })
 }

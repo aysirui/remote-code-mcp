@@ -6,10 +6,10 @@ const adapter = createAdapter({
   id: 'wecom-demo',
   botId: required('WECOM_BOT_ID'),
   secret: required('WECOM_SECRET'),
+  cards: { textNoticeUrl: 'https://github.com/aysirui/remote-code-mcp' },
   onDiagnostic: (message) => console.log(message),
 })
 await runDemo(adapter, {
-  cardOptions: { textNoticeUrl: 'https://github.com/aysirui/remote-code-mcp' },
   details: [
     '通用测试卡片，五分钟后失效。',
     '设备：本地测试设备',

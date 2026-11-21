@@ -265,7 +265,7 @@ test('仅安装文本时正常收发；第三方能力可独立安装并参与�
   await bot.stop()
   assert.equal(status.online(), false)
   assert.deepEqual(lifecycle, ['开始监听', '停止监听'])
-  const cards = bot.install(new CardCapability())
+  const cards = bot.cards
   await bot.start()
   await assert.rejects(cards.send(to, card), UnsupportedCapabilityError)
   await bot.stop()
@@ -416,4 +416,211 @@ test('批量安装失败时可修正工厂后重试，已登记能力不会被�
   assert.throws(() => manager.install(() => new TextCapability()), /重复/)
   first.install(new TextCapability())
   assert.equal(manager.install(() => new CardCapability()).size, 2)
+})
+
+test('统一 API 自动收发、回复原群并支持多个按钮订阅，原生客户端保持具体类型和同一实例', async () => {
+  const state = fake('unified')
+  const native = { platformMethod: () => 'native-result' }
+  const adapter = Object.assign(state.adapter, { native })
+  const bot = createBot({ adapter })
+  assert.equal(bot.native, native)
+  assert.equal(bot.native.platformMethod(), 'native-result')
+  const observed: string[] = []
+  const unsubscribe = bot.cards.onAction(async (event) => {
+    observed.push(event.actionId)
+    assert.equal('deferCardUpdate' in event, false)
+    assert.equal(await event.update({ ...card, buttons: [] }), 'updated')
+  })
+  const unsubscribeOther = bot.cards.onAction(() => {
+    observed.push('other')
+  })
+  bot.messages.onMessage(async (event) => {
+    await event.reply('群回复')
+  })
+  await bot.start()
+  const group = { type: 'group' as const, chatId: 'room' }
+  const ref = await bot.cards.send(group, card)
+  await state.textEvents().message({
+    conversation: { botId: 'unified', ...group },
+    actorId: 'member',
+    messageId: 'message',
+    text: '你好',
+  })
+  await state
+    .cardEvents()
+    .action({ botId: bot.id, cardId: ref.cardId, actorId: 'member', actionId: 'ok' })
+  assert.deepEqual(observed, ['ok', 'other'])
+  unsubscribe()
+  unsubscribeOther()
+  await state
+    .cardEvents()
+    .action({ botId: bot.id, cardId: ref.cardId, actorId: 'member', actionId: 'ignored' })
+  assert.deepEqual(observed, ['ok', 'other'])
+  assert.deepEqual(state.calls, [
+    { userId: 'room', card },
+    { userId: 'room', text: '群回复' },
+    { ref, card: { ...card, buttons: [] } },
+  ])
+  await assert.rejects(
+    bot.messages.send({ botId: 'foreign', userId: 'user' }, '拒绝跨 Bot'),
+    /不属于/,
+  )
+  await bot.stop()
+})
+
+test('统一更新自动使用回调窗口，窗口失效返回 unavailable，不隐式补发文本', async () => {
+  const state = fake('callback')
+  state.adapter[cardKey] = () => ({
+    ...state.cardAdapter,
+    update: undefined,
+    callbackUpdate: true,
+    callbackUpdateWaitMs: 50,
+  })
+  const bot = createBot({ adapter: state.adapter })
+  const finished = { ...card, buttons: [] }
+  bot.cards.onAction(async (event) => {
+    assert.equal(await event.update(finished), 'accepted')
+  })
+  await bot.start()
+  const ref = await bot.cards.send({ userId: 'user' }, card)
+  assert.deepEqual(
+    await state
+      .cardEvents()
+      .action({ botId: bot.id, cardId: ref.cardId, actorId: 'user', actionId: 'ok' }),
+    { card: finished },
+  )
+  assert.equal(await bot.cards.update(ref, finished), 'unavailable')
+  assert.deepEqual(state.calls, [{ userId: 'user', card }])
+  await bot.stop()
+})
+
+test('统一更新不吞掉平台请求失败，也不自动发送第二张卡或文本', async () => {
+  const state = fake('failure')
+  state.cardAdapter.update = async () => {
+    throw new Error('平台拒绝更新')
+  }
+  const bot = createBot({ adapter: state.adapter })
+  await bot.start()
+  const ref = await bot.cards.send('user', card)
+  await assert.rejects(bot.cards.update(ref, card), /平台拒绝更新/)
+  assert.deepEqual(state.calls, [{ userId: 'user', card }])
+  await bot.stop()
+})
+
+test('BotManager 一次订阅汇聚各 Bot 事件，统一发送更新保持实例隔离，取消和重启不重复绑定', async () => {
+  const alpha = fake('alpha')
+  const beta = fake('beta')
+  const manager = new BotManager({
+    bots: [createBot({ adapter: alpha.adapter }), createBot({ adapter: beta.adapter })],
+  })
+  const messages: string[] = []
+  const actions: string[] = []
+  const unsubscribeMessage = manager.messages.onMessage(async (event) => {
+    messages.push(event.conversation.botId)
+    await event.reply('原会话回复')
+  })
+  const unsubscribeAction = manager.cards.onAction(async (event) => {
+    actions.push(event.botId)
+    assert.equal(await event.update({ ...card, buttons: [] }), 'updated')
+  })
+  const otherMessages: string[] = []
+  manager.messages.onMessage((event) => {
+    otherMessages.push(event.conversation.botId)
+  })
+  await assert.rejects(
+    manager.messages.send({ botId: 'alpha', userId: 'user' }, '尚未连接'),
+    /尚未启动/,
+  )
+  await manager.start()
+  const alphaTarget = { botId: 'alpha', userId: 'same-user' }
+  const betaTarget = { botId: 'beta', type: 'group' as const, chatId: 'group' }
+  await manager.messages.send(alphaTarget, '仅 alpha')
+  const alphaRef = await manager.cards.send(alphaTarget, card)
+  const betaRef = await manager.cards.send(betaTarget, card)
+  // 平台可以返回相同卡片 ID；仍按所属 Bot 的原始引用路由，不能混淆。
+  assert.equal(alphaRef.cardId, betaRef.cardId)
+  await alpha
+    .textEvents()
+    .message({ conversation: alphaTarget, actorId: 'same-user', messageId: 'a', text: '文字' })
+  await beta
+    .textEvents()
+    .message({ conversation: betaTarget, actorId: 'member', messageId: 'b', text: '群文字' })
+  await alpha
+    .cardEvents()
+    .action({ botId: 'alpha', cardId: alphaRef.cardId, actorId: 'same-user', actionId: 'ok' })
+  await beta
+    .cardEvents()
+    .action({ botId: 'beta', cardId: betaRef.cardId, actorId: 'member', actionId: 'ok' })
+  await manager.cards.update(alphaRef, card)
+  assert.deepEqual(messages, ['alpha', 'beta'])
+  assert.deepEqual(actions, ['alpha', 'beta'])
+  assert.deepEqual(alpha.calls, [
+    { userId: 'same-user', text: '仅 alpha' },
+    { userId: 'same-user', card },
+    { userId: 'same-user', text: '原会话回复' },
+    { ref: alphaRef, card: { ...card, buttons: [] } },
+    { ref: alphaRef, card },
+  ])
+  assert.deepEqual(beta.calls, [
+    { userId: 'group', card },
+    { userId: 'group', text: '原会话回复' },
+    { ref: betaRef, card: { ...card, buttons: [] } },
+  ])
+  await assert.rejects(manager.cards.update({ ...alphaRef, botId: 'beta' }, card), /不属于/)
+  await assert.rejects(
+    manager.messages.send({ botId: 'missing', userId: 'user' }, '不猜测平台'),
+    /未登记/,
+  )
+  await assert.rejects(manager.cards.send({ botId: 'missing', userId: 'user' }, card), /未登记/)
+  await manager.stop()
+  await manager.start()
+  await alpha.textEvents().message({
+    conversation: alphaTarget,
+    actorId: 'same-user',
+    messageId: 'restart',
+    text: '重启',
+  })
+  assert.deepEqual(messages, ['alpha', 'beta', 'alpha'])
+  unsubscribeMessage()
+  unsubscribeAction()
+  await beta.textEvents().message({
+    conversation: betaTarget,
+    actorId: 'member',
+    messageId: 'unsubscribed',
+    text: '取消后',
+  })
+  await beta
+    .cardEvents()
+    .action({ botId: 'beta', cardId: betaRef.cardId, actorId: 'member', actionId: 'ok' })
+  assert.deepEqual(messages, ['alpha', 'beta', 'alpha'])
+  assert.deepEqual(actions, ['alpha', 'beta'])
+  assert.deepEqual(otherMessages, ['alpha', 'beta', 'alpha', 'beta'])
+  await manager.stop()
+})
+
+test('BotManager 按钮汇聚保留原平台的回调更新窗口', async () => {
+  const state = fake('callback')
+  state.adapter[cardKey] = () => ({
+    ...state.cardAdapter,
+    update: undefined,
+    callbackUpdate: true,
+    callbackUpdateWaitMs: 50,
+  })
+  const manager = new BotManager({ bots: [createBot({ adapter: state.adapter })] })
+  const finished = { ...card, buttons: [] }
+  manager.cards.onAction(async (event) => {
+    assert.equal(event.botId, 'callback')
+    assert.equal(await manager.cards.update(reference, finished), 'accepted')
+  })
+  await manager.start()
+  const reference = await manager.cards.send({ botId: 'callback', userId: 'user' }, card)
+  assert.deepEqual(
+    await state
+      .cardEvents()
+      .action({ botId: 'callback', cardId: reference.cardId, actorId: 'user', actionId: 'ok' }),
+    { card: finished },
+  )
+  assert.equal(await manager.cards.update(reference, finished), 'unavailable')
+  assert.deepEqual(state.calls, [{ userId: 'user', card }])
+  await manager.stop()
 })

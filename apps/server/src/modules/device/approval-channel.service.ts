@@ -8,7 +8,8 @@ import {
 } from '@nestjs/common'
 import { and, eq, gt, isNull, ne } from 'drizzle-orm'
 import { randomBytes, randomUUID } from 'node:crypto'
-import type { ActionEvent, CardOptions, CardClient, CardRef } from '@rcm/bot-sdk/cards'
+import type { CardRef } from '@rcm/bot-sdk/cards'
+import type { CardActionEvent } from '@rcm/bot-sdk/core'
 import type { Bot, BotAdapter, BotManager } from '@rcm/bot-sdk/core'
 import type { ApprovalNotice } from '@rcm/protocol'
 import { env } from '../../config/env'
@@ -43,8 +44,6 @@ interface ChannelConfig {
   appId: string
   /** 供用户打开机器人私聊的分享链接。 */
   botLink?: string
-  /** 该渠道的审批卡片选项。 */
-  cardOptions?: CardOptions
 }
 
 /** 原卡结果标题；审批通过只表示批准了请求。 */
@@ -67,7 +66,6 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
   private stopping = false
   private startup?: Promise<void>
   private manager?: BotManager
-  private cards: ReadonlyMap<string, CardClient> = new Map()
 
   constructor(private readonly store: Store) {}
 
@@ -98,11 +96,15 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
           {
             appId: botId,
             botLink,
-            cardOptions: { textNoticeUrl: env.websiteUrl },
           },
           async () => {
             const { createAdapter } = await import('@rcm/bot-sdk/adapters/wecom')
-            return createAdapter({ id: 'wecom', botId, secret })
+            return createAdapter({
+              id: 'wecom',
+              botId,
+              secret,
+              cards: { textNoticeUrl: env.websiteUrl },
+            })
           },
         ),
       )
@@ -117,24 +119,6 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
           {
             appId: hash(JSON.stringify([corpId, clientId, robotCode])),
             botLink,
-            cardOptions: {
-              templateId: cardTemplateId,
-              // 与已发布模板的 Label 变量及 reject、agree 组件保持一致，业务动作由调用方提供。
-              buttonSlots: [
-                {
-                  componentId: 'reject',
-                  labelVariable: 'firstLabel',
-                  visibleVariable: 'showFirst',
-                  actionIdVariable: 'firstId',
-                },
-                {
-                  componentId: 'agree',
-                  labelVariable: 'secondLabel',
-                  visibleVariable: 'showSecond',
-                  actionIdVariable: 'secondId',
-                },
-              ],
-            },
           },
           async () => {
             const { createAdapter } = await import('@rcm/bot-sdk/adapters/dingtalk')
@@ -144,6 +128,24 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
               clientSecret,
               corpId,
               robotCode,
+              cards: {
+                templateId: cardTemplateId,
+                // 与已发布模板的 Label 变量及 reject、agree 组件保持一致，业务动作由调用方提供。
+                buttonSlots: [
+                  {
+                    componentId: 'reject',
+                    labelVariable: 'firstLabel',
+                    visibleVariable: 'showFirst',
+                    actionIdVariable: 'firstId',
+                  },
+                  {
+                    componentId: 'agree',
+                    labelVariable: 'secondLabel',
+                    visibleVariable: 'showSecond',
+                    actionIdVariable: 'secondId',
+                  },
+                ],
+              },
               // 卡片适配器只提供字段名和校验结果，供排查真实模板及回调问题。
               onDiagnostic: (message) => this.logger.debug(`dingtalk：${message}`),
             })
@@ -182,19 +184,13 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
     }
   }
 
-  /** 为已创建的机器人安装通用审批能力，随后统一启停。 */
+  /** 为各 Bot 的统一消息与卡片 API 注册审批业务处理，随后统一启停。 */
   private async startBots(
     core: Promise<typeof import('@rcm/bot-sdk/core')>,
     pendingBots: readonly Promise<Bot | undefined>[],
   ) {
     try {
-      const [{ BotManager }, { TextCapability }, { CardCapability }, candidates] =
-        await Promise.all([
-          core,
-          import('@rcm/bot-sdk/text'),
-          import('@rcm/bot-sdk/cards'),
-          Promise.all(pendingBots),
-        ])
+      const [{ BotManager }, candidates] = await Promise.all([core, Promise.all(pendingBots)])
       const bots = candidates.filter((bot) => bot !== undefined)
       if (this.stopping || !bots.length) return
 
@@ -206,38 +202,26 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
           else this.logger.warn(`${botId} 审批机器人未能启动，将重试`)
         },
       })
-      const textsByBot = manager.install(() => {
-        const texts = new TextCapability()
-        texts.onMessage(async ({ conversation, text }) => {
-          // SDK 支持群消息；RCM 账号绑定只允许私聊，防止群内暴露绑定确认码。
-          if (conversation.type === 'group') return
-          const channel = conversation.botId as ApprovalChannel
-          const config = this.channels.get(channel)
-          const code = /^绑定\s+([a-f0-9]{32})$/.exec(text.trim())?.[1]
-          if (!config || !code) return
-          const confirmation = await this.receiveCode(
-            channel,
-            config.appId,
-            code,
-            conversation.userId,
+      manager.messages.onMessage(async ({ conversation, text }) => {
+        // SDK 支持群消息；RCM 账号绑定只允许私聊，防止群内暴露绑定确认码。
+        if (conversation.type === 'group') return
+        const channel = conversation.botId as ApprovalChannel
+        const config = this.channels.get(channel)
+        const code = /^绑定\s+([a-f0-9]{32})$/.exec(text.trim())?.[1]
+        if (!config || !code) return
+        const confirmation = await this.receiveCode(
+          channel,
+          config.appId,
+          code,
+          conversation.userId,
+        )
+        if (confirmation)
+          await manager.messages.send(
+            conversation,
+            `请在发起绑定的 RCM 控制台输入确认码：${confirmation}。请勿把确认码发给他人。`,
           )
-          if (confirmation)
-            await texts.send(
-              conversation,
-              `请在发起绑定的 RCM 控制台输入确认码：${confirmation}。请勿把确认码发给他人。`,
-            )
-        })
-        return texts
       })
-      this.cards = manager.install((bot) => {
-        // 结算文本使用同一个机器人的文本能力。
-        const texts = textsByBot.get(bot.id)!
-        const cards = new CardCapability({
-          sendText: (to, text) => texts.send(to, text),
-        })
-        cards.onAction((event) => this.handleAction(event))
-        return cards
-      })
+      manager.cards.onAction((event) => this.handleAction(event))
       this.manager = manager
       await manager.start()
     } catch {
@@ -245,15 +229,14 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
     }
   }
 
-  /** 校验点击者与动作后转发决定；通过 SDK 保留可用的回调更新窗口。 */
+  /** 校验私聊、点击者与动作后转发决定；平台更新窗口由 SDK 自动管理。 */
   private async handleAction({
     botId: channel,
     cardId,
     actorId,
     actionId,
-    deferCardUpdate,
     conversation,
-  }: ActionEvent): Promise<void> {
+  }: CardActionEvent): Promise<void> {
     // 审批渠道使用私发原卡；SDK 只提供会话上下文，审批是否允许群聊由本业务明确决定。
     if (conversation?.type === 'group') return
     this.logger.debug(`${channel} 收到审批按钮事件`)
@@ -269,14 +252,8 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
       this.logger.debug(`${channel} 审批按钮身份或操作校验失败`)
       return
     }
-    const cancelCardUpdate = deferCardUpdate?.()
-    let forwarded = false
-    try {
-      forwarded = await delivery.answer(actionId === 'approve')
-      this.logger.debug(`${channel} ${forwarded ? '已向 Runtime 转发审批决定' : '审批决定未转发'}`)
-    } finally {
-      if (!forwarded) cancelCardUpdate?.()
-    }
+    const forwarded = await delivery.answer(actionId === 'approve')
+    this.logger.debug(`${channel} ${forwarded ? '已向 Runtime 转发审批决定' : '审批决定未转发'}`)
   }
 
   /** 只列出配置齐全的渠道，不暴露平台身份。 */
@@ -466,7 +443,7 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
     deviceName: string,
     answer: Delivery['answer'],
   ) {
-    const cards = this.cards.get(recipient.channel)
+    const cards = this.manager?.cards
     if (!cards || notice.expiresAt <= Date.now() || !(await this.isCurrent(recipient))) return
     const reference = `审批编号 ${notice.approvalId.slice(0, 8)}`
     const body = `${reference}\n设备：${deviceName.replace(/[\p{Cc}\p{Cf}\s]+/gu, ' ').trim() || '未命名设备'}\n${notice.summary}`
@@ -474,14 +451,13 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
     const approve = { id: 'approve', label: '批准', style: 'primary' } as const
     const deny = { id: 'deny', label: '拒绝', style: 'secondary' } as const
     const ref = await cards.send(
-      recipient.platformUserId,
+      { botId: recipient.channel, userId: recipient.platformUserId },
       // 所有审批渠道统一左侧拒绝、右侧批准，按钮文案与动作保持同序。
       {
         title,
         body,
         buttons: [deny, approve],
       },
-      this.channels.get(recipient.channel)?.cardOptions,
     )
     this.logger.debug(`${recipient.channel} 审批卡片已投递`)
     this.deliveries.set(recipient.channel + ':' + ref.cardId, {
@@ -499,17 +475,16 @@ export class ApprovalChannelService implements OnApplicationBootstrap, OnApplica
     const key = ref.botId + ':' + ref.cardId
     const delivery = this.deliveries.get(key)
     this.deliveries.delete(key)
-    const cards = this.cards.get(ref.botId)
+    const cards = this.manager?.cards
     if (!cards || !delivery) return
     const title = messages[status]
-    await cards.settle(
-      ref,
-      { title, body: delivery.body, buttons: [] },
-      {
-        resultText: async () => {
-          if (await this.isCurrent(delivery.recipient)) return `${title}\n${delivery.reference}`
-        },
-      },
-    )
+    const result = await cards.update(ref, { title, body: delivery.body, buttons: [] })
+    // 平台无法更新原卡时，业务核验当前绑定后再发送结果通知；SDK 不自行决定补发策略。
+    if (result === 'unavailable' && (await this.isCurrent(delivery.recipient))) {
+      await this.manager?.messages.send(
+        { botId: ref.botId, userId: delivery.recipient.platformUserId },
+        `${title}\n${delivery.reference}`,
+      )
+    }
   }
 }

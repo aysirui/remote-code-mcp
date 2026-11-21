@@ -139,10 +139,11 @@ function renderCard(card: Card, config: PreparedOptions) {
   return { cardData: { cardParamMap: Object.fromEntries(params) }, buttonActions }
 }
 
-/** 为该连接创建卡片实现；诊断仅报告字段映射和处理阶段，不输出身份或卡片内容。 */
+/** 为连接创建卡片实现并保存默认模板映射；诊断不输出身份或卡片内容。 */
 export function createCardAdapter(
   connection: DingtalkConnection,
   diagnose?: (message: string) => void,
+  defaults?: DingtalkCardOptions,
 ): CardAdapter {
   const { id, client, corpId, robotCode } = connection
   let unsubscribe: (() => void) | undefined
@@ -252,7 +253,8 @@ export function createCardAdapter(
       unsubscribe = undefined
     },
     callbackUpdate: true,
-    prepareOptions,
+    // 常规 API 使用连接默认配置；底层扩展可覆盖本次投放，更新沿用原配置。
+    prepareOptions: (options) => prepareOptions(options ?? defaults),
     async send(to, card, binding, register) {
       const config = binding as PreparedOptions
       const outTrackId = `rcm_${randomUUID()}`

@@ -28,7 +28,7 @@ export class CardCapability extends BotCapability<CardAdapter> implements CardCl
   private readonly issued = new WeakMap<CardRef, { binding?: CardOptions }>()
   private readonly cardsById = new Map<
     string,
-    { binding?: CardOptions; conversation: Conversation }
+    { binding?: CardOptions; conversation: Conversation; ref: CardRef }
   >()
   private readonly pending = new Map<string, (response?: ActionResponse) => boolean>()
   private handler?: Parameters<CardClient['onAction']>[0]
@@ -63,23 +63,32 @@ export class CardCapability extends BotCapability<CardAdapter> implements CardCl
     const { botId } = conversation
     const adapter = this.requireAdapter(botId, 'cards.send')
     let registered: string | undefined
+    let reference: CardRef | undefined
     try {
       const binding = adapter.prepareOptions ? adapter.prepareOptions(options) : options
       const register = (cardId: string) => {
         registered = cardId
-        this.cardsById.set(cardId, { binding, conversation })
+        reference = Object.freeze({ ...conversation, cardId })
+        // 已知投放 ID 时立即登记引用，使发卡请求完成前到达的点击也能定位并更新原卡。
+        this.issued.set(reference, { binding })
+        this.cardsById.set(cardId, { binding, conversation, ref: reference })
         if (this.cardsById.size > 10_000) this.cardsById.delete(this.cardsById.keys().next().value!)
       }
       const cardId = await adapter.send(conversation, card, binding, register)
       if (!registered) register(cardId)
-      const ref = Object.freeze({ ...conversation, cardId })
-      this.issued.set(ref, { binding })
-      return ref
+      return reference!
     } catch (error) {
       if (registered) this.cardsById.delete(registered)
       this.context.error(error instanceof BotPlatformError ? error : new Error('卡片发送失败'))
       throw error
     }
+  }
+
+  /** 读取本进程发卡引用，供统一按钮事件定位原卡；不凭点击者推断收件人。 */
+  reference(cardId: string): CardRef {
+    const stored = this.cardsById.get(cardId)
+    if (!stored) throw new Error('当前进程没有该卡片的发送记录')
+    return stored.ref
   }
 
   /** 用原卡绑定主动更新，拒绝其他能力实例的引用。 */

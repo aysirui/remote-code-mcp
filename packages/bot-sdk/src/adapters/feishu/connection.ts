@@ -19,6 +19,10 @@ export class FeishuConnection implements BotAdapter {
   readonly id: string
   /** @internal SDK 客户端，由已安装能力使用。 */
   readonly channel: ReturnType<typeof createLarkChannel>
+  /** 原生平台客户端；统一 API 不覆盖的操作可直接使用，启停仍由 Bot 管理。 */
+  get native() {
+    return this.channel
+  }
   private unsubscribe?: () => void
 
   /** 初始化连接所需的客户端及凭证。 */

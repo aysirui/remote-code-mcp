@@ -9,93 +9,91 @@ import {
   type ApprovalRecipient,
 } from '../src/modules/device/approval-channel.service'
 
-test.each(['feishu', 'dingtalk', 'wecom'] as const)(
-  '结算 %s 使用同一张卡，仅提供结算文本',
-  async (channel) => {
-    const service = new ApprovalChannelService({} as never)
-    const ref = { botId: channel, cardId: 'test-card', userId: 'test-user' }
-    const cards = {
-      send: jest.fn().mockResolvedValue(ref),
-      settle: jest.fn().mockResolvedValue(undefined),
-    }
-    const cardOptions = {
-      feishu: undefined,
-      wecom: undefined,
-      dingtalk: { templateId: 'test-template' },
-    }[channel]
-    service['channels'].set(channel, { appId: 'test-app', cardOptions })
-    jest.replaceProperty(
-      service as unknown as { cards: Map<string, typeof cards> },
-      'cards',
-      new Map([[channel, cards]]),
-    )
-    jest.spyOn(service, 'isCurrent').mockResolvedValue(true)
-    const recipient: ApprovalRecipient = {
-      channel,
-      userId: 'owner',
-      appId: 'test-app',
-      platformUserId: 'test-user',
-      revision: 'test-revision',
-      enabled: true,
-    }
-    const notice: ApprovalNotice = {
-      kind: 'approval-notice',
-      approvalId: randomUUID(),
-      requestId: randomUUID(),
-      expiresAt: Date.now() + 60_000,
-      summary: '工作区：项目\n完整命令：node --version',
-    }
-    await service.deliver(recipient, notice, '测试电脑', async () => true)
-    expect(cards.send).toHaveBeenCalledWith(
-      recipient.platformUserId,
-      expect.any(Object),
-      cardOptions,
-    )
-    expect(cards.send.mock.calls[0][1].buttons.map(({ id }: { id: string }) => id)).toEqual([
-      'deny',
-      'approve',
-    ])
-    const original = cards.send.mock.calls[0][1].body
-    const deferCardUpdate = jest.fn(() => jest.fn())
-    await service['handleAction']({
-      botId: channel,
-      cardId: ref.cardId,
-      actorId: 'other-user',
-      actionId: 'approve',
-      deferCardUpdate,
-    })
-    expect(deferCardUpdate).not.toHaveBeenCalled()
-    // SDK 允许群卡回调，但 RCM 审批业务只接受私发场景，即使点击者身份相同也拒绝群事件。
-    await service['handleAction']({
-      botId: channel,
-      cardId: ref.cardId,
-      actorId: recipient.platformUserId,
-      actionId: 'approve',
-      deferCardUpdate,
-      conversation: { botId: channel, type: 'group', chatId: 'group-room' },
-    })
-    expect(deferCardUpdate).not.toHaveBeenCalled()
-    await service['handleAction']({
-      botId: channel,
-      cardId: ref.cardId,
-      actorId: recipient.platformUserId,
-      actionId: 'approve',
-      deferCardUpdate,
-    })
-    expect(deferCardUpdate).toHaveBeenCalledTimes(1)
-    await service.close(ref, 'approved')
-    expect(cards.settle).toHaveBeenCalledWith(
-      ref,
-      { title: '审批已通过', body: original, buttons: [] },
-      { resultText: expect.any(Function) },
-    )
-    const { resultText } = cards.settle.mock.calls[0][2]
-    await expect(resultText()).resolves.toBe(
+test.each([
+  ['feishu', 'updated'],
+  ['dingtalk', 'updated'],
+  ['wecom', 'accepted'],
+  ['wecom', 'unavailable'],
+] as const)('结算 %s（%s）使用统一更新，仅在不可更新时补发文字', async (channel, result) => {
+  const service = new ApprovalChannelService({} as never)
+  const ref = { botId: channel, cardId: 'test-card', userId: 'test-user' }
+  const cards = {
+    send: jest.fn().mockResolvedValue(ref),
+    update: jest.fn().mockResolvedValue(result),
+  }
+  service['channels'].set(channel, { appId: 'test-app' })
+  const sendText = jest.fn().mockResolvedValue(undefined)
+  Object.assign(service, { manager: { cards, messages: { send: sendText } } })
+  jest.spyOn(service, 'isCurrent').mockResolvedValue(true)
+  const recipient: ApprovalRecipient = {
+    channel,
+    userId: 'owner',
+    appId: 'test-app',
+    platformUserId: 'test-user',
+    revision: 'test-revision',
+    enabled: true,
+  }
+  const notice: ApprovalNotice = {
+    kind: 'approval-notice',
+    approvalId: randomUUID(),
+    requestId: randomUUID(),
+    expiresAt: Date.now() + 60_000,
+    summary: '工作区：项目\n完整命令：node --version',
+  }
+  const answer = jest.fn(async () => true)
+  await service.deliver(recipient, notice, '测试电脑', answer)
+  expect(cards.send).toHaveBeenCalledWith(
+    { botId: channel, userId: recipient.platformUserId },
+    expect.any(Object),
+  )
+  expect(cards.send.mock.calls[0][1].buttons.map(({ id }: { id: string }) => id)).toEqual([
+    'deny',
+    'approve',
+  ])
+  const original = cards.send.mock.calls[0][1].body
+  const update = jest.fn().mockResolvedValue('accepted')
+  await service['handleAction']({
+    botId: channel,
+    cardId: ref.cardId,
+    actorId: 'other-user',
+    actionId: 'approve',
+    update,
+  })
+  expect(answer).not.toHaveBeenCalled()
+  // SDK 允许群卡回调，但 RCM 审批业务只接受私发场景，即使点击者身份相同也拒绝群事件。
+  await service['handleAction']({
+    botId: channel,
+    cardId: ref.cardId,
+    actorId: recipient.platformUserId,
+    actionId: 'approve',
+    update,
+    conversation: { botId: channel, type: 'group', chatId: 'group-room' },
+  })
+  expect(answer).not.toHaveBeenCalled()
+  await service['handleAction']({
+    botId: channel,
+    cardId: ref.cardId,
+    actorId: recipient.platformUserId,
+    actionId: 'approve',
+    update,
+  })
+  expect(answer).toHaveBeenCalledWith(true)
+  await service.close(ref, 'approved')
+  expect(cards.update).toHaveBeenCalledWith(ref, {
+    title: '审批已通过',
+    body: original,
+    buttons: [],
+  })
+  if (result === 'unavailable') {
+    expect(sendText).toHaveBeenCalledWith(
+      { botId: channel, userId: recipient.platformUserId },
       `审批已通过\n审批编号 ${notice.approvalId.slice(0, 8)}`,
     )
-    expect(cards.send).toHaveBeenCalledTimes(1)
-  },
-)
+  } else {
+    expect(sendText).not.toHaveBeenCalled()
+  }
+  expect(cards.send).toHaveBeenCalledTimes(1)
+})
 
 /** 模拟设备侧事件，不连接真实飞书或数据库。 */
 test('多渠道独立投递，绑定变更后旧卡片失效，审批结果同步到所有成功投递的卡片', async () => {

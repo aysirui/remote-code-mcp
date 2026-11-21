@@ -6,13 +6,12 @@ import {
   type DingtalkCardOptions,
 } from '../adapters/dingtalk/index.js'
 import { createBot, type BotAdapter } from '../core/index.js'
-import { TextCapability } from '../core/capabilities/text/index.js'
 import { required, runDemo } from './demo.js'
 
 /** 等待用户私聊发送一次性口令，从该组织的机器人回调读取员工 ID。 */
 async function lookupUserId(adapter: BotAdapter): Promise<void> {
   const bot = createBot({ adapter })
-  const textCapability = bot.install(new TextCapability())
+  const textCapability = bot.messages
   const code = randomBytes(8).toString('hex')
   try {
     await bot.start()
@@ -49,6 +48,12 @@ async function lookupUserId(adapter: BotAdapter): Promise<void> {
 }
 
 const lookup = process.argv.includes('--lookup-user-id')
+// 自定义模板可配置组件及变量映射；默认约定不包含审批业务动作。
+const componentIds = (process.env.DINGTALK_DEMO_BUTTON_IDS ?? 'button1,button2')
+  .split(',')
+  .map((id) => id.trim())
+if (componentIds.length !== 2 || componentIds.some((id) => !id))
+  throw new Error('DINGTALK_DEMO_BUTTON_IDS 需要两个非空组件 ID')
 const adapter = createAdapter({
   id: 'dingtalk-demo',
   clientId: required('DINGTALK_CLIENT_ID'),
@@ -56,42 +61,36 @@ const adapter = createAdapter({
   corpId: required('DINGTALK_CORP_ID'),
   robotCode: process.env.DINGTALK_ROBOT_CODE,
   onDiagnostic: (message) => console.log(message),
+  cards: lookup
+    ? undefined
+    : ({
+        templateId: required('DINGTALK_CARD_TEMPLATE_ID'),
+        buttonSlots: [
+          {
+            componentId: componentIds[0],
+            labelVariable: 'firstLabel',
+            visibleVariable: 'showFirst',
+            actionIdVariable: 'firstId',
+          },
+          {
+            componentId: componentIds[1],
+            labelVariable: 'secondLabel',
+            visibleVariable: 'showSecond',
+            actionIdVariable: 'secondId',
+          },
+        ],
+        onDeliveryFailureDetail:
+          process.env.DINGTALK_DEMO_DEBUG === '1'
+            ? (message) => console.error('钉钉投递说明', JSON.stringify(message.slice(0, 500)))
+            : undefined,
+      } satisfies DingtalkCardOptions | undefined),
 })
 if (lookup) await lookupUserId(adapter)
-else {
-  // 模板组件 ID 可自定义；变量名沿用通用模板，避免把审批业务写入 SDK 演示。
-  const componentIds = (process.env.DINGTALK_DEMO_BUTTON_IDS ?? 'button1,button2')
-    .split(',')
-    .map((id) => id.trim())
-  if (componentIds.length !== 2 || componentIds.some((id) => !id))
-    throw new Error('DINGTALK_DEMO_BUTTON_IDS 需要两个逗号分隔的模板组件 ID')
+else
   await runDemo(adapter, {
-    cardOptions: {
-      templateId: required('DINGTALK_CARD_TEMPLATE_ID'),
-      buttonSlots: [
-        {
-          componentId: componentIds[0],
-          labelVariable: 'firstLabel',
-          visibleVariable: 'showFirst',
-          actionIdVariable: 'firstId',
-        },
-        {
-          componentId: componentIds[1],
-          labelVariable: 'secondLabel',
-          visibleVariable: 'showSecond',
-          actionIdVariable: 'secondId',
-        },
-      ],
-      onDeliveryFailureDetail:
-        process.env.DINGTALK_DEMO_DEBUG === '1'
-          ? // 仅在本地模拟卡片中打印平台单条拒投说明。
-            (message) => console.error('钉钉投递说明', JSON.stringify(message.slice(0, 500)))
-          : undefined,
-    } satisfies DingtalkCardOptions,
     onStartupError(error) {
       if (!(error instanceof DingtalkApiError)) return false
       console.error(error.message)
       return true
     },
   })
-}

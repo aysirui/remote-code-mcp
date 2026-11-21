@@ -1,6 +1,5 @@
 import { BotPlatformError, createBot, type BotAdapter, type Conversation } from '../core/index.js'
-import { defaultCard, type Card, type CardOptions } from '../core/capabilities/cards/index.js'
-import { TextCapability } from '../core/capabilities/text/index.js'
+import { defaultCard, type Card } from '../core/capabilities/cards/index.js'
 import { demoSelection } from './selection.js'
 
 /** 读取必填环境变量；错误只包含变量名。 */
@@ -14,8 +13,6 @@ export function required(name: string): string {
 export async function runDemo(
   adapter: BotAdapter,
   options?: {
-    /** 此演示使用的卡片配置。 */
-    cardOptions?: CardOptions
     /** 演示卡片的多行详情。 */
     details?: string
     /** 只打印可公开的启动错误；返回是否已处理。 */
@@ -35,12 +32,8 @@ export async function runDemo(
       console.error(`演示失败：${error.message}`)
     },
   })
-  const { CardCapability } = await import('../core/capabilities/cards/index.js')
-  const text = bot.install(new TextCapability())
-  const cardCapability = bot.install(new CardCapability())
-  const cards = options?.cardOptions
-    ? cardCapability.withOptions(options.cardOptions)
-    : cardCapability
+  const text = bot.messages
+  const cards = bot.cards
   const card: Card = {
     ...defaultCard,
     body: options?.details ?? defaultCard.body,
@@ -78,17 +71,16 @@ export async function runDemo(
         body: options?.details ? `状态：${status}\n\n${card.body}` : status,
         buttons: [],
       }
-      event.deferCardUpdate?.()
-      const settlement = await cards.settle(ref, updated)
+      const settlement = await event.update(updated)
       console.log(
         settlement === 'updated'
           ? '平台已确认主动更新原卡。'
-          : settlement === 'callback'
+          : settlement === 'accepted'
             ? '结果已交付点击回调，等待平台更新回执。'
             : '原卡更新不可用，请检查平台回调窗口。',
       )
     })
-    console.log('通用演示卡已发送；可在私聊发送文字测试回声，按 Ctrl+C 停止。')
+    console.log('通用演示卡已发送；可在目标会话发送文字测试回声，按 Ctrl+C 停止。')
   } catch (error) {
     await bot.stop().catch(() => undefined)
     // 仅由平台入口提取可公开的错误，避免 Node 默认打印原始异常链。

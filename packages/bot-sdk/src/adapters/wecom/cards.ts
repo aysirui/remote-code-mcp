@@ -71,8 +71,11 @@ function renderCard(card: Card, taskId: string, options?: WecomCardOptions): Tem
   }
 }
 
-/** 为该连接创建独立的卡片实现。 */
-export function createCardAdapter(connection: WecomConnection): CardAdapter {
+/** 为连接创建卡片实现，使用默认通知链接及更新范围。 */
+export function createCardAdapter(
+  connection: WecomConnection,
+  defaults?: WecomCardOptions,
+): CardAdapter {
   const { id, botId, client, onDiagnostic } = connection
   let listener: WSClientEventMap['event.template_card_event'] | undefined
 
@@ -126,7 +129,8 @@ export function createCardAdapter(connection: WecomConnection): CardAdapter {
       listener = undefined
     },
     callbackUpdate: true,
-    prepareOptions,
+    // 常规 API 使用连接默认配置；底层扩展可覆盖本次投放，更新沿用原配置。
+    prepareOptions: (options) => prepareOptions(options ?? defaults),
     // 企微要求五秒内提交更新，保留 2.5 秒等待业务结果，其余时间用于发送回执。
     callbackUpdateWaitMs: 2_500,
     async send(to, card, binding, register) {

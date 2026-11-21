@@ -1,5 +1,18 @@
-import type { Bot } from './bot.js'
-import type { Capability } from './contracts.js'
+import type { Bot, MessagesApi, CardsApi } from './bot.js'
+import type { Capability, Conversation } from './contracts.js'
+import type { Card, CardRef } from './capabilities/cards/contracts.js'
+
+/** 管理器统一文字入口；发送目标必须指定 botId，避免同名用户跨平台误投。 */
+export interface ManagedMessagesApi extends Omit<MessagesApi, 'send'> {
+  /** 按会话中的 botId 向对应机器人发送文字，回复可直接使用入站会话。 */
+  send(to: Conversation, text: string): Promise<void>
+}
+
+/** 管理器统一卡片入口；事件更新和原卡引用保持所属 Bot 的配置与权限边界。 */
+export interface ManagedCardsApi extends Omit<CardsApi, 'send'> {
+  /** 按目标 botId 发卡；不会隐式广播给其他机器人。 */
+  send(to: Conversation, card: Card): Promise<CardRef>
+}
 
 /** 多机器人进程的启停配置。 */
 export interface BotManagerOptions {
@@ -11,8 +24,32 @@ export interface BotManagerOptions {
   onConnectionState?: (botId: string, connected: boolean) => void
 }
 
-/** 按名字查找机器人，批量安装能力并管理启停及重试。 */
+/** 统一机器人路由、消息与卡片订阅、启停和重试；业务无需遍历实例绑定事件。 */
 export class BotManager {
+  /** 汇聚所有机器人的文字事件，并根据目标会话路由出站文字。 */
+  readonly messages: ManagedMessagesApi = {
+    send: async (to, text) => this.requireBot(to.botId).messages.send(to, text),
+    onMessage: (handler) => {
+      // 每次订阅各绑定一次；取消只影响本处理器，停止和重启不会重复注册。
+      const subscriptions = [...this.bots.values()].map((bot) => bot.messages.onMessage(handler))
+      return () => {
+        for (const unsubscribe of subscriptions) unsubscribe()
+      }
+    },
+  }
+
+  /** 汇聚所有机器人的按钮事件，并按目标或原卡引用路由发送与更新。 */
+  readonly cards: ManagedCardsApi = {
+    send: async (to, card) => this.requireBot(to.botId).cards.send(to, card),
+    update: async (ref, card) => this.requireBot(ref.botId).cards.update(ref, card),
+    onAction: (handler) => {
+      const subscriptions = [...this.bots.values()].map((bot) => bot.cards.onAction(handler))
+      return () => {
+        for (const unsubscribe of subscriptions) unsubscribe()
+      }
+    },
+  }
+
   private readonly bots = new Map<string, Bot>()
   private readonly timers = new Map<string, NodeJS.Timeout>()
   private readonly attempts = new Map<string, Promise<void>>()
@@ -20,7 +57,7 @@ export class BotManager {
   private transitions = 0
   private running = false
 
-  /** 接收已创建的机器人，各机器人可安装不同能力。 */
+  /** 接收已创建的机器人，统一 API 与单 Bot API 共用同一连接和事件上下文。 */
   constructor(private readonly options: BotManagerOptions) {
     const { retryAfterMs } = options
     if (retryAfterMs !== undefined && (!Number.isFinite(retryAfterMs) || retryAfterMs < 1))
@@ -34,6 +71,13 @@ export class BotManager {
   /** 按 ID 查找已经登记的机器人。 */
   get(botId: string): Bot | undefined {
     return this.bots.get(botId)
+  }
+
+  /** 出站目标必须属于本管理器；未知机器人直接报错，不猜测默认平台。 */
+  private requireBot(botId: string): Bot {
+    const bot = this.bots.get(botId)
+    if (!bot) throw new Error(`机器人未登记：${botId}`)
+    return bot
   }
 
   /** 在停止状态为每个 Bot 创建并安装独立能力，返回按 Bot ID 索引的实例。 */

@@ -20,3 +20,5 @@ coverage/
 output/
 # VitePress 本地开发缓存；dist/ 已由上方规则忽略。
 docs/.vitepress/cache/
+# Astro 自动生成的类型和内容索引。
+.astro/

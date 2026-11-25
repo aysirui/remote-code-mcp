@@ -10,6 +10,8 @@ export default tseslint.config(
     ignores: [
       '**/node_modules/**',
       '**/dist/**',
+      // Astro 自动生成的类型和内容索引，不属于项目源码。
+      '**/.astro/**',
       // output 是本地导出目录，不属于当前工作区源码。
       'output/**',
       // VitePress 开发缓存是自动生成的编译结果。

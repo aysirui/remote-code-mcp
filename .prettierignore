@@ -6,6 +6,7 @@ output
 .generated
 .git
 docs/.vitepress/cache
+**/.astro/
 
 pnpm-lock.yaml
 

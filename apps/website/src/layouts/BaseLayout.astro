@@ -2,12 +2,15 @@
 import '../styles/global.css'
 
 interface Props {
+  /** 页面标题，同时用于浏览器标签和链接分享。 */
   title: string
+  /** 搜索摘要和链接分享中使用的页面说明。 */
   description: string
 }
 const { title, description } = Astro.props
-const siteUrl = import.meta.env.PUBLIC_SITE_URL || Astro.site?.origin || 'https://example.com'
-const canonical = new URL(Astro.url.pathname, siteUrl).toString()
+// 规范地址以构建时配置的公开域名为准，忽略访问地址中的查询参数。
+const canonical = Astro.site && new URL(Astro.url.pathname, Astro.site).href
+const shareImage = Astro.site && new URL('/logo-square.png', Astro.site).href
 ---
 <!doctype html>
 <html lang="zh-CN">
@@ -18,12 +21,17 @@ const canonical = new URL(Astro.url.pathname, siteUrl).toString()
     <meta name="description" content={description} />
     <meta name="baidu-site-verification" content="codeva-dF5CUWOvks" />
     <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Remote Code MCP" />
+    <meta property="og:locale" content="zh_CN" />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
-    <meta property="og:url" content={canonical} />
-    <link rel="canonical" href={canonical} />
+    {canonical && <meta property="og:url" content={canonical} />}
+    {shareImage && <meta property="og:image" content={shareImage} />}
+    {shareImage && <meta property="og:image:alt" content="Remote Code MCP 标志" />}
+    {canonical && <link rel="canonical" href={canonical} />}
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>{title}</title>
+    <slot name="head" />
   </head>
   <body>
     <slot />

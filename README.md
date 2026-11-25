@@ -1,8 +1,8 @@
 # Remote Code MCP
 
-让 MCP 客户端在你授权的范围内，通过远程 Server 访问本机代码工作区。
+Remote Code MCP（RCM）是开源、自托管的通用 AI MCP 远程编码工具。支持远程 MCP 的客户端可以在已授权的工作区读写文件、查看 Git 差异和运行开发命令。各客户端的配置入口与验证方法见 [AI 工具接入指南](docs/connect-clients.md)。
 
-Remote Code MCP（RCM）是一个可自行部署的 TypeScript monorepo，包含云端 Server、产品官网、在线文档、Web Console、本机 Runtime 和共享协议。Runtime 主动建立出站 WebSocket 连接，无需将本机工作区的服务端口暴露到公网。
+项目采用 TypeScript monorepo，包含云端 Server、产品官网、在线文档、Web Console、本机 Runtime 和共享协议。Runtime 主动建立出站 WebSocket 连接，无需将本机工作区的服务端口暴露到公网。
 
 **项目处于早期开发阶段。** 支持源码构建和单 Server 实例的 Docker Compose 部署。部署前请按 [部署指南](docs/deployment.md) 验证目标环境及 MCP 客户端兼容性，并了解 [安全边界与已知限制](SECURITY.md)。
 
@@ -45,7 +45,7 @@ Server 验证用户、设备及工作区归属，Runtime 再按本机授权核�
 
 ## 快速开始
 
-需要 Node.js 22+、pnpm 10.15.0（见 `packageManager`）、Git、MySQL 8.4，以及用于注册激活邮件的 SMTP 服务。Docker Compose 配置参考 [`docker/env.example`](docker/env.example)，部署步骤见 [部署文档](docs/deployment.md)。
+需要 Node.js 22+、pnpm 10.15.0（见 `packageManager`）、Git、MySQL 8.4，以及用于注册激活邮件的 SMTP 服务。Docker Compose 配置参考 [`docker/.env.example`](docker/.env.example)，部署步骤见 [部署文档](docs/deployment.md)。
 
 以下命令从仓库根目录执行，环境文件复制示例使用 PowerShell：
 

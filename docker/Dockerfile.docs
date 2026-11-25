@@ -11,6 +11,12 @@ COPY apps/website/package.json apps/website/package.json
 COPY packages/protocol/package.json packages/protocol/package.json
 RUN pnpm --filter . install --frozen-lockfile
 COPY docs docs
+# 与官网共用公开域名，用于生成规范地址及文档 sitemap。
+ARG PUBLIC_SITE_URL
+ENV PUBLIC_SITE_URL=${PUBLIC_SITE_URL}
+# 文档导航使用控制台公开地址，允许控制台独立部署。
+ARG PUBLIC_CONSOLE_URL
+ENV PUBLIC_CONSOLE_URL=${PUBLIC_CONSOLE_URL}
 RUN pnpm docs:build
 
 # 第二阶段：文档以 /docs/ 为公共路径，独立提供静态文件。

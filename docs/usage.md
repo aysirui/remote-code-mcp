@@ -1,6 +1,13 @@
-# 使用指南
+---
+title: Runtime 使用指南
+description: 配置和配对 Remote Code MCP Runtime，授权本地工作区、登记开发命令、切换服务器和管理 MCP 客户端的 OAuth 授权。
+---
+
+# Runtime 使用指南
 
 先按 [README](https://github.com/aysirui/remote-code-mcp/blob/main/README.md#快速开始) 启动 Server、Console 和 Runtime。
+
+首次接入请参考 [AI 工具接入指南](./connect-clients.md)。读写权限、审批和数据流向参见[工作区权限说明](./workspace-permissions.md)。
 
 ## Runtime 配置
 
@@ -91,7 +98,7 @@ Console 操作记录详情会展示已开始执行的 `command_run` 脱敏命令
 - `token.refresh_rotating` 记录旧 `tokenId`、新 `nextTokenId`、`familyId`、`grantId` 及旧令牌到期/消费时间；这些是数据库记录 ID，不是令牌原文或摘要。只有后续同编号的 `token.refreshed` 才表示事务提交成功；`token.refresh_transaction_failed` 表示轮换执行或提交抛出异常，`reason` 只记录白名单中的死锁、锁等待超时、连接中断等驱动错误码，其余统一为 `database_error`，不记录异常正文。
 - `token.refresh_rejected` 的 `reason` 区分 `token_not_found`、`client_mismatch`、`grant_not_found`、`user_not_found`、`user_inactive`、`grant_revoked`、`grant_client_mismatch`、`resource_mismatch`、`token_expired` 和 `token_revoked`。`token.refresh_replay_detected` 表示发现已消费令牌；后续同编号的 `token.refresh_replay` 表示撤销事务已提交。
 - `token.refresh_response_finished`、`token.refresh_response_closed`、`token.refresh_response_error` 分别表示响应完成写出、完成前连接关闭和响应流错误，附 HTTP 状态、耗时（毫秒）、响应头是否发出及流是否写完。`finished` 仅证明本机 HTTP 层完成写出，不能证明代理已转发或客户端已保存新令牌。若先出现 `token.refreshed`，随后同一 `tokenId` 被重放，需结合这些事件和代理日志区分响应中断、并发刷新与客户端保存失败。
-- **无感刷新由客户端发起**：RCM 提供标准 Refresh Token 协议，具备自动刷新实现的 MCP 客户端可自行续期；不能保证所有 ChatGPT 客户端版本都自动使用 Refresh Token，需做实际兼容验证。
+- **无感刷新由客户端发起**：RCM 提供标准 Refresh Token 协议，具备自动刷新实现的 MCP 客户端可自行续期。切换客户端或版本时，请在目标环境验证自动续期行为。
 - 部署后验证：授权码兑换得到两种 Token；过期 Access Token 返回 401；刷新成功后新 Access Token 可使用；旧 Refresh Token 再次使用被拒绝；Console 撤销后 Access/Refresh Token 均被拒绝；重复并发刷新不可同时成功。
 
 ## 审批通知渠道

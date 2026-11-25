@@ -1,30 +1,38 @@
-# 部署指南
+---
+title: Docker Compose 自托管部署
+description: 使用 Docker Compose、Dokploy 或现有 Traefik 自托管 Remote Code MCP。配置 MySQL、HTTPS、MCP 与 WebSocket 路由，并验证 Server 和 Runtime 的连接。
+---
 
-本指南面向单 Server 实例部署。项目阶段和信任边界见 [README](https://github.com/aysirui/remote-code-mcp/blob/main/README.md) 与 [SECURITY.md](https://github.com/aysirui/remote-code-mcp/blob/main/SECURITY.md)。
+# 用 Docker Compose 自托管 Remote Code MCP
+
+仓库提供通用 Docker Compose 和带 Traefik 路由的编排，两种方式均包含 Server、Console、官网、文档和 MySQL。Runtime 在存放代码的设备上单独启动，主动连接 Server。本文以单 Server 实例为例，部署完成后可按 [AI 工具接入指南](./connect-clients.md)验证首次工具调用。
+
+项目阶段和信任边界见 [README](https://github.com/aysirui/remote-code-mcp/blob/main/README.md) 与 [SECURITY.md](https://github.com/aysirui/remote-code-mcp/blob/main/SECURITY.md)。
 
 ## 环境配置
 
-本地开发优先使用 `apps/server/.env.example`，Docker Compose 使用 `docker/env.example` 作为通用配置模板。复制模板后填写真实配置，不要提交包含密钥的文件。
+本地开发优先使用 `apps/server/.env.example`，Docker Compose 使用 `docker/.env.example` 作为通用配置模板。复制模板后填写真实配置，不要提交包含密钥的文件。
 
 Server 环境变量优先级为：系统环境变量 → `apps/server/.env` → 根目录 `.env` → 默认值。服务、迁移及管理员初始化统一使用 `apps/server/src/config/env.ts`；执行数据库命令前务必确认目标库。
 
-| 变量                                      | 用途及默认行为                                                                     |
-| ----------------------------------------- | ---------------------------------------------------------------------------------- |
-| `DATABASE_URL`                            | Server 数据库连接；Compose 根据 MySQL 配置构造                                     |
-| `APP_SECRET`                              | 必填，至少 32 字符的随机密钥                                                       |
-| `PUBLIC_URL`                              | Server 外部地址；本地默认 `http://localhost:3000`                                  |
-| `WEBSITE_URL`                             | 官网公开地址，供 Astro 生成规范地址及企微结果卡跳转首页；未配置时使用 `PUBLIC_URL` |
-| `CONSOLE_URL`                             | Console 外部地址，也用于邮箱激活链接；本地默认 `http://localhost:5173`             |
-| `ADMIN_EMAIL`                             | 首个管理员邮箱；该地址不能通过公开注册获得管理员权限                               |
-| `PORT`                                    | Server 端口，默认 3000；Compose 固定为 3000                                        |
-| `SMTP_HOST`、`SMTP_USER`、`SMTP_PASSWORD` | 注册激活邮件所需的 SMTP 地址、账号和密码 / 授权码                                  |
-| `SMTP_PORT`、`SMTP_SECURE`                | 默认 587 / false，强制 STARTTLS；465 使用 true，启用隐式 TLS                       |
-| `MAIL_FROM`                               | 可选，默认使用 `SMTP_USER`，须为服务商允许的发件地址                               |
-| `MYSQL_PASSWORD`、`MYSQL_ROOT_PASSWORD`   | Compose 必填的数据库密码，使用不同的强密码                                         |
-| `VITE_API_URL`                            | Console 构建时使用的 API 地址；Compose 自动使用 `PUBLIC_URL`                       |
-| `DOCS_URL`                                | 在线文档完整 URL，供 Console 导航使用；默认 `${WEBSITE_URL:-${PUBLIC_URL}}/docs/`  |
-| `VITE_DOCS_URL`                           | Console 构建期文档地址，Compose 从 `DOCS_URL` 自动传入                             |
-| `PUBLIC_SITE_URL`、`PUBLIC_CONSOLE_URL`   | Astro 构建期官网和控制台地址，由 Compose 自动注入                                  |
+| 变量                                      | 用途及默认行为                                                                                  |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                            | Server 数据库连接；Compose 根据 MySQL 配置构造                                                  |
+| `APP_SECRET`                              | 必填，至少 32 字符的随机密钥                                                                    |
+| `PUBLIC_URL`                              | Server 外部地址；本地默认 `http://localhost:3000`                                               |
+| `WEBSITE_URL`                             | 官网公开地址，用于官网与文档的规范地址、sitemap 及企微结果卡首页链接；未配置时使用 `PUBLIC_URL` |
+| `CONSOLE_URL`                             | Console 外部地址，也用于邮箱激活链接；本地默认 `http://localhost:5173`                          |
+| `ADMIN_EMAIL`                             | 首个管理员邮箱；该地址不能通过公开注册获得管理员权限                                            |
+| `PORT`                                    | Server 端口，默认 3000；Compose 固定为 3000                                                     |
+| `SMTP_HOST`、`SMTP_USER`、`SMTP_PASSWORD` | 注册激活邮件所需的 SMTP 地址、账号和密码 / 授权码                                               |
+| `SMTP_PORT`、`SMTP_SECURE`                | 默认 587 / false，强制 STARTTLS；465 使用 true，启用隐式 TLS                                    |
+| `MAIL_FROM`                               | 可选，默认使用 `SMTP_USER`，须为服务商允许的发件地址                                            |
+| `MYSQL_PASSWORD`、`MYSQL_ROOT_PASSWORD`   | Compose 必填的数据库密码，使用不同的强密码                                                      |
+| `VITE_API_URL`                            | Console 构建时使用的 API 地址；Compose 自动使用 `PUBLIC_URL`                                    |
+| `DOCS_URL`                                | 在线文档完整 URL，供 Console 导航使用；默认 `${WEBSITE_URL:-${PUBLIC_URL}}/docs/`               |
+| `VITE_DOCS_URL`                           | Console 构建期文档地址，Compose 从 `DOCS_URL` 自动传入                                          |
+| `PUBLIC_SITE_URL`                         | Astro 和 VitePress 共用的构建期官网地址，由 Compose 自动注入                                    |
+| `PUBLIC_CONSOLE_URL`                      | 官网和文档的构建期控制台地址，由 Compose 自动注入                                               |
 
 若数据库密码含 URL 保留字符，`DATABASE_URL` 中的密码段需要 URL 编码。当前 Compose 直接插值 `MYSQL_PASSWORD` 构造连接串，应使用足够长且无需 URL 编码的随机密码，或自行调整连接串配置。
 
@@ -35,7 +43,7 @@ Server 环境变量优先级为：系统环境变量 → `apps/server/.env` → 
 本地准备 Compose 配置可使用：
 
 ```powershell
-Copy-Item docker/env.example .env
+Copy-Item docker/.env.example .env
 ```
 
 填写 `.env` 后，可在已配置反向代理的环境运行：
@@ -46,7 +54,7 @@ docker compose up -d --build
 
 仓库 Compose 仅使用 `expose`，不向宿主机发布端口。独立使用 Compose 时，反向代理必须连接同一 Docker 网络；此命令本身不会提供公网域名和 HTTPS。MySQL 仅供内部服务访问。
 
-在 Dokploy 中选择 **Docker Compose 应用**，连接仓库并使用根目录 `docker-compose.yml`。Environment 中按 `docker/env.example` 的说明配置全部必填变量，包括 SMTP；这些变量通过 Compose 显式传入容器。
+在 Dokploy 中选择 **Docker Compose 应用**，连接仓库并使用根目录 `docker-compose.yml`。Environment 中按 `docker/.env.example` 的说明配置全部必填变量，包括 SMTP；这些变量通过 Compose 显式传入容器。
 
 在 Domains 中为 `server`（端口 3000）、`console`、`website`、`docs`（均为端口 80）配置公开入口。一个域名承载多个服务时，应按 Host 和路径匹配，确保 API、OAuth、MCP、WebSocket 以及文档路径不会被官网根路由覆盖。路由及 TLS 的具体实现由部署环境决定，对应 `PUBLIC_URL`、`CONSOLE_URL`。反向代理必须保留 `/agent/connect` 的 WebSocket Upgrade，允许 `/mcp` 的流式 HTTP 响应。推荐启用 Dokploy 的 Isolated Deployments，由其管理路由与网络。
 
@@ -62,7 +70,9 @@ docker compose up -d --build
 - `TRAEFIK_NETWORK`：Traefik 和四个 Web 服务额外加入的**已存在外部 Docker 网络**，默认 `traefik-public`；五个服务仍保留相同的 `internal` 内网，MySQL 不加入 `proxy`。
 - `TRAEFIK_ENTRYPOINT`：已有 Traefik 入口名，默认 `web`（HTTP）。此示例**不自动申请证书、不开启 TLS 也不配置 HTTPS 跳转**。如果由 Traefik 自行终止 HTTPS，应把入口改为正确的 TLS 入口，并按部署环境增加 Router TLS/证书配置；如果由上游网关终止 HTTPS，则应按实际上游与 Traefik 的安全边界配置。
 
-`PUBLIC_URL`、`CONSOLE_URL`、`WEBSITE_URL`、`DOCS_URL` 是应用使用的**完整公开 URL**；`SERVER_HOST`、`CONSOLE_HOST`、`WEBSITE_HOST` 只填写**域名**（不含协议、端口或路径）。每一项 Host 与其对应的 URL 主机名必须一致；此示例要求 Server、Console、Website 使用互不相同的主机名，避免 Server 的全路径 Router 与官网冲突。官网与文档使用相同域名，`DOCS_URL` 应为 `${WEBSITE_URL}/docs/`。两套 Compose 中 Console 的 `VITE_DOCS_URL` 均默认使用 `DOCS_URL`，没有配置时依次回退 `WEBSITE_URL/docs/`、`PUBLIC_URL/docs/`；Website 的 `PUBLIC_SITE_URL` 均默认回退 `PUBLIC_URL`。实际独立域名部署请显式设置 `WEBSITE_URL` 和 `DOCS_URL`。
+`PUBLIC_URL`、`CONSOLE_URL`、`WEBSITE_URL`、`DOCS_URL` 是应用使用的**完整公开 URL**，`SERVER_HOST`、`CONSOLE_HOST`、`WEBSITE_HOST` 只填域名。每项 Host 与对应 URL 的主机名保持一致。Server 与官网可共用一个域名，使用独立的 Console 域名。共用域名时，`SERVER_HOST` 与 `WEBSITE_HOST` 相同，`PUBLIC_URL` 与 `WEBSITE_URL` 相同。Traefik 先按路径匹配文档和 Server，其余请求交给官网。
+
+官网与文档使用相同域名，`DOCS_URL` 应为 `${WEBSITE_URL}/docs/`。两套 Compose 中 Console 的 `VITE_DOCS_URL` 默认使用 `DOCS_URL`，未配置时依次回退 `WEBSITE_URL/docs/`、`PUBLIC_URL/docs/`。官网和文档的 `PUBLIC_SITE_URL` 默认回退 `PUBLIC_URL`。官网与 Server 分开部署时，显式设置 `WEBSITE_URL` 和 `DOCS_URL`。
 
 启动前创建/确认 Traefik 共享网络，确保 Traefik 自身已连接，并在 `.env` 中设置这些变量：
 
@@ -90,7 +100,11 @@ Server 容器启动顺序：
 
 产品官网由 `apps/website` 使用 Astro 静态生成，在线文档由根目录 `docs/` 使用 VitePress 生成；两者均采用独立 Docker 镜像，不依赖 Console 的构建与发布。
 
-构建时可通过 `WEBSITE_URL` 配置官网公开地址，`DOCS_URL` 配置控制台导航使用的在线文档绝对地址。官网控制台按钮使用 `CONSOLE_URL`，文档默认公共路径为 `/docs/`。请设置公开访问地址，不要填写容器内部地址或密钥。
+构建时用 `WEBSITE_URL` 配置官网公开地址，例如 `https://www.example.com`。两份 Compose 都将它传给官网和文档镜像的 `PUBLIC_SITE_URL` 构建参数，并把 `CONSOLE_URL` 传为 `PUBLIC_CONSOLE_URL`，供两者的控制台入口使用。单独构建 Docker 镜像时，可为两个镜像传入相同的这两项构建参数。文档的公共路径为 `/docs/`，`DOCS_URL` 单独配置控制台导航指向的在线文档地址。
+
+构建后，官网服务提供 `/robots.txt` 和 `/sitemap.xml`，文档服务提供 `/docs/sitemap.xml`。部署后访问这三个 URL，确认均返回成功，两个 sitemap 中的地址与页面的 `rel="canonical"` 一致。若代理开启了爬虫限制，检查公开路径的访问日志，确认 Googlebot、Bingbot 和 OAI-SearchBot 可以访问。修改 `WEBSITE_URL` 后需重建官网和文档镜像。
+
+官网和文档的 Nginx 对符合大小和类型条件的静态文本启用 gzip，并为带内容哈希的资源配置长期缓存。部署后可在浏览器网络面板检查文档 HTML 的 `Content-Encoding` 及带哈希 CSS、JS 的 `Cache-Control`，确认上游代理正确传递响应头。
 
 建议的公开路径为：官网 `/`、文档 `/docs/`、MCP `/mcp`、REST API `/api/*`、OAuth `/oauth/*`，Console 使用独立域名。代理层需要保留 OAuth 元数据发现路径、健康检查和 WebSocket Upgrade，同时支持 MCP 流式响应。
 

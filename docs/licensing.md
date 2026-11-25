@@ -1,3 +1,7 @@
+---
+description: 了解 Remote Code MCP 的 AGPL-3.0-only 许可证、版权归属、修改分发和提供网络服务时的源码义务。
+---
+
 # 许可证与版权说明
 
 Remote Code MCP 采用 [GNU Affero General Public License 第 3 版，仅此版本（AGPL-3.0-only）](https://github.com/aysirui/remote-code-mcp/blob/main/LICENSE)。以下说明概述常见使用场景，完整许可条款以 `LICENSE` 为准。

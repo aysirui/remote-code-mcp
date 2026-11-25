@@ -16,3 +16,6 @@ pnpm-lock.yaml
 **/drizzle/meta
 **/generated
 **/*.snap
+
+# Release Please 自动生成的版本日志，不参与格式检查。
+/CHANGELOG.md

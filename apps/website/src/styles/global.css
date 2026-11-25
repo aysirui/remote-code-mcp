@@ -36,8 +36,9 @@ a:focus-visible {
 svg {
   display: block;
 }
+/* 导航、各区块与页脚共用同一宽度，大屏按视口展开并限制超宽屏上的最大跨度。 */
 .container {
-  width: min(1200px, calc(100% - 72px));
+  width: min(clamp(1200px, 75vw, 1840px), calc(100% - 72px));
   margin-inline: auto;
 }
 /* 仅裁切视觉溢出，不创建滚动容器以免破坏 sticky。 */
@@ -953,6 +954,17 @@ svg {
   color: #8593a9;
   font-size: 11px;
 }
+@media (min-width: 1600px) {
+  /* 首屏标题与连接图节点随双栏适度放大，简介仍按原有行长排版。 */
+  .hero h1 {
+    font-size: clamp(65px, 3.75vw, 84px);
+  }
+  .visual-agent,
+  .visual-gateway,
+  .visual-runtime {
+    max-width: clamp(395px, 24vw, 560px);
+  }
+}
 @media (max-width: 1140px) {
   .header-inner {
     gap: 25px;
@@ -979,7 +991,7 @@ svg {
 }
 @media (max-width: 900px) {
   .container {
-    width: min(100% - 48px, 1200px);
+    width: calc(100% - 48px);
   }
   .header {
     height: auto;

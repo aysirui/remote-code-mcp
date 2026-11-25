@@ -27,3 +27,24 @@
     display: none;
   }
 }
+
+@media (min-width: 1440px) {
+  /* 从 VitePress 开始居中三栏的断点起扩展布局，导航和左侧文档目录同步对齐。 */
+  :root {
+    --vp-layout-max-width: clamp(1440px, 88vw, 1920px);
+  }
+
+  /* 正文栏包含两侧各 32px 的内边距，使右侧本页目录靠近正文。 */
+  .VPDoc.has-sidebar.has-aside .content {
+    max-width: 1320px;
+  }
+
+  .VPDoc.has-sidebar.has-aside .content .content-container {
+    max-width: clamp(688px, calc(50vw - 32px), 1200px);
+  }
+
+  /* 限制段落和列表的阅读行长，表格与代码块可以使用完整的正文栏。 */
+  .VPDoc.has-sidebar.has-aside .vp-doc > div > :is(p, ul, ol, blockquote) {
+    max-width: 54rem;
+  }
+}

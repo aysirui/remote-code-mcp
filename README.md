@@ -2,6 +2,8 @@
 
 Remote Code MCP（RCM）是开源、自托管的通用 AI MCP 远程编码工具。支持远程 MCP 的客户端可以在已授权的工作区读写文件、查看 Git 差异和运行开发命令。各客户端的配置入口与验证方法见 [AI 工具接入指南](docs/connect-clients.md)。
 
+[项目官网](https://rcm.aysirui.com/)
+
 项目采用 TypeScript monorepo，包含云端 Server、产品官网、在线文档、Web Console、本机 Runtime 和共享协议。Runtime 主动建立出站 WebSocket 连接，无需将本机工作区的服务端口暴露到公网。
 
 **项目处于早期开发阶段。** 支持源码构建和单 Server 实例的 Docker Compose 部署。部署前请按 [部署指南](docs/deployment.md) 验证目标环境及 MCP 客户端兼容性，并了解 [安全边界与已知限制](SECURITY.md)。

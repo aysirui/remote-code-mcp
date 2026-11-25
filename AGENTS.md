@@ -106,3 +106,9 @@ packages/protocol（共享 RPC、Zod Schema、类型契约）
 ## 四、文档优先原则
 
 架构说明和开发约束以本文件为主要入口；业务使用、部署、环境变量和操作流程继续放在 `README.md` 等相应文档。架构约束不应额外演变为侵入项目的运行时逻辑、自动审计程序或无业务价值的测试。
+
+## 五、版本发布规范
+
+- 遵循 CONTRIBUTING.md 的分支与版本发布流程，提交采用 Conventional Commits，scope 可选。
+- Release Please 统一维护产品版本、各模块版本、CHANGELOG、Tag 和 GitHub Release；未经明确授权不得合并发布 PR、手动打 Tag 或发布版本。
+- 涉及协议、数据库迁移、权限或配置不兼容变化时，在提交及发布说明中明确升级影响。

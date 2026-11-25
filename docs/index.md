@@ -1,24 +1,137 @@
 ---
-title: 文档与快速开始
-description: Remote Code MCP 通用 AI 远程编码工具文档，涵盖 AI 工具接入远程 MCP Server、Docker Compose 自托管和工作区权限。
+title: 产品概览与快速开始
+description: 了解 Remote Code MCP 在线 MCP Server 的产品架构、远程编码工作流程、Server、Console 与 Runtime 的职责、工作区权限和 AI 客户端接入方式。
 ---
+
+<script setup>
+import ArchitectureDiagram from './.vitepress/theme/components/ArchitectureDiagram.vue'
+</script>
 
 # Remote Code MCP 文档
 
-Remote Code MCP（RCM）是开源、自托管的通用 AI MCP 远程编码工具。AI 客户端通过远程 MCP Server 请求读写文件、查看 Git 差异或运行开发命令，由存放代码的设备上的 Runtime 按工作区授权执行。
+Remote Code MCP（RCM）是面向 AI 客户端的通用在线 MCP Server 服务，让支持远程 MCP 的 AI 工具能够访问其他设备上的已授权代码工作区，读取和修改文件、查看 Git 差异、运行开发命令。
+
+你可以在浏览器或其他受支持的 AI 客户端中讨论代码并发起操作，由存放代码的电脑实际执行。RCM 不提供自己的 AI 模型，也不要求将整个代码仓库上传到云端。
+
+## RCM 解决什么问题？
+
+许多 AI 工具运行在云端或另一台设备上，无法直接访问开发电脑中的本地文件、未提交的代码以及本地开发环境。仅靠复制代码片段或上传文件，很难持续处理一个完整项目。
+
+RCM 在 AI 客户端与本地开发环境之间建立受授权的连接：
+
+- **跨设备远程编码**：离开开发电脑后，仍可在具备相应 MCP 能力的浏览器或客户端中读取、讨论和修改本机项目。
+- **复用现有开发环境**：代码、Git 仓库、依赖和开发工具仍在原来的设备上，使用本机环境运行测试、类型检查和构建。
+- **统一 AI 工具接入**：多个兼容的 AI 客户端可连接同一个 RCM 账号下的已授权设备和工作区，无需为每个客户端单独搭建远程文件服务。
+- **控制访问权限**：按工作区设置读写权限及 File、Git、Command 策略，敏感操作通过审批确认，并可随时撤销授权。
+- **减少网络配置**：Runtime 主动连接在线 Server，不需要为开发电脑申请公网 IP 或开放入站管理端口。
+
+例如，你可以在另一台电脑上打开 ChatGPT 网页聊天，让它查看开发电脑上某个 Git 仓库的代码和未提交差异，讨论修复方案，再通过 RCM 修改文件并运行已登记的测试命令。
+
+## 产品架构
+
+RCM 由在线 MCP Server、Web Console 和本机 Runtime 三个核心组件组成。AI 客户端负责理解用户指令，实际文件及命令操作由 Runtime 执行。
+
+<ArchitectureDiagram />
+
+图中 AI 客户端、Console 与 Runtime 通过 Server 协作。Console 是管理入口，不直接操作本机文件；Runtime 主动建立 WebSocket 连接，Server 通过该连接双向传递请求和结果。
+
+### 各组件的用途
+
+| 组件 | 运行位置 | 主要职责 |
+| --- | --- | --- |
+| AI 客户端 | 用户使用的 AI 平台 | 理解指令、选择 MCP 工具、分析工具返回结果并继续对话 |
+| MCP Server | RCM 在线服务 | OAuth 认证、用户和设备归属校验、MCP 工具入口、请求路由、结果转发及脱敏审计 |
+| Web Console | 官方在线控制台 | 注册登录、设备配对授权、查看设备和工作区、管理 AI 客户端授权、操作记录和审批通知渠道 |
+| Runtime | 存放代码的设备 | 主动连接 Server、管理本地目录与命令、检查权限、处理审批、执行工具并返回结果 |
+| 工作区 | Runtime 所在设备 | 用户明确授权的本地项目目录，包含代码及其 Git 仓库和开发环境 |
+
+产品官网和在线文档负责提供产品介绍、接入入口与使用帮助，不参与工具请求的执行。Server 使用数据库保存账号、授权关系、设备和工作区快照等必要业务数据。
+
+## RCM 如何工作？
+
+### 首次建立连接
+
+1. 在官方控制台注册或登录 RCM 账号。
+2. 在开发电脑启动 Runtime，通过配对码将设备绑定到账号。
+3. 在 Runtime 添加项目目录并授权为工作区。首次建议保留默认只读权限。
+4. 在 AI 客户端添加官方 MCP Server 地址，通过 OAuth 授权访问同一个 RCM 账号。
+
+设备配对用于建立设备与账号的关系；OAuth 用于授予 AI 客户端访问 RCM 工具的权限；工作区授权用于限定实际可访问的本地项目。三者不是同一种权限。
+
+### 一次远程工具调用
+
+以在 AI 对话中请求修改 README.md 并检查 Git 差异为例：
+
+1. AI 客户端通过 `workspace_list` 找到目标工作区，使用 `file_read` 读取文件。
+2. Server 验证客户端授权及工作区归属，通过已建立的连接将文件操作转发给目标设备。
+3. Runtime 检查工作区状态、路径和 File 策略，在允许的范围内读取文件并返回正文和 SHA-256。
+4. AI 根据读取结果生成修改内容，通过 `file_write` 发起写入请求。Runtime 检查写入权限、文件摘要及审批策略；需要审批时等待有效决定，批准后再次检查授权并执行。
+5. AI 调用 `git_diff` 查看实际变更，Runtime 返回未暂存差异，经 Server 转发给客户端。
+
+AI 可以根据真实结果继续分析、修正并发起后续操作。RCM 本身不决定修改方案，也不保证 AI 生成的代码正确。
+
+## 可以做什么？
+
+| 能力 | 典型操作 |
+| --- | --- |
+| 设备和工作区管理 | 查询已绑定设备、在线状态和已授权工作区 |
+| 文件访问 | 浏览目录、搜索文本、读取文件 |
+| 文件编辑 | 写入、创建目录、移动和删除文件 |
+| Git 协作 | 查看状态、历史和差异；经审批暂存及提交 |
+| 开发命令 | 执行内置或本机登记的测试、构建、类型检查等命令；临时命令需审批 |
+| 权限与审批 | 设置工作区读写权限、工具策略、撤销授权及处理待审批请求 |
+
+详细工具使用和策略说明见 [Runtime 使用指南](./usage.md)。
+
+## 安全边界与使用预期
+
+- **本地执行**：代码及开发环境保留在本机，但工具调用参数和结果会经过 Server，并可能返回给 AI 客户端。Server 可以接触转发数据，不能将这一架构理解为端到端加密或代码内容永不离开本机。
+- **数据留存**：Server 和 Console 的持久化业务数据不包含工作区绝对路径、文件正文、完整命令参数、审批详情和 AI 对话；客户端及诊断日志的数据留存另有规则。
+- **权限控制**：工作区默认只读；写入、Git 和命令操作按授权执行。Git 暂存、提交、高危递归删除以及临时命令保留相应的强制审批规则。
+- **命令风险**：命令以 Runtime 所在系统账号的权限执行，可能访问工作区外的文件和网络。RCM 权限策略不等同于操作系统沙箱。
+- **在线要求**：实际文件、Git 和命令操作需要目标设备及 Runtime 在线，设备关机或连接中断时不能继续访问该设备。
+- **客户端兼容性**：客户端必须支持相应的远程 MCP、OAuth 和工具调用能力。不同客户端、版本、账号权限及使用地区可能存在差异，请以各接入指南及实际验证为准。
+- **产品范围**：RCM 不是远程桌面，也不提供对其他本地 AI 编码助手会话的接管或同步。AI 对话、模型选择和用量仍由所用客户端管理。
+
+首次使用建议选择不包含私密信息的测试工作区。详细说明参见 [工作区权限与数据流向](./workspace-permissions.md) 和 [项目安全说明](https://github.com/aysirui/remote-code-mcp/blob/main/SECURITY.md)。
+
+## 在线 MCP Server 服务
+
+直接使用 RCM 官方在线服务，只需要准备本机 Runtime 和支持相应 MCP 能力的 AI 客户端。
+
+| 服务 | 地址或入口 |
+| --- | --- |
+| 产品官网 | [https://rcm.aysirui.com/](https://rcm.aysirui.com/) |
+| 官方控制台 | [https://rcmconsole.aysirui.com/](https://rcmconsole.aysirui.com/) |
+| Runtime Server 地址 | `https://rcm.aysirui.com` |
+| MCP Server 地址 | `https://rcm.aysirui.com/mcp` |
+| MCP 传输与认证 | Streamable HTTP / OAuth |
+
+## 快速开始
+
+1. 前往 [官方控制台](https://rcmconsole.aysirui.com/) 注册或登录。
+2. 按 [Runtime 使用指南](./usage.md) 安装并启动 Runtime，完成设备配对及工作区授权。
+3. 按 [AI 工具接入总览](./connect-clients.md) 选择客户端，添加官方 MCP Server 并授权。
+4. 发起首次只读工具调用，确认可以读取正确的测试工作区，再按需启用写入权限。
 
 ## 从这里开始
 
-- [AI 工具接入远程 MCP Server](./connect-clients.md) — 查找 WorkBuddy、豆包和 ChatGPT 的配置入口，验证 OAuth 和首次工具调用。
-- [用 Docker Compose 自托管 Remote Code MCP](./deployment.md) — 配置 Server、Console、数据库和反向代理。
+- [AI 工具接入总览](./connect-clients.md) — 查看官方 MCP 地址、OAuth 要求和首次调用验证。
+  - [WorkBuddy MCP 接入与使用](./connect-workbuddy.md)
+  - [豆包 MCP 接入与使用](./connect-doubao.md)
+  - [ChatGPT 网页聊天远程编码](./connect-chatgpt.md)
 - [工作区权限与数据流向](./workspace-permissions.md) — 了解 AI 可以访问哪些文件、哪些操作要审批，以及各组件保存什么。
 - [Runtime 使用指南](./usage.md) — 管理工作区、本机命令、多服务器连接和 OAuth 授权。
 - [许可证说明](./licensing.md) — 了解项目许可证、版权和分发要求。
 
+## 私有化部署
+
+RCM 开放源代码并支持 [私有化部署](./deployment.md)。
+
 ## 项目资料
 
-- [快速开始](https://github.com/aysirui/remote-code-mcp/blob/main/README.md#快速开始)
+- [项目源码与开发说明](https://github.com/aysirui/remote-code-mcp)
 - [安全说明与漏洞报告](https://github.com/aysirui/remote-code-mcp/blob/main/SECURITY.md)
 - [贡献指南](https://github.com/aysirui/remote-code-mcp/blob/main/CONTRIBUTING.md)
 
-项目处于早期开发阶段。部署前请阅读安全说明，并在自己的测试环境完成部署指南中的验证。
+项目处于早期开发阶段。首次使用请先阅读安全说明，并使用不含私密信息的测试工作区验证工具调用。

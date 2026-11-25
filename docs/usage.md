@@ -5,13 +5,29 @@ description: 配置和配对 Remote Code MCP Runtime，授权本地工作区、�
 
 # Runtime 使用指南
 
-先按 [README](https://github.com/aysirui/remote-code-mcp/blob/main/README.md#快速开始) 启动 Server、Console 和 Runtime。
+使用 RCM 在线 MCP Server 服务，只需在存放代码的设备上启动 Runtime。先前往 [官方控制台](https://rcmconsole.aysirui.com/) 注册或登录账号。
+
+## 安装并启动 Runtime
+
+本机需要 Node.js 22+、pnpm 10.15.0 和 Git。在终端执行：
+
+```sh
+git clone https://github.com/aysirui/remote-code-mcp.git
+cd remote-code-mcp
+corepack enable
+pnpm install --frozen-lockfile
+pnpm --filter @rcm/protocol build
+pnpm --filter @rcm/runtime build
+pnpm --filter @rcm/runtime start
+```
+
+启动后打开终端打印的完整本地管理链接，按下文配对官方 Server。
 
 首次接入请参考 [AI 工具接入指南](./connect-clients.md)。读写权限、审批和数据流向参见[工作区权限说明](./workspace-permissions.md)。
 
 ## Runtime 配置
 
-Runtime 默认保存配置到 `~/.remote-code-mcp/config.json`。可通过进程环境变量指定 `RUNTIME_DATA_DIR`（私有数据目录）、`RUNTIME_PORT`（默认 18787）及首次配置的 `SERVER_URL`（默认 `http://localhost:3000`）。Runtime 不自动读取 `.env`，需在启动进程前设置这些变量；已有服务器配置通过本地 UI 管理，不受地址环境变量影响。
+Runtime 默认保存配置到 `~/.remote-code-mcp/config.json`。可通过进程环境变量指定 `RUNTIME_DATA_DIR`（私有数据目录）、`RUNTIME_PORT`（默认 18787）及首次配置的 `SERVER_URL`（官方服务填写 `https://rcm.aysirui.com`；首次添加服务器时也可直接在本地界面填写）。Runtime 不自动读取 `.env`，需在启动进程前设置这些变量；已有服务器配置通过本地 UI 管理，不受地址环境变量影响。
 
 ### 本地管理 Token
 
@@ -30,12 +46,12 @@ Token 不写入 Runtime 配置，只对当前进程有效。每次启动重新�
 ## Runtime 配对
 
 1. 打开当前 Runtime 启动时打印的完整 [本地管理链接](#本地管理-token)。
-2. 在本地 UI 确定 Server 地址（本机可用 `http://localhost:3000`；公网必须 `https://...`）。
+2. 在本地 UI 添加或选择官方 Server，地址填写 `https://rcm.aysirui.com`（不带 `/mcp`）。
 3. 点击 **生成配对码**，获得临时配对码。
-4. 点击“打开平台授权页面”（本地开发为 `http://localhost:5173/activate`），用平台账号登录，输入配对码并确认。
+4. 点击“打开平台授权页面”，在 [官方控制台](https://rcmconsole.aysirui.com/) 使用 RCM 账号登录，输入配对码并确认。
 5. 返回本地 UI 点击“我已确认，完成绑定”。
 6. 点击 **添加项目**，使用目录浏览器选择一个临时测试项目。默认只读；需要修改文件时先开启写入权限，再按 File / Git / Command 分别选择“禁止”“审批执行”或“完全允许”。待审批请求五分钟后过期；Git 暂存、提交和高危递归删除保留强制审批。
-7. Web Console 会显示绑定设备和同步工作区。
+7. [官方控制台](https://rcmconsole.aysirui.com/) 会显示绑定设备和同步工作区。
 
 ## 命令执行
 
@@ -99,17 +115,17 @@ Console 操作记录详情会展示已开始执行的 `command_run` 脱敏命令
 - `token.refresh_rejected` 的 `reason` 区分 `token_not_found`、`client_mismatch`、`grant_not_found`、`user_not_found`、`user_inactive`、`grant_revoked`、`grant_client_mismatch`、`resource_mismatch`、`token_expired` 和 `token_revoked`。`token.refresh_replay_detected` 表示发现已消费令牌；后续同编号的 `token.refresh_replay` 表示撤销事务已提交。
 - `token.refresh_response_finished`、`token.refresh_response_closed`、`token.refresh_response_error` 分别表示响应完成写出、完成前连接关闭和响应流错误，附 HTTP 状态、耗时（毫秒）、响应头是否发出及流是否写完。`finished` 仅证明本机 HTTP 层完成写出，不能证明代理已转发或客户端已保存新令牌。若先出现 `token.refreshed`，随后同一 `tokenId` 被重放，需结合这些事件和代理日志区分响应中断、并发刷新与客户端保存失败。
 - **无感刷新由客户端发起**：RCM 提供标准 Refresh Token 协议，具备自动刷新实现的 MCP 客户端可自行续期。切换客户端或版本时，请在目标环境验证自动续期行为。
-- 部署后验证：授权码兑换得到两种 Token；过期 Access Token 返回 401；刷新成功后新 Access Token 可使用；旧 Refresh Token 再次使用被拒绝；Console 撤销后 Access/Refresh Token 均被拒绝；重复并发刷新不可同时成功。
+- OAuth 授权验证：授权码兑换得到两种 Token；过期 Access Token 返回 401；刷新成功后新 Access Token 可使用；旧 Refresh Token 再次使用被拒绝；Console 撤销后 Access/Refresh Token 均被拒绝；重复并发刷新不可同时成功。
 
 ## 审批通知渠道
 
 待审批卡片会分别显示 Console 中的设备名称和 Runtime 中的工作区显示名。多台设备或多个工作区重名时，建议改成易区分的名称；卡片不会展示本机绝对路径。
 
-登录 Console，从侧栏打开「审批通知」。页面只列出服务器已配置的渠道；未配置任何渠道时隐藏菜单，直接打开 `/console/approval-channels` 会提示暂不可绑定。
+登录 [官方控制台](https://rcmconsole.aysirui.com/)，从侧栏打开「审批通知」。页面只列出服务器已配置的渠道；未配置任何渠道时隐藏菜单，直接打开 `/console/approval-channels` 会提示暂不可绑定。
 
 - **飞书**：选择「绑定飞书」，通过分享链接打开机器人私聊。外部用户按飞书提示申请使用并开启单聊；内部用户也可在飞书搜索已发布且对自己可见的机器人。
-- **企业微信**：选择「绑定企业微信」，在所在企业中打开部署方提供的智能机器人私聊。若有分享链接，可直接从 Console 打开；需在机器人的企业可用范围内。
-- **钉钉**：选择「绑定钉钉」，在部署方配置的企业内打开已发布的应用机器人私聊，或使用部署方提供的链接。当前不支持借此接入未配置的其他企业。
+- **企业微信**：选择「绑定企业微信」，在可用企业范围内打开官方控制台提供的智能机器人私聊。若有分享链接，可直接从 Console 打开；需在机器人的企业可用范围内。
+- **钉钉**：选择「绑定钉钉」，在可用企业范围内打开已发布的应用机器人私聊，或使用官方控制台提供的链接。当前不支持借此接入未配置的其他企业。
 
 配置了机器人分享链接时，绑定窗口会显示二维码，也可复制链接或直接打开。扫码只打开机器人入口，不会自动订阅。
 
@@ -122,7 +138,7 @@ Console 操作记录详情会展示已开始执行的 `command_run` 脱敏命令
 
 ## MCP 接入验证
 
-将公网 Server 的 `https://你的服务器域名/mcp` 配置到支持 OAuth 的 MCP 客户端，并使用同一平台账号授权。先用 MCP Inspector 检查元数据、授权与工具调用，再验证目标客户端；不保证所有客户端版本都能自动刷新令牌。
+将官方 MCP Server 地址 `https://rcm.aysirui.com/mcp` 配置到支持 OAuth 的 MCP 客户端，并使用同一平台账号授权。按 [AI 工具接入指南](./connect-clients.md) 完成首次只读调用。遇到连接问题时，可用 MCP Inspector 检查元数据、授权与工具调用；不保证所有客户端版本都能自动刷新令牌。
 
 - `GET /health` 应返回 `{ok:true}`。
 - `GET /.well-known/oauth-protected-resource` 和 `GET /.well-known/oauth-authorization-server` 应返回元数据。

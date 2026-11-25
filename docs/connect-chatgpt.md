@@ -1,21 +1,22 @@
 ---
+title: ChatGPT 网页聊天 MCP 接入与使用
 description: 在 ChatGPT 网页普通聊天中添加 Remote Code MCP 插件，远程编辑已授权的本地代码、查看 Git 差异，并了解 Chat 与 Work、Codex 的用量区别。
 ---
 
 # 在 ChatGPT 网页聊天中使用 RCM 远程编码
 
-在 ChatGPT 网页版安装并授权 Remote Code MCP 自定义 MCP 插件后，可以在普通聊天（Chat）中读取本地仓库、讨论修改方案，并在授权后将修改写回本机。文件和 Git 操作由存放代码的电脑上的 Runtime 执行，整个流程无需启动 Work 或 Codex 任务。其他客户端参见 [AI 工具接入指南](./connect-clients.md)。
+在 ChatGPT 网页版安装并授权 Remote Code MCP 自定义 MCP 插件后，可以在普通聊天（Chat）中读取本地仓库、讨论修改方案，并在授权后将修改写回本机。文件和 Git 操作由存放代码的电脑上的 Runtime 执行，整个流程无需启动 Work 或 Codex 任务。其他客户端参见 [AI 工具接入总览](./connect-clients.md)。
 
 ## 开始前需要什么？
 
-- 已运行的 RCM Server 和 Console。如果从零开始，先完成 [Docker Compose 部署](./deployment.md)。本文使用通过公网 HTTPS 访问的 Server。
-- 已启动的 Runtime，安装在存放 Git 仓库的设备上。首次验证用临时 Git 仓库，并准备一份不含私密信息的 `README.md`。
+- 已在 [官方控制台](https://rcmconsole.aysirui.com/) 注册或登录 RCM 账号。本文使用官方在线 MCP Server（`https://rcm.aysirui.com/mcp`）。
+- 已按 [Runtime 使用指南](./usage.md) 启动本机 Runtime。首次验证用临时 Git 仓库，并准备一份不含私密信息的 `README.md`。
 - 在 OpenAI 支持的地区使用 ChatGPT，并且账号具备在网页聊天中添加和使用自定义 MCP 插件的权限。参见 [OpenAI 支持的地区](https://help.openai.com/zh-hans-cn/articles/7947663-chatgpt-and-openai-api-supported-countries-and-territories)和 [自定义 MCP 连接说明](https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt)。
 
 ## 1. 配对 Runtime 并授权测试仓库
 
 1. 打开 Runtime 启动时打印的完整本地管理链接。
-2. 在 Runtime 选择 RCM Server 地址，生成配对码。在 Console 登录并确认配对，然后回到 Runtime 完成绑定。
+2. 在 Runtime 填写官方 Server 地址 `https://rcm.aysirui.com`，生成配对码。在 [官方控制台](https://rcmconsole.aysirui.com/) 登录并确认配对，然后回到 Runtime 完成绑定。
 3. 在 Runtime 点击「添加项目」，选择测试仓库，保留默认只读权限。确认 Console 中设备在线、工作区已同步。
 
 各步骤的界面操作见 [Runtime 配对](./usage.md#runtime-配对)。
@@ -23,7 +24,7 @@ description: 在 ChatGPT 网页普通聊天中添加 Remote Code MCP 插件，�
 ## 2. 在 ChatGPT 添加 MCP 连接
 
 1. 在有权创建连接的界面选择添加自定义 MCP 服务器，填写名称，例如「Remote Code MCP」。
-2. Server URL 填写 RCM Server 的 HTTPS 地址加 `/mcp`，例如 `https://rcm.example.com/mcp`。选择 OAuth，并按界面提示扫描工具、完成登录及授权。OAuth 登录使用与 Runtime 配对时相同的 RCM 平台账号。
+2. Server URL 填写官方 MCP Server 地址 `https://rcm.aysirui.com/mcp`。选择 OAuth，并按界面提示扫描工具、完成登录及授权。OAuth 登录使用与 Runtime 配对时相同的 RCM 平台账号。
 3. 安装插件后，回到 ChatGPT 首页，选择 **Chat（聊天）**，新建对话。在输入框输入 `@` 并选中已安装的 RCM 插件。参见 [OpenAI 的网页端 MCP 说明](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。
 
 ## 3. 验证首次文件读取和 Git 状态
@@ -36,7 +37,7 @@ description: 在 ChatGPT 网页普通聊天中添加 Remote Code MCP 插件，�
 只执行这三个读取操作。
 ```
 
-工具调用成功时，`workspace_list` 会返回工作区 ID 和在线状态，`file_read` 会返回文件正文和 SHA-256 摘要，`git_status` 会返回该仓库的 Git 状态。可以在调用明细中核对实际执行的工具，并在 Console 的操作记录中查看工作区调用。请确认读取到的是测试仓库中的 `README.md`。
+工具调用成功时，`workspace_list` 会返回工作区 ID 和在线状态，`file_read` 会返回文件正文和 SHA-256 摘要，`git_status` 会返回该仓库的 Git 状态。可以在调用明细中核对实际执行的工具，并在 [官方控制台](https://rcmconsole.aysirui.com/) 的操作记录中查看工作区调用。请确认读取到的是测试仓库中的 `README.md`。
 
 ## 4. 在同一个聊天中修改文件
 

@@ -13,7 +13,7 @@ export default defineConfig({
   base: docsBase,
   lang: 'zh-CN',
   title: siteName,
-  description: 'Remote Code MCP 使用、部署与许可证文档',
+  description: 'Remote Code MCP 在线 MCP Server 服务、AI 工具接入与使用文档',
   head: [['link', { rel: 'icon', type: 'image/svg+xml', href: '/docs/favicon.svg' }]],
   // 保留默认 .html 地址，使 Nginx 可直接查找生成的静态页面。
   cleanUrls: false,
@@ -49,7 +49,7 @@ export default defineConfig({
       { text: '文档首页', link: '/' },
       { text: 'AI 工具接入', link: '/connect-clients' },
       { text: '使用指南', link: '/usage' },
-      { text: '部署指南', link: '/deployment' },
+      { text: '私有化部署', link: '/deployment' },
     ],
     sidebar: [
       {
@@ -59,13 +59,15 @@ export default defineConfig({
           {
             text: 'AI 工具接入',
             items: [
-              { text: '连接远程 MCP Server', link: '/connect-clients' },
+              { text: '接入总览', link: '/connect-clients' },
+              { text: 'WorkBuddy', link: '/connect-workbuddy' },
+              { text: '豆包', link: '/connect-doubao' },
               { text: 'ChatGPT 网页聊天', link: '/connect-chatgpt' },
             ],
           },
           { text: '使用指南', link: '/usage' },
-          { text: '部署指南', link: '/deployment' },
           { text: '工作区权限与数据流向', link: '/workspace-permissions' },
+          { text: '私有化部署', link: '/deployment' },
           { text: '许可证说明', link: '/licensing' },
         ],
       },

@@ -35,8 +35,8 @@ File、Git 和 Command 分别支持禁止、审批执行和完全允许。命令
 | RCM Server   | 转发执行所需的内容，可以接触转发数据。审计记录仅保存允许的脱敏元数据。         |
 | MCP 客户端   | 接收调用结果，例如文件正文或命令输出。后续保存和使用取决于客户端及其数据政策。 |
 
-Server 和 Console 的持久化业务数据不包括工作区绝对路径、文件正文、命令完整参数、审批详情和 AI 对话。代理和 APM 的日志由部署者配置，Runtime 的本地诊断日志也可能包含操作参数。查阅[项目安全说明](https://github.com/aysirui/remote-code-mcp/blob/main/SECURITY.md)和 [Runtime 终端日志](./usage.md#runtime-终端日志)。
+Server 和 Console 的持久化业务数据不包括工作区绝对路径、文件正文、命令完整参数、审批详情和 AI 对话。代理和 APM 的日志配置也会影响数据留存，Runtime 的本地诊断日志可能包含操作参数。查阅[项目安全说明](https://github.com/aysirui/remote-code-mcp/blob/main/SECURITY.md)和 [Runtime 终端日志](./usage.md#runtime-终端日志)。
 
 ## 如何收回访问权限？
 
-在 Runtime 中撤销对应 Server 下的工作区授权，可收回对该本地目录的访问。也可以在 Console 撤销某个设备或 AI 客户端的授权，阻止后续调用。客户端已经收到的内容由其自身的数据保留规则处理。
+在 Runtime 中撤销对应 Server 下的工作区授权，可收回对该本地目录的访问。也可以在 [官方控制台](https://rcmconsole.aysirui.com/) 撤销某个设备或 AI 客户端的授权，阻止后续调用。客户端已经收到的内容由其自身的数据保留规则处理。

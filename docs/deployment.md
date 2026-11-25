@@ -1,11 +1,13 @@
 ---
-title: Docker Compose 自托管部署
+title: 私有化部署
 description: 使用 Docker Compose、Dokploy 或现有 Traefik 自托管 Remote Code MCP。配置 MySQL、HTTPS、MCP 与 WebSocket 路由，并验证 Server 和 Runtime 的连接。
 ---
 
-# 用 Docker Compose 自托管 Remote Code MCP
+# 私有化部署 Remote Code MCP
 
-仓库提供通用 Docker Compose 和带 Traefik 路由的编排，两种方式均包含 Server、Console、官网、文档和 MySQL。Runtime 在存放代码的设备上单独启动，主动连接 Server。本文以单 Server 实例为例，部署完成后可按 [AI 工具接入指南](./connect-clients.md)验证首次工具调用。
+仓库提供通用 Docker Compose 和带 Traefik 路由的编排，两种方式均包含 Server、Console、官网、文档和 MySQL。Runtime 在存放代码的设备上单独启动，主动连接 Server。本文面向自行部署和运营 RCM 的用户，以单 Server 实例为例。日常用户可直接使用官方托管服务，无需执行本章步骤。
+
+私有化部署的账号、设备、工作区与官方平台相互独立。以下示例域名和环境变量均应替换为部署者实际配置。其他使用指南默认介绍官方服务；私有化用户参考其操作步骤时，必须将 Server、MCP Server 和 Console 地址分别替换为自己的 `PUBLIC_URL`、`${PUBLIC_URL}/mcp` 和 `CONSOLE_URL`，并使用自己部署的账号，不能混用官方地址或授权。
 
 项目阶段和信任边界见 [README](https://github.com/aysirui/remote-code-mcp/blob/main/README.md) 与 [SECURITY.md](https://github.com/aysirui/remote-code-mcp/blob/main/SECURITY.md)。
 

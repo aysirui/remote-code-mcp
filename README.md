@@ -1,12 +1,12 @@
 # Remote Code MCP
 
-Remote Code MCP（RCM）是开源、自托管的通用 AI MCP 远程编码工具。支持远程 MCP 的客户端可以在已授权的工作区读写文件、查看 Git 差异和运行开发命令。各客户端的配置入口与验证方法见 [AI 工具接入指南](docs/connect-clients.md)。
+Remote Code MCP（RCM）是面向 AI 客户端的通用在线 MCP Server 服务，支持远程编码、本地工作区管理及私有化部署。支持远程 MCP 的客户端可以在已授权的工作区读写文件、查看 Git 差异和运行开发命令。各客户端的配置入口与验证方法见 [AI 工具接入指南](docs/connect-clients.md)。
 
-[项目官网](https://rcm.aysirui.com/)
+[项目官网](https://rcm.aysirui.com/) · [官方控制台](https://rcmconsole.aysirui.com/) · [在线文档](https://rcm.aysirui.com/docs/)
 
 项目采用 TypeScript monorepo，包含云端 Server、产品官网、在线文档、Web Console、本机 Runtime 和共享协议。Runtime 主动建立出站 WebSocket 连接，无需将本机工作区的服务端口暴露到公网。
 
-**项目处于早期开发阶段。** 支持源码构建和单 Server 实例的 Docker Compose 部署。部署前请按 [部署指南](docs/deployment.md) 验证目标环境及 MCP 客户端兼容性，并了解 [安全边界与已知限制](SECURITY.md)。
+**项目处于早期开发阶段。** 首次接入请使用测试工作区验证客户端兼容性，并了解 [安全边界与已知限制](SECURITY.md)。
 
 ## 能做什么
 
@@ -47,7 +47,13 @@ Server 验证用户、设备及工作区归属，Runtime 再按本机授权核�
 
 ## 快速开始
 
-需要 Node.js 22+、pnpm 10.15.0（见 `packageManager`）、Git、MySQL 8.4，以及用于注册激活邮件的 SMTP 服务。Docker Compose 配置参考 [`docker/.env.example`](docker/.env.example)，部署步骤见 [部署文档](docs/deployment.md)。
+直接使用官方在线 MCP Server 服务。前往 [官方控制台](https://rcmconsole.aysirui.com/) 注册或登录，按 [Runtime 使用指南](docs/usage.md) 启动本机 Runtime，填写官方 Server 地址 `https://rcm.aysirui.com` 并完成配对，再将 `https://rcm.aysirui.com/mcp` 添加到支持 OAuth 的 AI 客户端。
+
+## 私有化部署
+
+以下步骤面向需要运行完整服务端的开发者和私有化部署用户，不是接入官方服务的必需步骤。Docker Compose 提供通用和 Traefik 两种独立编排，具体配置见 [私有化部署](docs/deployment.md)。
+
+需要 Node.js 22+、pnpm 10.15.0（见 `packageManager`）、Git、MySQL 8.4，以及用于注册激活邮件的 SMTP 服务。Docker Compose 配置参考 [`docker/.env.example`](docker/.env.example)，部署步骤见 [私有化部署](docs/deployment.md)。
 
 以下命令从仓库根目录执行，环境文件复制示例使用 PowerShell：
 
@@ -88,7 +94,7 @@ pnpm --filter @rcm/runtime build
 pnpm --filter @rcm/runtime start
 ```
 
-打开 Runtime 日志中的完整本地管理链接，添加服务器并完成设备配对，再授权一个测试工作区。具体流程、命令策略和多服务器管理见 [使用指南](docs/usage.md)。
+打开 Runtime 日志中的完整本地管理链接，添加服务器并完成设备配对，再授权一个测试工作区。具体流程、命令策略和多服务器管理见 [使用指南](docs/usage.md)，使用自己部署的 Server 和 Console 地址替换其中的官方地址。
 
 MCP 接入地址为 `https://你的服务器域名/mcp`，使用平台账号进行 OAuth 授权。公网 Server 必须使用 HTTPS，反向代理需支持 `/agent/connect` 的 WebSocket Upgrade。各客户端兼容性需要实测，建议先用 MCP Inspector 验证。
 
@@ -111,12 +117,10 @@ MCP 接入地址为 `https://你的服务器域名/mcp`，使用平台账号进�
 
 官网使用独立的 Astro 静态构建，在线文档使用独立的 VitePress 静态构建；两者与 Console 分开发布。官网提供 GitHub、文档和控制台入口，控制台的“使用文档”链接由公开文档地址配置。
 
-Docker 部署提供两种独立编排：通用的 `docker-compose.yml` 不绑定路由规则；`docker-compose.traefik.yml` 包含 Host/Path Traefik Labels，适用于已有 Traefik 的环境。两者不要合并叠加，具体配置见 [部署指南](docs/deployment.md)。
-
 官网开发运行 `pnpm dev:website`，文档开发运行 `pnpm docs:dev` 后访问 `http://127.0.0.1:5174/docs/`；与 `pnpm dev:console` 同时运行时，Console 开发环境可代理文档路径。单独构建与预览使用 `pnpm docs:build` 和 `pnpm docs:preview`；根目录 `pnpm build` 已包含文档构建。
 
 - [使用指南](docs/usage.md)：配对、工作区、审批、命令和 OAuth 排查。
-- [部署指南](docs/deployment.md)：环境配置、Docker Compose / Dokploy、迁移和上线验证。
+- [私有化部署](docs/deployment.md)：环境配置、Docker Compose / Dokploy、迁移和上线验证。
 - [贡献指南](CONTRIBUTING.md)：开发流程、检查命令及提交要求。
 - [安全说明与漏洞报告](SECURITY.md)：信任边界、已知限制和报告方式。
 - [项目协作规范](AGENTS.md)：模块职责、代码约束和迁移规则。

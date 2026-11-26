@@ -33,6 +33,8 @@ services:
       WEBSITE_URL: ${WEBSITE_URL:-${PUBLIC_URL}}
       ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL}
       PORT: 3000
+      # 已内置 WorkBuddy 深链（workbuddy://workbuddy/mcp/），无需额外配置；此项仅追加其他客户端规则。
+      OAUTH_CUSTOM_REDIRECT_RULES: ${OAUTH_CUSTOM_REDIRECT_RULES:-[]}
       SMTP_HOST: ${SMTP_HOST:?Set SMTP_HOST}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_SECURE: ${SMTP_SECURE:-false}

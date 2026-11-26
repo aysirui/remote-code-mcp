@@ -4,6 +4,8 @@ import { createHash } from 'node:crypto'
 import { Identity } from '../core/identity'
 import { hash, secret } from '../../common/security'
 import { OAuthService } from './oauth.service'
+import { parseOAuthRedirect } from './oauth-redirect'
+import { renderOAuthConsent } from './oauth-consent-page'
 import {
   origin,
   frontend,
@@ -70,8 +72,10 @@ export class OAuthController {
         'Missing OAuth parameters',
         'authorize.missing_parameters',
       )
+    const redirect = parseOAuthRedirect(q.redirect_uri)
     const client = await this.oauth.client(q.client_id)
     if (
+      !redirect ||
       !client ||
       !JSON.parse(client.redirectUris).includes(q.redirect_uri) ||
       q.code_challenge_method !== 'S256' ||
@@ -97,7 +101,7 @@ export class OAuthController {
     }
     // 仅允许提交到本站以及已经通过 client_id + redirect_uris 精确匹配的回调源。
     // Chromium 会对表单 POST 后的重定向链校验 form-action；只设 'self' 会拦截 OAuth 回跳。
-    const callbackOrigin = new URL(q.redirect_uri).origin
+    const callbackOrigin = redirect.cspSource
     res.setHeader(
       'Content-Security-Policy',
       "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' " +
@@ -122,11 +126,20 @@ export class OAuthController {
           `<input type="hidden" name="${esc(name)}" value="${esc(String(value))}">`,
       )
       .join('')
-    res
-      .type('html')
-      .send(
-        `<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>授权 MCP 客户端</title><style>body{font:16px system-ui;background:#f6f8fb;display:grid;place-items:center;min-height:90vh}main{background:white;border:1px solid #e5e7eb;padding:32px;border-radius:14px;max-width:430px}button{background:#2563eb;color:white;border:0;padding:12px 20px;border-radius:8px;cursor:pointer}</style><main><h2>授权 AI 客户端</h2><p>${esc(client.clientName || 'MCP Client')} 请求读取你已授权工作区的文件和工具能力。</p><p>登录账号：${esc(current.email)}</p><p>授权回调：<strong>${esc(new URL(q.redirect_uri).origin)}</strong></p><p>访问权限：mcp:tools。实际文件权限仍由本地 Runtime 控制。</p><form method="POST" action="/oauth/authorize">${fields}<input type="hidden" name="csrf" value="${csrf}"><input type="hidden" name="issued_at" value="${issuedAt}"><input type="hidden" name="consent_sig" value="${signature}"><button type="submit">同意并继续</button></form><p><small>不信任此客户端？关闭此页面即可拒绝。</small></p></main></html>`,
-      )
+    res.set('Cache-Control', 'no-store')
+    res.set('Referrer-Policy', 'no-referrer')
+    res.type('html').send(
+      renderOAuthConsent({
+        clientName: client.clientName || 'MCP Client',
+        email: current.email,
+        target: redirect.displayTarget,
+        type: redirect.type,
+        fields,
+        csrf,
+        issuedAt,
+        signature,
+      }),
+    )
   }
   /** 校验一次性授权确认的 CSRF/HMAC 绑定，生成授权码。 */
   @Post('oauth/authorize') async accept(

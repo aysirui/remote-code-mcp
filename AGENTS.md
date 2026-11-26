@@ -74,7 +74,7 @@ packages/protocol（共享 RPC、Zod Schema、类型契约）
 
 ### 4. 模块内聚，相关逻辑就近组织
 
-- 按业务领域组织文件；Controller、Service、Repository、校验、测试及内部辅助逻辑应尽量与所属模块相邻。
+- 按业务领域组织文件；Controller、Service、Repository、校验及内部辅助逻辑应尽量与所属模块相邻。所有测试文件必须放在所属应用或包的 test 目录下，不得与源代码混放。
 - 不把模块私有业务逻辑放入全局 `utils`、`common`、`shared` 或其他无业务归属的目录。
 - 只有确实跨领域使用的底层契约才放到 `packages/protocol`；数据库基础设施保留在 Server 的 infrastructure。
 - 新增文件之前先检查现有模块是否已有适当位置；优先修改现有实现，避免形成零散小文件。

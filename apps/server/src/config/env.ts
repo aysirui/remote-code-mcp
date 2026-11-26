@@ -7,6 +7,13 @@ const envFiles = [
   path.resolve(__dirname, '../../../../.env'),
 ]
 
+/** 自定义 OAuth 深链的协议、主机和路径范围。 */
+export interface OAuthRedirectRule {
+  scheme: string
+  hostname: string
+  pathPrefix: string
+}
+
 /** SMTP 发送配置，服务启动、注册和重发时校验完整性。 */
 export interface MailConfig {
   /** 邮件服务器主机名。 */
@@ -61,6 +68,43 @@ export class Env {
   /** 公开官网首页，供企微结果卡跳转；未单独配置时与 Compose 一样使用 PUBLIC_URL 的根路径。 */
   get websiteUrl(): string {
     return new URL('/', this.source.WEBSITE_URL || this.publicUrl).href
+  }
+
+  /** 内置 WorkBuddy 深链规则与部署者追加的 JSON 规则；错误配置阻止启动。 */
+  get oauthCustomRedirectRules(): OAuthRedirectRule[] {
+    const extra: unknown = JSON.parse(this.source.OAUTH_CUSTOM_REDIRECT_RULES || '[]')
+    if (
+      !Array.isArray(extra) ||
+      !extra.every(
+        (r) =>
+          r &&
+          typeof r.scheme === 'string' &&
+          /^[a-z][a-z0-9+.-]*$/.test(r.scheme) &&
+          ![
+            'http',
+            'https',
+            'file',
+            'ftp',
+            'javascript',
+            'data',
+            'blob',
+            'about',
+            'chrome',
+            'edge',
+            'mailto',
+            'tel',
+            'intent',
+            'ws',
+            'wss',
+          ].includes(r.scheme) &&
+          typeof r.hostname === 'string' &&
+          /^[a-z0-9.-]+$/.test(r.hostname) &&
+          typeof r.pathPrefix === 'string' &&
+          /^\/[a-zA-Z0-9/_.~-]*\/$/.test(r.pathPrefix),
+      )
+    )
+      throw new Error('OAUTH_CUSTOM_REDIRECT_RULES 必须为合法的深链规则数组')
+    return [{ scheme: 'workbuddy', hostname: 'workbuddy', pathPrefix: '/mcp/' }, ...extra]
   }
 
   /** 可选飞书企业自建应用；凭证不下发到 Console 或 Runtime。 */
@@ -159,6 +203,7 @@ export class Env {
     void this.appSecret
     void this.port
     void this.mail
+    void this.oauthCustomRedirectRules
     void this.feishuApproval
     void this.wecomApproval
     void this.dingtalkApproval

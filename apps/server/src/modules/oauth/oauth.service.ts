@@ -1,6 +1,6 @@
 import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common'
 import { hash, uid, secret } from '../../common/security'
-import { redirectOk } from './oauth-utils'
+import { parseOAuthRedirect } from './oauth-redirect'
 import { oauthLog } from './oauth-telemetry'
 import { canonicalResource } from './oauth-utils'
 import { OAuthRepository } from './oauth.repository'
@@ -42,7 +42,7 @@ export class OAuthService {
       !Array.isArray(uris) ||
       !uris.length ||
       uris.length > 8 ||
-      !uris.every((uri: unknown) => typeof uri === 'string' && redirectOk(uri))
+      !uris.every((uri: unknown) => typeof uri === 'string' && parseOAuthRedirect(uri))
     )
       throw new BadRequestException('Invalid redirect URIs')
     if (body.token_endpoint_auth_method && body.token_endpoint_auth_method !== 'none')
@@ -96,6 +96,7 @@ export class OAuthService {
     if (
       !client ||
       !JSON.parse(client.redirectUris).includes(body.redirect_uri) ||
+      !parseOAuthRedirect(body.redirect_uri) ||
       body.code_challenge_method !== 'S256' ||
       !/^[A-Za-z0-9_-]{43}$/.test(String(body.code_challenge || '')) ||
       body.response_type !== 'code' ||

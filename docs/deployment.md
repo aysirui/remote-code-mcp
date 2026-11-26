@@ -17,24 +17,25 @@ description: 使用 Docker Compose、Dokploy 或现有 Traefik 自托管 Remote 
 
 Server 环境变量优先级为：系统环境变量 → `apps/server/.env` → 根目录 `.env` → 默认值。服务、迁移及管理员初始化统一使用 `apps/server/src/config/env.ts`；执行数据库命令前务必确认目标库。
 
-| 变量                                      | 用途及默认行为                                                                                  |
-| ----------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`                            | Server 数据库连接；Compose 根据 MySQL 配置构造                                                  |
-| `APP_SECRET`                              | 必填，至少 32 字符的随机密钥                                                                    |
-| `PUBLIC_URL`                              | Server 外部地址；本地默认 `http://localhost:3000`                                               |
-| `WEBSITE_URL`                             | 官网公开地址，用于官网与文档的规范地址、sitemap 及企微结果卡首页链接；未配置时使用 `PUBLIC_URL` |
-| `CONSOLE_URL`                             | Console 外部地址，也用于邮箱激活链接；本地默认 `http://localhost:5173`                          |
-| `ADMIN_EMAIL`                             | 首个管理员邮箱；该地址不能通过公开注册获得管理员权限                                            |
-| `PORT`                                    | Server 端口，默认 3000；Compose 固定为 3000                                                     |
-| `SMTP_HOST`、`SMTP_USER`、`SMTP_PASSWORD` | 注册激活邮件所需的 SMTP 地址、账号和密码 / 授权码                                               |
-| `SMTP_PORT`、`SMTP_SECURE`                | 默认 587 / false，强制 STARTTLS；465 使用 true，启用隐式 TLS                                    |
-| `MAIL_FROM`                               | 可选，默认使用 `SMTP_USER`，须为服务商允许的发件地址                                            |
-| `MYSQL_PASSWORD`、`MYSQL_ROOT_PASSWORD`   | Compose 必填的数据库密码，使用不同的强密码                                                      |
-| `VITE_API_URL`                            | Console 构建时使用的 API 地址；Compose 自动使用 `PUBLIC_URL`                                    |
-| `DOCS_URL`                                | 在线文档完整 URL，供 Console 导航使用；默认 `${WEBSITE_URL:-${PUBLIC_URL}}/docs/`               |
-| `VITE_DOCS_URL`                           | Console 构建期文档地址，Compose 从 `DOCS_URL` 自动传入                                          |
-| `PUBLIC_SITE_URL`                         | Astro 和 VitePress 共用的构建期官网地址，由 Compose 自动注入                                    |
-| `PUBLIC_CONSOLE_URL`                      | 官网和文档的构建期控制台地址，由 Compose 自动注入                                               |
+| 变量                                      | 用途及默认行为                                                                                                                  |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                            | Server 数据库连接；Compose 根据 MySQL 配置构造                                                                                  |
+| `APP_SECRET`                              | 必填，至少 32 字符的随机密钥                                                                                                    |
+| `OAUTH_CUSTOM_REDIRECT_RULES`             | 可选，默认 `[]`，用于追加其他客户端的 OAuth 深链规则（JSON 数组）；已内置 WorkBuddy 深链 `workbuddy://workbuddy/mcp/`，无需配置 |
+| `PUBLIC_URL`                              | Server 外部地址；本地默认 `http://localhost:3000`                                                                               |
+| `WEBSITE_URL`                             | 官网公开地址，用于官网与文档的规范地址、sitemap 及企微结果卡首页链接；未配置时使用 `PUBLIC_URL`                                 |
+| `CONSOLE_URL`                             | Console 外部地址，也用于邮箱激活链接；本地默认 `http://localhost:5173`                                                          |
+| `ADMIN_EMAIL`                             | 首个管理员邮箱；该地址不能通过公开注册获得管理员权限                                                                            |
+| `PORT`                                    | Server 端口，默认 3000；Compose 固定为 3000                                                                                     |
+| `SMTP_HOST`、`SMTP_USER`、`SMTP_PASSWORD` | 注册激活邮件所需的 SMTP 地址、账号和密码 / 授权码                                                                               |
+| `SMTP_PORT`、`SMTP_SECURE`                | 默认 587 / false，强制 STARTTLS；465 使用 true，启用隐式 TLS                                                                    |
+| `MAIL_FROM`                               | 可选，默认使用 `SMTP_USER`，须为服务商允许的发件地址                                                                            |
+| `MYSQL_PASSWORD`、`MYSQL_ROOT_PASSWORD`   | Compose 必填的数据库密码，使用不同的强密码                                                                                      |
+| `VITE_API_URL`                            | Console 构建时使用的 API 地址；Compose 自动使用 `PUBLIC_URL`                                                                    |
+| `DOCS_URL`                                | 在线文档完整 URL，供 Console 导航使用；默认 `${WEBSITE_URL:-${PUBLIC_URL}}/docs/`                                               |
+| `VITE_DOCS_URL`                           | Console 构建期文档地址，Compose 从 `DOCS_URL` 自动传入                                                                          |
+| `PUBLIC_SITE_URL`                         | Astro 和 VitePress 共用的构建期官网地址，由 Compose 自动注入                                                                    |
+| `PUBLIC_CONSOLE_URL`                      | 官网和文档的构建期控制台地址，由 Compose 自动注入                                                                               |
 
 若数据库密码含 URL 保留字符，`DATABASE_URL` 中的密码段需要 URL 编码。当前 Compose 直接插值 `MYSQL_PASSWORD` 构造连接串，应使用足够长且无需 URL 编码的随机密码，或自行调整连接串配置。
 
@@ -188,3 +189,13 @@ RCM 使用 `DINGTALK_CARD_TEMPLATE_ID` 创建审批场景的卡片绑定，再�
 - **更换 App ID（包括测试版切到正式版）**：先为新应用配置发消息权限、长连接事件和卡片回调；有外部用户时，开启对外单聊并发布。将 Server 的 `FEISHU_APP_ID`、`FEISHU_APP_SECRET` 和 `FEISHU_BOT_LINK` 一起替换为新应用的值，再重启 Server。
 - 应用切换后，旧绑定不参与投递，旧绑定码和确认码不能用于新应用，旧卡片不能继续审批。用户在 Console 的「审批通知」中重新绑定飞书，用新链接开启私聊，发送新指令并填回确认码。成功后，系统事务性替换该账号的旧飞书绑定并默认开启通知，不影响其他渠道。不需要先解绑或手动改数据库。
 - 飞书的 `open_id` 按应用分配，不要把旧账号的 `open_id` 直接复制到新应用。未重新绑定的旧记录仍会留在库中，但不会被新应用使用；如果切回旧应用，尚未被替换的旧绑定会重新生效。重启会使本次连接上的待审批请求失效，建议先处理完再切换。
+
+### OAuth 客户端回调扩展
+
+Server 默认允许 HTTPS、本地 HTTP 回环地址及 `workbuddy://workbuddy/mcp/` 深链。WorkBuddy 规则已内置，无需在 `OAUTH_CUSTOM_REDIRECT_RULES` 中重复配置；默认 `[]` 仅表示没有额外规则，不会禁用内置规则。其他深链由部署者通过环境变量追加协议、主机及路径前缀，例如：
+
+```dotenv
+OAUTH_CUSTOM_REDIRECT_RULES='[{"scheme":"example-ai","hostname":"oauth","pathPrefix":"/callback/"}]'
+```
+
+修改后重启 Server。规则仅决定回调能否注册和使用，授权与 Token 兑换仍要求完整 URI 精确匹配。请仅配置可信应用的协议，并验证浏览器、操作系统及反向代理能够正确完成跳转。

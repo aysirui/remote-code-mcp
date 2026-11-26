@@ -83,4 +83,14 @@ describe('OAuth 授权确认安全边界', () => {
       'https://client.example/callback?code=issued-code&state=opaque-state',
     )
   })
+  test('深链确认以 303 携带授权码及 state 唤起客户端', async () => {
+    const state = setup()
+    const body = { ...state.body, redirect_uri: 'workbuddy://workbuddy/mcp/test' }
+    body.consent_sig = oauthConsentSignature(body, 'user-1', body.csrf, body.issued_at)
+    await state.controller.accept(state.req as never, state.response as never, body)
+    expect(state.response.redirect).toHaveBeenCalledWith(
+      303,
+      'workbuddy://workbuddy/mcp/test?code=issued-code&state=opaque-state',
+    )
+  })
 })

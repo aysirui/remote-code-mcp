@@ -9,14 +9,6 @@ export const esc = (s: string) =>
     /[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
   )
-export const redirectOk = (u: string) => {
-  try {
-    const x = new URL(u)
-    return x.protocol === 'https:' || x.hostname === '127.0.0.1' || x.hostname === 'localhost'
-  } catch {
-    return false
-  }
-}
 export const canonicalResource = () => origin().replace(/\/$/, '') + '/mcp'
 export const oauthConsentSignature = (
   fields: Record<string, unknown>,

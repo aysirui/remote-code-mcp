@@ -70,5 +70,8 @@ describe('OAuth 回调地址策略', () => {
     expect(html).toContain('本地应用深链')
     expect(html).toContain('&lt;script&gt;')
     expect(html).not.toContain('<script>')
+    expect(html).toContain('rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,')
+    expect(html).toContain('class="mark" src="data:image/svg+xml;base64,')
+    expect(html).not.toMatch(/\{\{[a-zA-Z]+\}\}/)
   })
 })

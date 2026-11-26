@@ -104,7 +104,7 @@ export class OAuthController {
     const callbackOrigin = redirect.cspSource
     res.setHeader(
       'Content-Security-Policy',
-      "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' " +
+      "default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action 'self' " +
         callbackOrigin +
         "; frame-ancestors 'none'; base-uri 'none'",
     )
@@ -125,7 +125,7 @@ export class OAuthController {
         ([name, value]) =>
           `<input type="hidden" name="${esc(name)}" value="${esc(String(value))}">`,
       )
-      .join('')
+      .join('\n          ')
     res.set('Cache-Control', 'no-store')
     res.set('Referrer-Policy', 'no-referrer')
     res.type('html').send(

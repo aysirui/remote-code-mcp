@@ -1,7 +1,7 @@
 {
   "name": "remote-code-mcp",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "通过远程 Server 安全访问本机授权代码工作区的 MCP 服务",
   "license": "AGPL-3.0-only",
   "repository": {

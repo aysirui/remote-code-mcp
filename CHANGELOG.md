@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.0](https://github.com/aysirui/remote-code-mcp/compare/v0.2.0...v0.3.0) (2026-11-26)
+
+
+### Features
+
+* **oauth:** 支持自定义协议深链回调并优化授权页面 ([137c91d](https://github.com/aysirui/remote-code-mcp/commit/137c91de02c925dd921b85e0696038fad14c1f4b))
+
+
+### Bug Fixes
+
+* **runtime:** 修复公开环境变量模板被敏感文件策略误拦截的问题 ([48a0f0f](https://github.com/aysirui/remote-code-mcp/commit/48a0f0fa89f322ed6a41f48133e94ef327975cf2))
+
+
+### Documentation
+
+* 文档调整 ([c31b226](https://github.com/aysirui/remote-code-mcp/commit/c31b226bf3b6a2826400892df8af72cdb983fb75))
+
 ## [0.2.0](https://github.com/aysirui/remote-code-mcp/compare/v0.1.0...v0.2.0) (2026-11-25)
 
 

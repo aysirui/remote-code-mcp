@@ -45,15 +45,31 @@ Server 环境变量优先级为：系统环境变量 → `apps/server/.env` → 
 
 本地准备 Compose 配置可使用：
 
-```powershell
+::: code-group
+
+```sh [Linux Shell]
+cp docker/.env.example .env
+```
+
+```powershell [Windows PowerShell]
 Copy-Item docker/.env.example .env
 ```
 
+:::
+
 填写 `.env` 后，可在已配置反向代理的环境运行：
 
-```sh
+::: code-group
+
+```sh [Linux Shell]
 docker compose up -d --build
 ```
+
+```powershell [Windows PowerShell]
+docker compose up -d --build
+```
+
+:::
 
 仓库 Compose 仅使用 `expose`，不向宿主机发布端口。独立使用 Compose 时，反向代理必须连接同一 Docker 网络；此命令本身不会提供公网域名和 HTTPS。MySQL 仅供内部服务访问。
 
@@ -81,11 +97,21 @@ MCP 路由使用 ``Path(`/mcp`) || PathPrefix(`/mcp/`)``（精确匹配根路径
 
 启动前创建/确认 Traefik 共享网络，确保 Traefik 自身已连接，并在 `.env` 中设置这些变量：
 
-```sh
+::: code-group
+
+```sh [Linux Shell]
 docker network create traefik-public
 docker compose -f docker-compose.traefik.yml config
 docker compose -f docker-compose.traefik.yml up -d --build
 ```
+
+```powershell [Windows PowerShell]
+docker network create traefik-public
+docker compose -f docker-compose.traefik.yml config
+docker compose -f docker-compose.traefik.yml up -d --build
+```
+
+:::
 
 如果网络已存在，跳过 `docker network create`；自定义 `TRAEFIK_NETWORK` 时替换上述网络名。先检查 `config` 输出的 Host 匹配、端口和网络，再部署。示例不发布宿主机端口，不包含 Traefik 容器，也不应与部署平台自动生成的同名路由重复配置；已有路由应先统一归属，避免冲突。
 
@@ -117,16 +143,63 @@ Server 容器启动顺序：
 
 长命令和细分错误码建议先升级 Server，再升级 Runtime；旧 Runtime 的成功响应不会被重新解读为失败。要支持最长命令及审批，检查 MCP 客户端、反向代理和上游网关对 `/mcp` 的等待限制是否能覆盖 Server 的 25 分钟 15 秒预算及网络余量。若调用仍在约 30 秒中断，分别检查客户端和代理，不要仅提高 Runtime 的命令超时。
 
-本地运行 `pnpm dev:website` 开发官网，`pnpm docs:dev` 开发文档。运行 `pnpm docs:build` 生成文档；根目录 `pnpm build` 同时包含官网与文档构建。
+本地开发官网和文档、构建文档或整个项目，可按需执行以下命令（两个开发服务分别在独立终端运行）：
+
+::: code-group
+
+```sh [Linux Shell]
+pnpm dev:website
+pnpm docs:dev
+pnpm docs:build
+pnpm build
+```
+
+```powershell [Windows PowerShell]
+pnpm dev:website
+pnpm docs:dev
+pnpm docs:build
+pnpm build
+```
+
+:::
+
+## 本地运行与公网联调
+
+无需部署服务器即可从源码运行 RCM，并通过 ngrok 接入 AI 客户端。完整步骤见 [本地运行与 ngrok 公网接入](./local-development.md)。本章其余内容面向正式私有化部署。
 
 ## 数据库迁移
 
 首次安装及部署只执行已提交的迁移。开发中修改数据库结构时：
 
 1. 修改 `apps/server/src/infrastructure/database/schema.ts`。
-2. 在本地手动运行 `pnpm db:generate`。
+2. 在本地手动生成迁移。
+
+   ::: code-group
+
+   ```sh [Linux Shell]
+   pnpm db:generate
+   ```
+
+   ```powershell [Windows PowerShell]
+   pnpm db:generate
+   ```
+
+   :::
+
 3. 检查生成的 SQL、快照和 `meta/_journal.json`，与 Schema 一起提交。
-4. 在隔离测试数据库执行 `pnpm db:migrate` 验证后，再安排目标环境升级。
+4. 在隔离测试数据库执行迁移验证后，再安排目标环境升级。
+
+   ::: code-group
+
+   ```sh [Linux Shell]
+   pnpm db:migrate
+   ```
+
+   ```powershell [Windows PowerShell]
+   pnpm db:migrate
+   ```
+
+   :::
 
 不要手写或直接修改迁移文件，也不要在部署环境生成迁移。生产升级前应备份数据库并安排维护窗口，避免多个实例同时执行迁移。
 
@@ -170,15 +243,76 @@ Server 为每个已配置渠道创建一个 Bot，由同一个 BotManager 启动
 
 钉钉能回复绑定确认码，表示机器人私聊文字接口可用。若审批卡片仍未收到，查看 Server 日志中的「审批卡片投递失败（dingtalk）」及平台错误码，并核对当前应用的「互动卡片实例写权限」、已发布的卡片模板 ID 和机器人编码。
 
-Docker Compose 从部署目录的 `.env` 或启动时指定的 `--env-file` 传入渠道配置，`apps/server/.env` 用于本地运行。修改部署变量后须重新创建 Server 容器。可用 `docker compose logs --since=15m server | grep dingtalk` 排查未配置、连接失败、账号未绑定或停用、平台拒投。若部署时使用了自定义 Compose 文件，日志命令也使用同一份文件。
+Docker Compose 从部署目录的 `.env` 或启动时指定的 `--env-file` 传入渠道配置，`apps/server/.env` 用于本地运行。修改部署变量后须重新创建 Server 容器。可用以下命令排查未配置、连接失败、账号未绑定或停用、平台拒投。若部署时使用了自定义 Compose 文件，日志命令也使用同一份文件。
+
+::: code-group
+
+```sh [Linux Shell]
+docker compose logs --since=15m server | grep dingtalk
+```
+
+```powershell [Windows PowerShell]
+docker compose logs --since=15m server | Select-String dingtalk
+```
+
+:::
 
 `createAndDeliver` 返回 HTTP 403 时，先进入钉钉开发者后台对应应用的「权限管理」，搜索并开通「互动卡片实例写权限」（`Card.Instance.Write`）。以演示或 Server 的错误码为准。若显示 `IpNotInWhiteList`，核对实际运行环境的出口 IP 与该应用的白名单。
 
-本地联调时，将测试机器人配置放在 `apps/server/.env`，在仓库根目录先执行 `pnpm --filter @rcm/protocol --filter @rcm/bot-sdk build`，再执行 `pnpm dev:server`。打开本地 Console 完成绑定并启用渠道，通过连接该 Server 的 Runtime 发起一条新的待审批请求。可在 Server 日志中查看「审批机器人已连接」「审批卡片已投递」和「收到审批按钮事件」。重启前发出的历史卡片仍可查看，本地进程只处理它自己发出的未结算卡片。
+本地联调时，将测试机器人配置放在 `apps/server/.env`，在仓库根目录执行以下命令：
 
-若只测试企业微信，在终端设置 `BOT_DEMO_USER_ID` 为企微通讯录成员账号，再运行 `node --env-file=apps/server/.env packages/bot-sdk/dist/demo/wecom.js`。请用测试机器人，或先停掉使用同一企微凭证的其他进程。演示发送一张带多行详情的按钮卡片。点击后按终端的「企微已推送卡片按钮回调」「演示按钮已处理」和「企微已确认卡片更新」区分消息到达、按钮处理和卡片更新。企微结果卡必须带有效链接：Server 使用 `WEBSITE_URL` 的官网首页，不再使用控制台审批路径；未配置时与 Compose 官网一样使用 `PUBLIC_URL` 根路径，官网独立部署时必须显式设置 `WEBSITE_URL`。`card_action.type = 0` 会被实际接口以 `42045` 拒绝。点击窗口内更新原卡后不再补发结果文本，窗口不可用时才发送文本通知。
+::: code-group
 
-若只测试钉钉发卡，在 PowerShell 中设置 `$env:BOT_DEMO_USER_ID` 为当前组织中测试用户的 `staffId`，再运行 `node --env-file=apps/server/.env packages/bot-sdk/dist/demo/dingtalk.js`。演示发出通用卡片，不执行工作区操作。当前模板组件 ID 为 `reject`、`agree` 时，先设置 `$env:DINGTALK_DEMO_BUTTON_IDS = 'reject,agree'`。分别重启 demo 测试两个按钮，确认原卡替换且平台回执成功后再部署；具体阶段提示见 Bot SDK README。使用同一凭证的 Server 和演示应分开运行。
+```sh [Linux Shell]
+pnpm --filter @rcm/protocol --filter @rcm/bot-sdk build
+pnpm dev:server
+```
+
+```powershell [Windows PowerShell]
+pnpm --filter @rcm/protocol --filter @rcm/bot-sdk build
+pnpm dev:server
+```
+
+:::
+
+打开本地 Console 完成绑定并启用渠道，通过连接该 Server 的 Runtime 发起一条新的待审批请求。可在 Server 日志中查看「审批机器人已连接」「审批卡片已投递」和「收到审批按钮事件」。重启前发出的历史卡片仍可查看，本地进程只处理它自己发出的未结算卡片。
+
+若只测试企业微信，将示例账号替换为企微通讯录成员账号：
+
+::: code-group
+
+```sh [Linux Shell]
+BOT_DEMO_USER_ID='成员账号' node --env-file=apps/server/.env packages/bot-sdk/dist/demo/wecom.js
+```
+
+```powershell [Windows PowerShell]
+$env:BOT_DEMO_USER_ID = '成员账号'
+node --env-file=apps/server/.env packages/bot-sdk/dist/demo/wecom.js
+```
+
+:::
+
+请用测试机器人，或先停掉使用同一企微凭证的其他进程。演示发送一张带多行详情的按钮卡片。点击后按终端的「企微已推送卡片按钮回调」「演示按钮已处理」和「企微已确认卡片更新」区分消息到达、按钮处理和卡片更新。企微结果卡必须带有效链接：Server 使用 `WEBSITE_URL` 的官网首页，不再使用控制台审批路径；未配置时与 Compose 官网一样使用 `PUBLIC_URL` 根路径，官网独立部署时必须显式设置 `WEBSITE_URL`。`card_action.type = 0` 会被实际接口以 `42045` 拒绝。点击窗口内更新原卡后不再补发结果文本，窗口不可用时才发送文本通知。
+
+若只测试钉钉发卡，将示例 staffId 替换为当前组织中测试用户的 staffId。当前模板组件 ID 为 `reject`、`agree` 时，按以下示例设置按钮 ID；其他模板按实际情况调整或省略该变量。
+
+::: code-group
+
+```sh [Linux Shell]
+export BOT_DEMO_USER_ID='staffId'
+export DINGTALK_DEMO_BUTTON_IDS='reject,agree'
+node --env-file=apps/server/.env packages/bot-sdk/dist/demo/dingtalk.js
+```
+
+```powershell [Windows PowerShell]
+$env:BOT_DEMO_USER_ID = 'staffId'
+$env:DINGTALK_DEMO_BUTTON_IDS = 'reject,agree'
+node --env-file=apps/server/.env packages/bot-sdk/dist/demo/dingtalk.js
+```
+
+:::
+
+演示发出通用卡片，不执行工作区操作。分别重启 demo 测试两个按钮，确认原卡替换且平台回执成功后再部署；具体阶段提示见 Bot SDK README。使用同一凭证的 Server 和演示应分开运行。
 
 RCM 使用 `DINGTALK_CARD_TEMPLATE_ID` 创建审批场景的卡片绑定，再使用独立的应用凭证建立连接。Server 显式适配现有审批模板：第一个组件 `reject` 绑定 `firstLabel` / `firstId` / `showFirst`，显示「拒绝」并对应 `deny`；第二个组件 `agree` 绑定 `secondLabel` / `secondId` / `showSecond`，显示「批准」并对应 `approve`。变量名必须是 `Label` 拼写；误用 `Lable` 会使按钮取不到文案。两个按钮均使用服务端回传，参数名为 `botSdkAction`；参数值可分别绑定 `firstId`、`secondId`，SDK 也可直接通过组件 ID 映射动作。SDK 通用默认组件仍为 `button1`、`button2`，不包含审批模板的专用配置。Bot SDK 本身支持群聊和私聊；RCM Server 在自己的绑定和审批处理器中显式限制私聊，群卡业务应自行调用 SDK。钉钉新增诊断只记录模板字段名及回调校验结果，不记录用户 ID 或卡片正文；收到卡片不代表收到按钮回调。只用 SDK 接收或发送钉钉文本，以及运行 `--lookup-user-id` 时，无需设置卡片模板。
 
@@ -186,7 +320,21 @@ RCM 使用 `DINGTALK_CARD_TEMPLATE_ID` 创建审批场景的卡片绑定，再�
 
 查询模式若显示「已收到钉钉机器人消息回调」，可按后续提示核对组织或口令。发消息后没有这行日志时，检查应用的机器人消息接收模式是否为 Stream、当前版本是否已发布，以及是否有其他环境在使用同一机器人凭证。
 
-若 HTTP 请求成功但卡片投递失败，可在同一 PowerShell 窗口先设置 `$env:DINGTALK_DEMO_DEBUG = '1'`，再运行演示。此前应重新构建 Bot SDK。调试只额外输出钉钉返回的单条投递说明，可能包含收件人信息，分享前请遮盖身份信息。
+若 HTTP 请求成功但卡片投递失败，可在同一终端设置调试变量，再运行演示。此前应重新构建 Bot SDK：
+
+::: code-group
+
+```sh [Linux Shell]
+export DINGTALK_DEMO_DEBUG=1
+```
+
+```powershell [Windows PowerShell]
+$env:DINGTALK_DEMO_DEBUG = '1'
+```
+
+:::
+
+调试只额外输出钉钉返回的单条投递说明，可能包含收件人信息，分享前请遮盖身份信息。
 
 #### 轮换飞书凭证或更换应用
 

@@ -125,9 +125,12 @@ AI 可以根据真实结果继续分析、修正并发起后续操作。RCM 本�
 - [Console 使用指南](./console.md) — 设备管理、工作区管理、AI 连接、审批通知及操作记录。
 - [许可证说明](./licensing.md) — 了解项目许可证、版权和分发要求。
 
-## 私有化部署
+## 其他运行方式
 
-RCM 开放源代码并支持 [私有化部署](./deployment.md)。
+RCM 开放源代码。除了推荐的官方在线服务，还可以选择：
+
+- [本地运行与 ngrok 公网接入](./local-development.md)：在自己的电脑启动 Server、Console 和 Runtime，借助 HTTPS 隧道接入 AI 客户端，无需官方 RCM 服务或云服务器。
+- [私有化部署](./deployment.md)：使用 Docker Compose、Dokploy 或 Traefik 在自己的服务器长期部署。
 
 ## 项目资料
 

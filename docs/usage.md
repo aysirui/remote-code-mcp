@@ -11,7 +11,9 @@ description: 配置和配对 Remote Code MCP Runtime，授权本地工作区、�
 
 本机需要 Node.js 22+、pnpm 10.15.0 和 Git。在终端执行：
 
-```sh
+::: code-group
+
+```sh [Linux Shell]
 git clone https://github.com/aysirui/remote-code-mcp.git
 cd remote-code-mcp
 corepack enable
@@ -20,6 +22,18 @@ pnpm --filter @rcm/protocol build
 pnpm --filter @rcm/runtime build
 pnpm --filter @rcm/runtime start
 ```
+
+```powershell [Windows PowerShell]
+git clone https://github.com/aysirui/remote-code-mcp.git
+cd remote-code-mcp
+corepack enable
+pnpm install --frozen-lockfile
+pnpm --filter @rcm/protocol build
+pnpm --filter @rcm/runtime build
+pnpm --filter @rcm/runtime start
+```
+
+:::
 
 启动后打开终端打印的完整本地管理链接，按下文配对官方 Server。
 

@@ -49,6 +49,7 @@ export default defineConfig({
       { text: '文档首页', link: '/' },
       { text: 'AI 工具接入', link: '/connect-clients' },
       { text: '使用指南', link: '/usage' },
+      { text: '本地运行', link: '/local-development' },
       { text: '私有化部署', link: '/deployment' },
     ],
     sidebar: [
@@ -73,6 +74,7 @@ export default defineConfig({
             ],
           },
           { text: '工作区权限与数据流向', link: '/workspace-permissions' },
+          { text: '本地运行与 ngrok 公网接入', link: '/local-development' },
           { text: '私有化部署', link: '/deployment' },
           { text: '许可证说明', link: '/licensing' },
         ],

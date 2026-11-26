@@ -122,6 +122,7 @@ MCP 接入地址为 `https://你的服务器域名/mcp`，使用平台账号进�
 官网开发运行 `pnpm dev:website`，文档开发运行 `pnpm docs:dev` 后访问 `http://127.0.0.1:5174/docs/`；与 `pnpm dev:console` 同时运行时，Console 开发环境可代理文档路径。单独构建与预览使用 `pnpm docs:build` 和 `pnpm docs:preview`；根目录 `pnpm build` 已包含文档构建。
 
 - [使用指南](docs/usage.md)：配对、工作区、审批、命令和 OAuth 排查。
+- [本地运行与 ngrok 公网接入](docs/local-development.md)：从源码运行 Server、Console 和 Runtime，通过临时 HTTPS 隧道接入 AI 客户端，无需官方在线服务。
 - [私有化部署](docs/deployment.md)：环境配置、Docker Compose / Dokploy、迁移和上线验证。
 - [贡献指南](CONTRIBUTING.md)：开发流程、检查命令及提交要求。
 - [安全说明与漏洞报告](SECURITY.md)：信任边界、已知限制和报告方式。

@@ -5,13 +5,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { LocalWorkspace } from '../../workspace/state'
 import { readBufferChecked } from '../file/file-operations'
-import {
-  assertSafeRelativePath,
-  resolveSafe,
-  isSensitive,
-  SENSITIVE_NAMES,
-  SENSITIVE_EXTENSIONS,
-} from '../file/path-safety'
+import { assertSafeRelativePath, resolveSafe, isSensitive } from '../file/path-safety'
 
 const exec = promisify(execFile)
 const nullDevice = process.platform === 'win32' ? 'NUL' : '/dev/null'
@@ -51,18 +45,6 @@ const gitEnv = () => ({
   GIT_ATTR_NOSYSTEM: '1',
 })
 
-/**
- * Git Diff 与文件工具共用同一份敏感名称/扩展名清单。
- * 同时排除同名文件和目录内容，并忽略大小写，避免 Git 读取入口绕过 Hard Deny。
- */
-const diffExcludes = [
-  ':(exclude,icase,glob)**/.env*',
-  ...SENSITIVE_NAMES.flatMap((name) => [
-    ':(exclude,icase,glob)**/' + name,
-    ':(exclude,icase,glob)**/' + name + '/**',
-  ]),
-  ...SENSITIVE_EXTENSIONS.map((extension) => ':(exclude,icase,glob)**/*.' + extension),
-]
 const inside = (root: string, item: string) => item === root || item.startsWith(root + path.sep)
 
 /** Git 仓库必须恰好位于授权工作区根目录，且 .git 元数据不得指向工作区外。 */
@@ -161,17 +143,15 @@ export async function gitLog(workspace: LocalWorkspace, limit = 10) {
 export async function gitDiff(workspace: LocalWorkspace) {
   const root = await assertWorkspaceGitRoot(workspace)
   // Git 直接读取工作树，不经过文件工具；先验证候选文件，防止硬链接和私有目录旁路。
-  const { stdout: tracked } = await exec(
-    'git',
-    [...gitArgs, 'ls-files', '-z', '--', '.', ...diffExcludes],
-    {
-      cwd: root,
-      env: gitEnv(),
-      timeout: 5000,
-      maxBuffer: 512 * 1024,
-    },
+  const { stdout: tracked } = await exec('git', [...gitArgs, 'ls-files', '-z', '--', '.'], {
+    cwd: root,
+    env: gitEnv(),
+    timeout: 5000,
+    maxBuffer: 512 * 1024,
+  })
+  const files = [...new Set(tracked.split('\0').filter(Boolean))].filter(
+    (file) => !file.split('/').some(isSensitive),
   )
-  const files = tracked.split('\0').filter(Boolean)
   if (files.length > 2000) throw Error('GIT_TOO_MANY_FILES')
   for (const file of files) {
     try {
@@ -183,21 +163,40 @@ export async function gitDiff(workspace: LocalWorkspace) {
       await resolveSafe(workspace, path.posix.dirname(file))
     }
   }
-  const { stdout } = await exec(
-    'git',
-    [
-      ...gitArgs,
-      'diff',
-      '--no-ext-diff',
-      '--no-textconv',
-      '--ignore-submodules=all',
-      '--',
-      '.',
-      ...diffExcludes,
-    ],
-    { cwd: root, env: gitEnv(), timeout: 10000, maxBuffer: 512 * 1024 },
-  )
-  return stdout
+  // 仅传递已校验的字面路径；禁用重命名检测，避免读取被过滤的旧路径。
+  // 分批限制 Windows 命令行长度，合并结果仍遵守原有输出上限。
+  let output = ''
+  let batch: string[] = []
+  let length = 0
+  async function appendDiff() {
+    if (!batch.length) return
+    const { stdout } = await exec(
+      'git',
+      [
+        ...gitArgs,
+        '--literal-pathspecs',
+        'diff',
+        '--no-ext-diff',
+        '--no-textconv',
+        '--no-renames',
+        '--ignore-submodules=all',
+        '--',
+        ...batch,
+      ],
+      { cwd: root, env: gitEnv(), timeout: 10000, maxBuffer: 512 * 1024 },
+    )
+    output += stdout
+    if (Buffer.byteLength(output) > 512 * 1024) throw Error('FILE_TOO_LARGE')
+    batch = []
+    length = 0
+  }
+  for (const file of files) {
+    if (length + file.length * 2 + 4 > 12000) await appendDiff()
+    batch.push(file)
+    length += file.length * 2 + 4
+  }
+  await appendDiff()
+  return output
 }
 
 /** 读取暂存区文件清单并执行数量、路径和敏感文件 Hard Deny。 */

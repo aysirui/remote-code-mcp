@@ -23,13 +23,13 @@ services:
     build: { context: ., dockerfile: docker/Dockerfile.server }
     restart: unless-stopped
     environment:
-      DATABASE_URL: mysql://rcm:${MYSQL_PASSWORD}@mysql:3306/remote_code_mcp
-      APP_SECRET: ${APP_SECRET:?Set APP_SECRET}
+      PORT: 3000
       PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL}
       CONSOLE_URL: ${CONSOLE_URL:?Set CONSOLE_URL}
       WEBSITE_URL: ${WEBSITE_URL:-${PUBLIC_URL}}
+      DATABASE_URL: mysql://rcm:${MYSQL_PASSWORD}@mysql:3306/remote_code_mcp
+      APP_SECRET: ${APP_SECRET:?Set APP_SECRET}
       ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL}
-      PORT: 3000
       # 已内置 WorkBuddy 深链（workbuddy://workbuddy/mcp/），无需额外配置；此项仅追加其他客户端规则。
       OAUTH_CUSTOM_REDIRECT_RULES: ${OAUTH_CUSTOM_REDIRECT_RULES:-[]}
       # SMTP 凭据仅来自环境配置，不写入镜像。

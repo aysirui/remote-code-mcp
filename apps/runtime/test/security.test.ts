@@ -110,7 +110,7 @@ test('write requires current hash, and stale hash fails', async () => {
 test('sensitive files cannot be read directly', async () => {
   await writeFile(path.join(workspaceRoot, '.env'), 'SECRET=DO_NOT_EXPOSE')
   await expect(execute(ws(), rpc('file.read', { path: '.env' }))).rejects.toThrow(
-    'HARD_DENY_PATH_SEGMENT',
+    'SENSITIVE_PATH_DENIED',
   )
 })
 
@@ -260,4 +260,31 @@ test('删除树中的敏感项不能通过审批放行', async () => {
   await expect(
     deleteChecked(ws(true), 'sensitive-delete', true, undefined, 'approved'),
   ).rejects.toThrow('SENSITIVE_PATH_DENIED')
+})
+
+test('公开环境模板支持读取、修改、列表与搜索，真实配置仍拒绝', async () => {
+  await writeFile(path.join(workspaceRoot, '.env.example'), 'PORT=3000')
+  await writeFile(path.join(workspaceRoot, '.env.local'), 'PORT=secret')
+  await expect(execute(ws(), rpc('file.read', { path: '.env.example' }))).resolves.toMatchObject({
+    content: 'PORT=3000',
+  })
+  await execute(
+    ws(true),
+    rpc('file.write', {
+      path: '.env.example',
+      content: 'PORT=3001',
+      expectedSha256: sha('PORT=3000'),
+    }),
+  )
+  await expect(execute(ws(), rpc('file.read', { path: '.env.local' }))).rejects.toThrow(
+    'SENSITIVE_PATH_DENIED',
+  )
+  const listing = JSON.stringify(await execute(ws(), rpc('file.list', { path: '.' })))
+  expect(listing).toContain('.env.example')
+  expect(listing).not.toContain('.env.local')
+  const matches = JSON.stringify(
+    await execute(ws(), rpc('file.search', { path: '.', query: 'PORT=' })),
+  )
+  expect(matches).toContain('PORT=3001')
+  expect(matches).not.toContain('PORT=secret')
 })

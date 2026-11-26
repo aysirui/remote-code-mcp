@@ -53,9 +53,14 @@ export const SENSITIVE_EXTENSIONS = [
 const forbidden = new Set<string>(SENSITIVE_NAMES)
 const sensitiveExtensionPattern = new RegExp('\\.(' + SENSITIVE_EXTENSIONS.join('|') + ')$', 'i')
 
+/** 公开 .env 示例模板允许访问，真实环境配置及其他敏感名称仍然禁止。 */
 export const isSensitive = (name: string) => {
   const n = name.toLowerCase()
-  return forbidden.has(n) || n.startsWith('.env.') || sensitiveExtensionPattern.test(n)
+  return (
+    forbidden.has(n) ||
+    (n.startsWith('.env.') && !n.endsWith('.example')) ||
+    sensitiveExtensionPattern.test(n)
+  )
 }
 
 /** 路径语法级 Hard Deny：在审批前调用，禁止路径穿越、ADS、设备名和控制字符。 */
@@ -75,13 +80,13 @@ export function assertSafeRelativePath(requested: string, allowRoot = false) {
 
   if (requested === '.' && allowRoot) return
   const segments = requested.split('/')
+  if (segments.some(isSensitive)) throw Error('SENSITIVE_PATH_DENIED')
   if (
     segments.some(
       (segment) =>
         !segment ||
         segment === '.' ||
         segment === '..' ||
-        isSensitive(segment) ||
         /[. ]$/.test(segment) ||
         /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$/i.test(segment),
     )
@@ -126,7 +131,7 @@ export async function resolveSafe(
   const rootStat = await fs.lstat(w.root)
   if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) throw Error('HARD_DENY_SYMLINK')
   await assertNotRuntimeData(root)
-  if (root.split(path.sep).some(isSensitive)) throw Error('HARD_DENY_SENSITIVE_WORKSPACE_ROOT')
+  if (root.split(path.sep).some(isSensitive)) throw Error('SENSITIVE_PATH_DENIED')
   const target = path.resolve(root, requested)
   await assertNotRuntimeData(target)
   if (!inside(root, target)) throw Error('HARD_DENY_OUTSIDE_WORKSPACE')
@@ -156,6 +161,6 @@ export async function resolveSafe(
   if (!inside(root, checked)) throw Error('HARD_DENY_SYMLINK_ESCAPE')
   await assertNotRuntimeData(checked)
   if (path.relative(root, checked).split(path.sep).some(isSensitive))
-    throw Error('HARD_DENY_PATH_SEGMENT')
+    throw Error('SENSITIVE_PATH_DENIED')
   return target
 }

@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { gitDiff } from '../src/operations/git/git-operations'
+import { gitDiff, gitStatus, gitAdd, gitCommit } from '../src/operations/git/git-operations'
 import { isSensitive } from '../src/operations/file/path-safety'
 
 let workspaceRoot: string
@@ -90,4 +90,31 @@ test('Git diff excludes sensitive directories, filenames and extensions', async 
   ]) {
     expect(diff).not.toContain(secret)
   }
+})
+
+test('Git 支持公开环境模板且不展示真实环境文件 Diff', async () => {
+  const templates = ['.env.example', '.env.docker.example', '.ENV.PRODUCTION.EXAMPLE']
+  const secrets = ['.env', '.env.local', '.ENV.PRODUCTION']
+  for (const file of [...templates, ...secrets])
+    await writeFile(path.join(workspaceRoot, file), 'BASELINE')
+  execFileSync('git', ['add', '-f', '--', ...templates, ...secrets], { cwd: workspaceRoot })
+  execFileSync('git', ['commit', '-m', 'Baseline'], { cwd: workspaceRoot })
+  for (const file of templates)
+    await writeFile(path.join(workspaceRoot, file), 'PUBLIC_TEMPLATE_CHANGED')
+  for (const file of secrets)
+    await writeFile(path.join(workspaceRoot, file), 'SECRET_VALUE_CHANGED')
+  const diff = await gitDiff(workspace())
+  expect(diff).toContain('PUBLIC_TEMPLATE_CHANGED')
+  expect(diff).not.toContain('SECRET_VALUE_CHANGED')
+  const status = await gitStatus(workspace())
+  for (const file of templates) expect(status).toContain(file)
+  expect(status).not.toContain('.env.local')
+  const writable = { ...workspace(), permissions: { read: true, write: true } }
+  await expect(gitAdd(writable, templates)).resolves.toMatchObject({
+    staged: expect.arrayContaining(templates),
+  })
+  await expect(gitCommit(writable, 'Update public templates')).resolves.toMatchObject({
+    committed: expect.arrayContaining(templates),
+  })
+  await expect(gitAdd(writable, ['.env.local'])).rejects.toThrow('SENSITIVE_PATH_DENIED')
 })

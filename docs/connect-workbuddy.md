@@ -1,58 +1,129 @@
 ---
 title: WorkBuddy MCP 接入与使用
-description: WorkBuddy 自定义连接器接入 Remote Code MCP 官方在线 MCP Server 的配置、OAuth 授权、远程文件与 Git 操作验证指南。
+description: 在腾讯 WorkBuddy 中添加 RCM 自定义 MCP 连接器，完成 OAuth 授权，通过聊天远程访问本地代码工作区、修改文件和执行 Git 操作。
 ---
 
 # WorkBuddy MCP 接入与使用
 
-通过 WorkBuddy 的自定义连接器接入 RCM 官方在线 MCP Server，在具备相应工具调用能力的会话中远程访问已授权的本地代码工作区。
+通过 WorkBuddy 的自定义连接器接入 Remote Code MCP（RCM）官方在线 MCP Server，即可在聊天中访问已授权设备的代码工作区。文件、Git 和命令操作由目标设备上的 Runtime 执行。
 
-> 当前 RCM 尚未完成 WorkBuddy 端到端联调，以下步骤为接入验证指南，不代表已确认兼容全部客户端版本。
+本文的连接配置、OAuth 授权及设备和工作区列表查询已在 WorkBuddy v5.8.3 中验证。不同版本的界面可能略有差异。
 
 ## 接入前准备
 
 - 在 [官方控制台](https://rcmconsole.aysirui.com/) 注册或登录 RCM 账号。
-- 按 [Runtime 使用指南](./usage.md) 启动本机 Runtime，连接官方 Server `https://rcm.aysirui.com`，完成设备配对并授权一个只读测试 Git 仓库。
-- 使用与 Runtime 配对相同的 RCM 账号完成 OAuth 授权。
+- 按 [Runtime 使用指南](./usage.md) 启动目标设备上的 Runtime，连接官方 Server `https://rcm.aysirui.com`，完成设备配对并授权测试工作区。
+- 安装并登录 WorkBuddy。首次验证建议使用只读测试工作区。
 
-## 配置 WorkBuddy MCP 连接
+## 1. 添加自定义连接器
 
-1. 打开 WorkBuddy 的「连接器」，进入「自定义连接器」的 MCP 服务管理。
-2. 添加远程 MCP 服务。若使用 `mcp.json`，将以下 `rcm` 条目合并到原有的 `mcpServers`。
+打开 WorkBuddy，依次进入：
+
+**专家 · 技能 · 连接器 → 连接器 → 自定义连接器**
+
+左侧导航进入「专家 · 技能 · 连接器」，在页面顶部切换到「连接器」标签，再点击右上角的「自定义连接器」，进入 MCP 服务管理界面。
+
+点击右上角「添加 MCP」，进入 `mcp.json` 配置编辑界面。
+
+## 2. 配置 RCM MCP Server
+
+在 `mcp.json` 中添加以下配置：
 
 ```json
 {
   "mcpServers": {
     "rcm": {
-      "type": "http",
-      "url": "https://rcm.aysirui.com/mcp"
+      "type": "streamableHttp",
+      "url": "https://rcm.aysirui.com/mcp",
+      "timeout": 30000
     }
   }
 }
 ```
 
-3. 保存配置。出现认证提示时，进入浏览器完成 RCM 授权，再回到客户端确认是否列出工具。若当前版本只支持手工填写预注册的 OAuth 凭据，先确认它能否使用 RCM 的动态注册流程。
+| 配置项 | 说明 |
+| --- | --- |
+| `rcm` | 连接器名称，便于在聊天中指定使用 RCM。 |
+| `type` | 使用 Streamable HTTP 传输方式。 |
+| `url` | RCM 官方在线 MCP Server 地址。 |
+| `timeout` | 客户端请求超时时间，单位为毫秒，此处设置为 30 秒。 |
 
-参考 [腾讯设计的 WorkBuddy MCP 接入文档](https://docs.ardot.tencent.com/ardot-mcp/ide-integration.html#workbuddy)。
+如果已有其他 MCP 服务，只需将 `rcm` 条目合并到原有的 `mcpServers` 对象中，不要覆盖其他连接器配置。
 
-## 使用 RCM 访问本地工作区
+## 3. 启用连接器并完成 OAuth 授权
 
-完成连接和授权后，在支持调用该 MCP 工具的对话中输入：
+1. 编辑完成后，返回 MCP 服务列表，开启 `rcm` 右侧的开关。
+2. WorkBuddy 提示进行授权时，点击「连接」按钮，浏览器将打开 RCM OAuth 授权页面。
+3. 如需登录，请使用与 Runtime 配对时相同的 RCM 账号。确认当前账号、客户端名称（WorkBuddy Connector）、授权范围（`mcp:tools`）及 WorkBuddy 本地应用回调地址。
+4. 点击「同意授权并继续」。浏览器会尝试打开 WorkBuddy；如果浏览器弹出打开本地应用的确认提示，请确认来源可信后允许打开。
+5. 返回 WorkBuddy，确认 `rcm` 已启用。
+
+OAuth 授权并不意味着 AI 可以访问电脑上的任意文件。实际操作仍受 Runtime 的工作区授权、读写权限及审批策略限制。
+
+## 4. 确认 MCP 工具加载成功
+
+返回「MCP 服务管理」，展开 `rcm`。连接成功时，连接器旁显示绿色状态标识，且可以看到已启用的工具列表。
+
+本次验证中显示 16/16 个工具已启用，包括：
+
+| 工具类别 | 工具 |
+| --- | --- |
+| 设备与工作区 | `device_list`、`workspace_list` |
+| 文件 | `file_list`、`file_read`、`file_search`、`file_write`、`file_mkdir`、`file_move`、`file_delete` |
+| Git | `git_status`、`git_log`、`git_diff`、`git_add`、`git_commit` |
+| 命令 | `command_list`、`command_run` |
+
+工具数量以当前服务版本实际返回为准。
+
+## 5. 在聊天中使用 RCM
+
+完成授权后，关闭 MCP 服务管理窗口，新建任务即可通过自然语言指定使用 RCM 连接器，无需手动填写工作区 ID 或工具参数。
+
+### 查看设备和工作区
 
 ```text
-调用 RCM 的 workspace_list，找到名为「测试仓库」的工作区。
-使用返回的 workspaceId 调用 file_read 读取 README.md，再调用 git_status 查看 Git 状态。
-仅执行上述读取操作，不修改文件。
+使用 rcm 连接器查看设备列表和工作区列表。
 ```
 
-将「测试仓库」替换为 Runtime 中的实际工作区名称。在客户端工具调用记录和 [官方控制台](https://rcmconsole.aysirui.com/) 核对结果。
+WorkBuddy 会调用 RCM 查询当前账号下的设备及已授权工作区，并展示查询结果。设备在线状态与工作区权限可以帮助你选择后续操作的目标。
 
-首次只读调用成功后，可以在 Runtime 中开启测试工作区的写入权限，将 File 策略设为「审批执行」，再请求 AI 修改测试文件。写入已有文件时应先读取文件并使用返回的 SHA-256 作为 expectedSha256，核对本机审批内容后再批准。具体规则见 [工作区权限与数据流向](./workspace-permissions.md)。
+### 读取代码文件
+
+```text
+使用 rcm 工具读取 rcm-test 工作区中的 README.md，并介绍这个项目的用途，不要修改文件。
+```
+
+### 修改工作区文件
+
+先在 Runtime 中开启目标测试工作区的写入权限，首次写入建议使用审批策略。
+
+```text
+使用 rcm 工具修改 rcm-test 工作区中的 README.md，
+在末尾添加一行“通过 WorkBuddy 更新”。
+先读取文件，再进行修改，完成后重新读取确认结果。
+不要提交 Git。
+```
+
+将示例中的工作区名称、文件路径和修改要求替换为实际内容。若 Runtime 要求审批，请在本机核对操作后批准。修改已有文件时，应使用读取结果中的 SHA-256 进行写入版本检查。
+
+### 查看 Git 状态
+
+```text
+使用 rcm 查看 rcm-test 工作区的 Git 状态和未提交的代码差异，不要修改文件。
+```
+
+如需操作另一台设备上的代码，只需指定该设备已授权且在线的工作区。可以在 WorkBuddy 的工具调用记录及 [官方控制台](https://rcmconsole.aysirui.com/) 的操作记录中核对执行情况。
 
 ## 常见问题
 
-- 无法添加服务或完成 OAuth：确认客户端支持远程 Streamable HTTP、动态客户端注册（DCR）、授权码及 PKCE（S256）。参见 [MCP 接入验证](./usage.md#mcp-接入验证)。
-- 工作区列表为空：确认授权账号与 Runtime 配对账号一致，目标工作区已经授权。
-- 文件读取失败：确认设备在线、工作区启用且 File 策略允许读取。
+| 现象 | 处理方式 |
+| --- | --- |
+| 开启 RCM 后无法连接 | 检查 `mcp.json` 格式、`streamableHttp` 类型及官方 `/mcp` 地址。 |
+| 授权后未返回 WorkBuddy | 检查浏览器是否阻止打开本地应用，允许可信的 WorkBuddy 回调后返回客户端。 |
+| 未显示工具列表 | 确认 OAuth 授权完成，在 MCP 服务管理中刷新 RCM 连接器。 |
+| 工作区列表为空 | 确认 OAuth 使用的 RCM 账号与 Runtime 配对账号一致，并已授权工作区。 |
+| 工作区存在但文件操作失败 | 检查目标设备是否在线、工作区是否启用及读写权限和审批策略。 |
+
+更多权限说明见 [工作区权限与数据流向](./workspace-permissions.md)。
 
 [返回 AI 工具接入总览](./connect-clients.md)。

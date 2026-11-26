@@ -62,10 +62,16 @@ export default defineConfig({
               { text: '接入总览', link: '/connect-clients' },
               { text: 'WorkBuddy', link: '/connect-workbuddy' },
               { text: '豆包', link: '/connect-doubao' },
-              { text: 'ChatGPT 网页聊天', link: '/connect-chatgpt' },
+              { text: 'ChatGPT', link: '/connect-chatgpt' },
             ],
           },
-          { text: '使用指南', link: '/usage' },
+          {
+            text: '使用指南',
+            items: [
+              { text: 'Runtime 使用指南', link: '/usage' },
+              { text: 'Console 使用指南', link: '/console' },
+            ],
+          },
           { text: '工作区权限与数据流向', link: '/workspace-permissions' },
           { text: '私有化部署', link: '/deployment' },
           { text: '许可证说明', link: '/licensing' },

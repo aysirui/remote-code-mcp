@@ -119,9 +119,10 @@ AI 可以根据真实结果继续分析、修正并发起后续操作。RCM 本�
 - [AI 工具接入总览](./connect-clients.md) — 查看官方 MCP 地址、OAuth 要求和首次调用验证。
   - [WorkBuddy MCP 接入与使用](./connect-workbuddy.md)
   - [豆包 MCP 接入与使用](./connect-doubao.md)
-  - [ChatGPT 网页聊天远程编码](./connect-chatgpt.md)
+  - [ChatGPT MCP 接入与使用](./connect-chatgpt.md)
 - [工作区权限与数据流向](./workspace-permissions.md) — 了解 AI 可以访问哪些文件、哪些操作要审批，以及各组件保存什么。
-- [Runtime 使用指南](./usage.md) — 管理工作区、本机命令、多服务器连接和 OAuth 授权。
+- [Runtime 使用指南](./usage.md) — 安装、设备配对、工作区授权、权限设置、审批和本机命令。
+- [Console 使用指南](./console.md) — 设备管理、工作区管理、AI 连接、审批通知及操作记录。
 - [许可证说明](./licensing.md) — 了解项目许可证、版权和分发要求。
 
 ## 私有化部署

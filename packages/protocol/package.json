@@ -1,6 +1,6 @@
 {
   "name": "@rcm/protocol",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Remote Code MCP 的共享 RPC 契约、Schema 与类型",
   "license": "AGPL-3.0-only",
   "repository": {

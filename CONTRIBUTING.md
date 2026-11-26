@@ -23,6 +23,8 @@ pnpm format:check
 
 优先运行受影响模块的检查，例如 `pnpm --filter @rcm/runtime test`。`pnpm check` 包含 lint、类型检查和格式检查，不包含测试与构建。
 
+安装依赖时会通过 Husky 自动启用 Git pre-commit 钩子。提交前 lint-staged 仅使用现有 Prettier 配置格式化暂存文件，并自动更新暂存区；未暂存的修改不纳入提交。格式化失败时提交会中止。已有工作区更新依赖后可执行 `pnpm prepare` 启用钩子。CI 和 Docker 安装依赖时设置 `HUSKY=0`，继续执行原有质量检查。
+
 跨平台文本统一使用 UTF-8 和 LF。可对本次修改文件执行 `pnpm exec prettier --write <文件路径>`，避免无关的全仓库格式变动。
 
 ## 修改约定

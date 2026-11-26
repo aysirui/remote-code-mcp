@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="zh-CN">
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>授权 AI 客户端 · Remote Code MCP</title>
-    <link rel="icon" type="image/svg+xml" href="{{favicon}}">
+    <link rel="icon" type="image/svg+xml" href="{{favicon}}" />
     <style>
       * {
         box-sizing: border-box;
@@ -18,7 +18,13 @@
         padding: 28px 16px;
         background: radial-gradient(ellipse at 50% 0, #e0eaff, transparent 62%), #f5f7fb;
         color: #17243a;
-        font: 15px/1.6 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+        font:
+          15px/1.6 system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          'Microsoft YaHei',
+          sans-serif;
       }
 
       .shell {
@@ -33,7 +39,7 @@
         gap: 10px;
         margin-bottom: 22px;
         font-weight: 700;
-        letter-spacing: .01em;
+        letter-spacing: 0.01em;
       }
 
       .mark {
@@ -56,13 +62,13 @@
         font-size: 12px;
         color: #526886;
         font-weight: 650;
-        letter-spacing: .08em;
+        letter-spacing: 0.08em;
       }
 
       h1 {
         font-size: 25px;
         line-height: 1.35;
-        letter-spacing: -.03em;
+        letter-spacing: -0.03em;
         margin: 8px 0 10px;
       }
 
@@ -186,33 +192,44 @@
   <body>
     <main class="shell">
       <header class="brand">
-        <img class="mark" src="{{logo}}" width="36" height="36" alt="" aria-hidden="true">
+        <img class="mark" src="{{logo}}" width="36" height="36" alt="" aria-hidden="true" />
         Remote Code MCP
       </header>
       <section class="card" aria-labelledby="heading">
         <div class="eyebrow">安全授权 · OAUTH 2.0</div>
         <h1 id="heading">连接 AI 客户端</h1>
-        <p><span class="client">{{clientName}}</span> 请求访问你的 RCM 工作区工具。</p>
+        <p>
+          <span class="client">{{clientName}}</span>
+          请求访问你的 RCM 工作区工具。
+        </p>
         <div class="details">
           <div class="item">
             <span class="label">当前登录账号</span>
             <div class="value">{{email}}</div>
           </div>
           <div class="item">
-            <span class="label">授权回调 <span class="tag">{{typeLabel}}</span></span>
+            <span class="label">
+              授权回调
+              <span class="tag">{{typeLabel}}</span>
+            </span>
             <div class="value">{{target}}</div>
           </div>
         </div>
         <section class="permissions">
           <h2>授权范围 · mcp:tools</h2>
-          <p>客户端可请求已授权工作区的文件、Git 和命令工具。实际操作仍受 Runtime 的权限与审批策略限制。</p>
+          <p>
+            客户端可请求已授权工作区的文件、Git 和命令工具。实际操作仍受 Runtime
+            的权限与审批策略限制。
+          </p>
         </section>
-        <div class="notice">客户端名称由其自行提供。请确认发起授权的应用及回调地址可信后再继续。</div>
+        <div class="notice">
+          客户端名称由其自行提供。请确认发起授权的应用及回调地址可信后再继续。
+        </div>
         <form method="POST" action="/oauth/authorize">
           {{fields}}
-          <input type="hidden" name="csrf" value="{{csrf}}">
-          <input type="hidden" name="issued_at" value="{{issuedAt}}">
-          <input type="hidden" name="consent_sig" value="{{signature}}">
+          <input type="hidden" name="csrf" value="{{csrf}}" />
+          <input type="hidden" name="issued_at" value="{{issuedAt}}" />
+          <input type="hidden" name="consent_sig" value="{{signature}}" />
           <button type="submit">同意授权并继续 →</button>
         </form>
         <p class="cancel">不希望授权？关闭此页面即可取消。</p>

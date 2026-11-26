@@ -41,11 +41,11 @@ description: 在腾讯 WorkBuddy 中添加 RCM 自定义 MCP 连接器，完成 
 }
 ```
 
-| 配置项 | 说明 |
-| --- | --- |
-| `rcm` | 连接器名称，便于在聊天中指定使用 RCM。 |
-| `type` | 使用 Streamable HTTP 传输方式。 |
-| `url` | RCM 官方在线 MCP Server 地址。 |
+| 配置项    | 说明                                               |
+| --------- | -------------------------------------------------- |
+| `rcm`     | 连接器名称，便于在聊天中指定使用 RCM。             |
+| `type`    | 使用 Streamable HTTP 传输方式。                    |
+| `url`     | RCM 官方在线 MCP Server 地址。                     |
 | `timeout` | 客户端请求超时时间，单位为毫秒，此处设置为 30 秒。 |
 
 如果已有其他 MCP 服务，只需将 `rcm` 条目合并到原有的 `mcpServers` 对象中，不要覆盖其他连接器配置。
@@ -66,12 +66,12 @@ OAuth 授权并不意味着 AI 可以访问电脑上的任意文件。实际操�
 
 本次验证中显示 16/16 个工具已启用，包括：
 
-| 工具类别 | 工具 |
-| --- | --- |
-| 设备与工作区 | `device_list`、`workspace_list` |
-| 文件 | `file_list`、`file_read`、`file_search`、`file_write`、`file_mkdir`、`file_move`、`file_delete` |
-| Git | `git_status`、`git_log`、`git_diff`、`git_add`、`git_commit` |
-| 命令 | `command_list`、`command_run` |
+| 工具类别     | 工具                                                                                            |
+| ------------ | ----------------------------------------------------------------------------------------------- |
+| 设备与工作区 | `device_list`、`workspace_list`                                                                 |
+| 文件         | `file_list`、`file_read`、`file_search`、`file_write`、`file_mkdir`、`file_move`、`file_delete` |
+| Git          | `git_status`、`git_log`、`git_diff`、`git_add`、`git_commit`                                    |
+| 命令         | `command_list`、`command_run`                                                                   |
 
 工具数量以当前服务版本实际返回为准。
 
@@ -116,13 +116,13 @@ WorkBuddy 会调用 RCM 查询当前账号下的设备及已授权工作区，�
 
 ## 常见问题
 
-| 现象 | 处理方式 |
-| --- | --- |
-| 开启 RCM 后无法连接 | 检查 `mcp.json` 格式、`streamableHttp` 类型及官方 `/mcp` 地址。 |
-| 授权后未返回 WorkBuddy | 检查浏览器是否阻止打开本地应用，允许可信的 WorkBuddy 回调后返回客户端。 |
-| 未显示工具列表 | 确认 OAuth 授权完成，在 MCP 服务管理中刷新 RCM 连接器。 |
-| 工作区列表为空 | 确认 OAuth 使用的 RCM 账号与 Runtime 配对账号一致，并已授权工作区。 |
-| 工作区存在但文件操作失败 | 检查目标设备是否在线、工作区是否启用及读写权限和审批策略。 |
+| 现象                     | 处理方式                                                                |
+| ------------------------ | ----------------------------------------------------------------------- |
+| 开启 RCM 后无法连接      | 检查 `mcp.json` 格式、`streamableHttp` 类型及官方 `/mcp` 地址。         |
+| 授权后未返回 WorkBuddy   | 检查浏览器是否阻止打开本地应用，允许可信的 WorkBuddy 回调后返回客户端。 |
+| 未显示工具列表           | 确认 OAuth 授权完成，在 MCP 服务管理中刷新 RCM 连接器。                 |
+| 工作区列表为空           | 确认 OAuth 使用的 RCM 账号与 Runtime 配对账号一致，并已授权工作区。     |
+| 工作区存在但文件操作失败 | 检查目标设备是否在线、工作区是否启用及读写权限和审批策略。              |
 
 更多权限说明见 [工作区权限与数据流向](./workspace-permissions.md)。
 

@@ -19,3 +19,6 @@ pnpm-lock.yaml
 
 # Release Please 自动生成的版本日志，不参与格式检查。
 /CHANGELOG.md
+
+# Husky 自动生成的本地钩子脚本不参与格式检查。
+.husky/_

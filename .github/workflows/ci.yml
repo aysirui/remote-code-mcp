@@ -12,6 +12,8 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      HUSKY: '0'
     steps:
       - uses: actions/checkout@v4
       # pnpm 版本由根 package.json 的 packageManager 字段统一指定。

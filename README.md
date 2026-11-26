@@ -113,6 +113,8 @@ MCP 接入地址为 `https://你的服务器域名/mcp`，使用平台账号进�
 
 覆盖已有文件须提供当前 `expectedSha256`；命令执行需要工作区写权限。工具输入和输出契约以 [共享协议](packages/protocol/src/mcp-tools.ts) 为准。
 
+`file_read` 和 `file_write` 默认使用 UTF-8 文本（最多 512 KiB）。指定 `encoding: "stream"` 返回需 OAuth 授权的一次性上传或下载地址，原文件按字节流传输（最多 64 MiB）。小图片可用 `encoding: "preview"` 直接在 MCP 中查看。传输详情和示例见 [文件读写](docs/usage.md#文件读写)。
+
 ## 文档与贡献
 
 官网使用独立的 Astro 静态构建，在线文档使用独立的 VitePress 静态构建；两者与 Console 分开发布。官网提供 GitHub、文档和控制台入口，控制台的“使用文档”链接由公开文档地址配置。

@@ -23,6 +23,8 @@ export interface RequestContext {
   approvals: WriteApprovalQueue
   events: LocalEvents
   isConnected: () => boolean
+  /** 设备连接关闭时取消正在进行的文件流。 */
+  connectionSignal?: AbortSignal
   /** 将临时审批通知发送到提交当前请求的设备连接。 */
   sendApproval?: (event: ApprovalEvent) => void
 }
@@ -56,6 +58,9 @@ export async function handleGatewayMessage(
   const req = RpcRequestSchema.parse(message)
   const startedAt = Date.now()
   const logContext = { requestId: req.id, operation: req.operation }
+  // 文件正文和一次性流传输凭证不写入诊断日志。
+  const usesFileContent = req.operation === 'file.read' || req.operation === 'file.write'
+  const logPayload = usesFileContent ? undefined : req.payload
   const fallback = req.operation.startsWith('file.')
     ? 'FILE_OPERATION_FAILED'
     : req.operation.startsWith('git.')
@@ -63,7 +68,7 @@ export async function handleGatewayMessage(
       : 'COMMAND_CONFIGURATION_FAILED'
   let stage: 'authorization' | 'validation' | 'approval' | 'execution' = 'authorization'
   let commandAudit: CommandAudit | undefined
-  logger.debug('rpc.received', { ...logContext, payload: req.payload })
+  logger.debug('rpc.received', { ...logContext, payload: logPayload })
   try {
     const workspace = serverWorkspaces(context.config, context.server).find(
       (item) => item.id === req.workspaceId,
@@ -98,9 +103,34 @@ export async function handleGatewayMessage(
     assertRequestAccess(currentWorkspace, req)
     stage = 'execution'
     logger.debug('rpc.execution.started', { ...logContext, stage })
-    const data = await execute(currentWorkspace, req, approvalResourceHash, (command) => {
-      commandAudit = command
-    })
+    // 长时间上传结束后再次检查授权与目录绑定，防止临时文件落到已撤销的工作区。
+    const fileTransfer = usesFileContent
+      ? {
+          gateway: context.server.gateway,
+          signal: AbortSignal.any([
+            AbortSignal.timeout(Math.max(1, req.deadlineAt - Date.now())),
+            ...(context.connectionSignal ? [context.connectionSignal] : []),
+          ]),
+          assertActive: () => {
+            if (!context.isConnected()) throw Error('CONNECTION_REPLACED')
+            const latest = serverWorkspaces(context.config, context.server).find(
+              (item) => item.id === req.workspaceId,
+            )
+            if (!latest || latest.root !== currentWorkspace.root)
+              throw Error('WORKSPACE_PERMISSION_REVOKED')
+            assertRequestAccess(latest, req)
+          },
+        }
+      : undefined
+    const data = await execute(
+      currentWorkspace,
+      req,
+      approvalResourceHash,
+      (command) => {
+        commandAudit = command
+      },
+      fileTransfer,
+    )
     logger.info('rpc.completed', { ...logContext, durationMs: Date.now() - startedAt })
     return { kind: 'response', id: req.id, success: true, data, commandAudit }
   } catch (error: unknown) {
@@ -112,7 +142,7 @@ export async function handleGatewayMessage(
     const result = error instanceof CommandResultError ? error.result : undefined
     logger.error('rpc.failed', {
       ...logContext,
-      payload: req.payload,
+      payload: logPayload,
       stage: error instanceof ZodError ? 'validation' : stage,
       code,
       durationMs: Date.now() - startedAt,

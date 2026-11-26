@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { gitDiff, gitStatus, gitAdd, gitCommit } from '../src/operations/git/git-operations'
-import { isSensitive } from '../src/operations/file/path-safety'
+import { isSensitive } from '../src/workspace/path-safety'
 
 let workspaceRoot: string
 const workspace = () => ({

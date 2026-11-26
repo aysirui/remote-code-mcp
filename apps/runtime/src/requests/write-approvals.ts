@@ -14,7 +14,7 @@ import {
 } from '../operations/command/command-operations'
 import { gitApprovalContext } from '../operations/git/git-operations'
 import { inspectDeleteTarget } from '../operations/file/file-operations'
-import { resolveSafe, assertSafeRelativePath } from '../operations/file/path-safety'
+import { resolveSafe, assertSafeRelativePath } from '../workspace/path-safety'
 
 /** 本地审批页面可展示的完整任务；不会把此对象上传或落库。 */
 export interface WriteApprovalInfo {
@@ -125,10 +125,18 @@ export class WriteApprovalQueue {
     if (req.operation === 'file.write') {
       const payload = ToolInputs['file.write'].parse(req.payload)
       pathLabel = payload.path
-      preview = payload.content.slice(0, 2000)
-      previewTruncated = payload.content.length > 2000
-      bytes = Buffer.byteLength(payload.content, 'utf8')
-      externalDetails = `路径：${payload.path}\n写入大小：${bytes} 字节（正文仅本机可见）`
+      // 原文件上传在审批完成后才消费，审批只展示声明的原始字节数。
+      if (payload.encoding === 'stream') {
+        bytes = payload.size!
+        preview = '写入二进制文件'
+        externalDetails = `路径：${payload.path}\n写入大小：${bytes} 字节（二进制）`
+      } else {
+        const content = payload.content!
+        bytes = Buffer.byteLength(content, 'utf8')
+        preview = content.slice(0, 2000)
+        previewTruncated = content.length > 2000
+        externalDetails = `路径：${payload.path}\n写入大小：${bytes} 字节（正文仅本机可见）`
+      }
     } else if (req.operation === 'file.mkdir') {
       const payload = ToolInputs['file.mkdir'].parse(req.payload)
       pathLabel = payload.path

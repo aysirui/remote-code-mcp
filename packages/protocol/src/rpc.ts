@@ -2,6 +2,9 @@ import { z } from 'zod'
 import { Operations } from './operations'
 import { WorkspacePublicSchema } from './workspace'
 
+/** 控制消息上限，为 UTF-8 文本的最坏 JSON 转义及信封留出空间。 */
+export const RPC_MESSAGE_LIMIT_BYTES = 4 * 1024 * 1024
+
 /** 普通 RPC 等待预算，也是 Runtime 本机单次审批的最长等待时间。 */
 export const RPC_APPROVAL_TIMEOUT_MS = 5 * 60_000
 
@@ -43,6 +46,8 @@ export const RpcPublicErrorCodes = [
   'FILE_CHANGED',
   'FILE_TOO_LARGE',
   'FILE_TOO_LARGE_OR_UNSUPPORTED',
+  'FILE_TRANSFER_FAILED',
+  'FILE_SIZE_MISMATCH',
   'NOT_DIRECTORY',
   'INVALID_PATH',
   'INVALID_MOVE',

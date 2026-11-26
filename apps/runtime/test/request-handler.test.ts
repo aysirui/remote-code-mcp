@@ -1,7 +1,9 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, realpath, rm, truncate, writeFile } from 'node:fs/promises'
 import os from 'node:os'
+import { createServer, type Server } from 'node:http'
+import { once } from 'node:events'
+import type { AddressInfo } from 'node:net'
 import { randomUUID, createHash } from 'node:crypto'
-import { sha } from '../src/operations/file/file-operations'
 import path from 'node:path'
 import { handleGatewayMessage, type RequestContext } from '../src/requests/request-handler'
 import { activeServer, migrateConfig } from '../src/workspace/state'
@@ -12,14 +14,16 @@ import { commandExecutionProvider } from '../src/operations/command/command-prov
 import {
   COMMAND_MAX_TIMEOUT_MS,
   COMMAND_RPC_TIMEOUT_MS,
+  FILE_BINARY_LIMIT_BYTES,
   RPC_APPROVAL_TIMEOUT_MS,
 } from '@rcm/protocol'
 
 let dir: string
 let workspaceId: string
 let context: RequestContext
+let relay: Server | undefined
 beforeEach(async () => {
-  dir = await mkdtemp(path.join(os.tmpdir(), 'rcm-request-'))
+  dir = await realpath(await mkdtemp(path.join(os.tmpdir(), 'rcm-request-')))
   await writeFile(path.join(dir, 'README.md'), 'before')
   const config = migrateConfig({
     gateway: 'https://example.com',
@@ -46,8 +50,16 @@ beforeEach(async () => {
 })
 afterEach(async () => {
   context.approvals.cancelAll()
+  if (relay) {
+    relay.closeAllConnections()
+    await new Promise<void>((resolve) => relay!.close(() => resolve()))
+    relay = undefined
+  }
   await rm(dir, { recursive: true, force: true, maxRetries: 3 })
 })
+
+/** 计算测试文本实际写入字节的 SHA-256。 */
+const shaText = (content: string) => createHash('sha256').update(content).digest('hex')
 
 const rpc = (operation: string, payload: unknown) =>
   JSON.stringify({
@@ -66,7 +78,7 @@ test('allow 策略直接读写文件，不产生本机审批', async () => {
     rpc('file.write', {
       path: 'README.md',
       content: 'after',
-      expectedSha256: sha('before'),
+      expectedSha256: shaText('before'),
     }),
     context,
   )
@@ -77,13 +89,192 @@ test('allow 策略直接读写文件，不产生本机审批', async () => {
   expect(context.approvals.list()).toHaveLength(0)
 })
 
+/** 本机 HTTP 中继替身只发送或接收原始字节；请求处理器和文件系统均使用实际实现。 */
+async function startRelay() {
+  const uploads = new Map<string, Buffer>()
+  const downloads = new Map<string, Buffer>()
+  relay = createServer(async (req, res) => {
+    const id = req.url!.split('/')[3]
+    if (req.method === 'GET') {
+      res.end(uploads.get(id))
+      return
+    }
+    const chunks: Buffer[] = []
+    for await (const chunk of req) chunks.push(chunk as Buffer)
+    downloads.set(id, Buffer.concat(chunks))
+    res.statusCode = 204
+    res.end()
+  })
+  relay.listen(0, '127.0.0.1')
+  await once(relay, 'listening')
+  context.server.gateway = 'http://127.0.0.1:' + (relay.address() as AddressInfo).port
+  return { uploads, downloads }
+}
+
+/** 每次传输使用独立的 ID 和仅设备可见的凭据。 */
+function transferRef() {
+  return { id: randomUUID(), key: 'a'.repeat(64) }
+}
+
+/** PNG、GIF 和 WebP 为单像素样本；JPEG 样本覆盖两个常用扩展名。 */
+const pixelPng =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAALSURBVBhXY2AAAgAABQABqtXIUQAAAABJRU5ErkJggg=='
+
+test.each([
+  ['pixel.png', 'image/png', pixelPng],
+  ['pixel.jpg', 'image/jpeg', undefined],
+  ['pixel.jpeg', 'image/jpeg', undefined],
+  ['pixel.gif', 'image/gif', 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'],
+  ['pixel.webp', 'image/webp', 'UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEAAUAmJaQAA3AA/v89WAAAAA=='],
+  ['误命名.png', 'application/octet-stream', '/wABAg=='],
+  ['empty.bin', 'application/octet-stream', ''],
+])('原始字节流无损读写 %s，并按内容识别 MIME', async (filename, mimeType, base64) => {
+  const { uploads, downloads } = await startRelay()
+  const bytes =
+    base64 !== undefined
+      ? Buffer.from(base64, 'base64')
+      : await readFile(path.join(__dirname, 'fixtures', 'pixel.jpg'))
+  const upload = transferRef()
+  const download = transferRef()
+  uploads.set(upload.id, bytes)
+  const sha256 = createHash('sha256').update(bytes).digest('hex')
+  const target = { path: filename, encoding: 'stream' }
+  const write = await handleGatewayMessage(
+    rpc('file.write', { ...target, transfer: upload, size: bytes.length }),
+    context,
+  )
+  expect(write).toMatchObject({ success: true, data: { sha256, written: true } })
+  expect(await readFile(path.join(dir, filename))).toEqual(bytes)
+  const read = await handleGatewayMessage(
+    rpc('file.read', { ...target, transfer: download }),
+    context,
+  )
+  expect(read).toMatchObject({
+    success: true,
+    data: { encoding: 'stream', mimeType, size: bytes.length, sha256 },
+  })
+  expect(read?.data).not.toHaveProperty('content')
+  expect(downloads.get(download.id)).toEqual(bytes)
+})
+
+test('同一旧版本的并发流式覆盖只能成功一次', async () => {
+  const { uploads } = await startRelay()
+  const target = { path: 'pixel.png', encoding: 'stream' }
+  const original = Buffer.from(pixelPng, 'base64')
+  await writeFile(path.join(dir, target.path), original)
+  const expectedSha256 = createHash('sha256').update(original).digest('hex')
+  const contents = [Buffer.from([1, 2, 3]), Buffer.from([4, 5, 6])]
+  const writes = await Promise.all(
+    contents.map((bytes) => {
+      const transfer = transferRef()
+      uploads.set(transfer.id, bytes)
+      return handleGatewayMessage(
+        rpc('file.write', {
+          ...target,
+          expectedSha256,
+          transfer,
+          size: bytes.length,
+        }),
+        context,
+      )
+    }),
+  )
+  expect(writes.filter((write) => write?.success)).toHaveLength(1)
+  expect(writes.find((write) => !write?.success)).toMatchObject({
+    error: { code: 'FILE_CONFLICT' },
+  })
+  expect(await readFile(path.join(dir, target.path))).toEqual(
+    contents[writes.findIndex((write) => write?.success)],
+  )
+})
+
+test('上传审批通过前不落盘，批准后写入原始字节', async () => {
+  const { uploads } = await startRelay()
+  context.server.workspaces[0].policies.file = 'approval'
+  const filename = 'pixel.png'
+  const bytes = Buffer.from(pixelPng, 'base64')
+  const transfer = transferRef()
+  uploads.set(transfer.id, bytes)
+  const pending = handleGatewayMessage(
+    rpc('file.write', { path: filename, size: bytes.length, transfer, encoding: 'stream' }),
+    context,
+  )
+  for (let i = 0; i < 40 && !context.approvals.list().length; i++)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  expect(context.approvals.list()).toEqual([
+    expect.objectContaining({ path: filename, bytes: bytes.length, preview: '写入二进制文件' }),
+  ])
+  expect(await readdir(dir)).toEqual(['README.md'])
+  context.approvals.answer(context.approvals.list()[0].id, true)
+  expect(await pending).toMatchObject({ success: true })
+  expect(await readFile(path.join(dir, filename))).toEqual(bytes)
+})
+
+test('上传长度不足时保留原文件并清理临时文件', async () => {
+  const { uploads } = await startRelay()
+  const transfer = transferRef()
+  uploads.set(transfer.id, Buffer.from([1, 2]))
+  const result = await handleGatewayMessage(
+    rpc('file.write', {
+      path: 'README.md',
+      encoding: 'stream',
+      transfer,
+      size: 3,
+      expectedSha256: shaText('before'),
+    }),
+    context,
+  )
+  expect(result).toMatchObject({ success: false, error: { code: 'FILE_SIZE_MISMATCH' } })
+  expect(await readFile(path.join(dir, 'README.md'), 'utf8')).toBe('before')
+  expect(await readdir(dir)).toEqual(['README.md'])
+})
+
+test('文本模式拒绝无效 UTF-8，原字节仍可下载', async () => {
+  const { downloads } = await startRelay()
+  const filename = 'legacy.txt'
+  const bytes = Buffer.from([0xff, 0x41])
+  await writeFile(path.join(dir, filename), bytes)
+  expect(await handleGatewayMessage(rpc('file.read', { path: filename }), context)).toMatchObject({
+    success: false,
+    error: { code: 'FILE_TOO_LARGE_OR_UNSUPPORTED' },
+  })
+  const transfer = transferRef()
+  expect(
+    await handleGatewayMessage(
+      rpc('file.read', { path: filename, encoding: 'stream', transfer }),
+      context,
+    ),
+  ).toMatchObject({
+    success: true,
+    data: { sha256: createHash('sha256').update(bytes).digest('hex') },
+  })
+  expect(downloads.get(transfer.id)).toEqual(bytes)
+})
+
+test('文件流限制为 64 MiB 原始字节', async () => {
+  const target = { path: 'large.bin', encoding: 'stream', transfer: transferRef() }
+  expect(
+    await handleGatewayMessage(
+      rpc('file.write', { ...target, size: FILE_BINARY_LIMIT_BYTES + 1 }),
+      context,
+    ),
+  ).toMatchObject({ success: false, error: { code: 'INVALID_TOOL_ARGUMENTS' } })
+  await expect(readFile(path.join(dir, target.path))).rejects.toMatchObject({ code: 'ENOENT' })
+  await writeFile(path.join(dir, target.path), '')
+  await truncate(path.join(dir, target.path), FILE_BINARY_LIMIT_BYTES + 1)
+  expect(await handleGatewayMessage(rpc('file.read', target), context)).toMatchObject({
+    success: false,
+    error: { code: 'FILE_TOO_LARGE_OR_UNSUPPORTED' },
+  })
+})
+
 test('approval 策略等待本地决定后执行', async () => {
   context.server.workspaces[0].policies.file = 'approval'
   const pending = handleGatewayMessage(
     rpc('file.write', {
       path: 'README.md',
       content: 'approved',
-      expectedSha256: sha('before'),
+      expectedSha256: shaText('before'),
     }),
     context,
   )
@@ -119,7 +310,7 @@ test('审批等待期间撤销写权限，批准后仍拒绝执行', async () =>
     rpc('file.write', {
       path: 'README.md',
       content: 'must-not-write',
-      expectedSha256: sha('before'),
+      expectedSha256: shaText('before'),
     }),
     context,
   )
@@ -138,7 +329,7 @@ test('审批期间修改目标文件，批准后不能覆盖新内容', async ()
     rpc('file.write', {
       path: 'README.md',
       content: 'must-not-write',
-      expectedSha256: sha('before'),
+      expectedSha256: shaText('before'),
     }),
     context,
   )
@@ -197,7 +388,7 @@ test('大于文本工具限制的二进制文件仍可以通过内容摘要安�
 test('RPC 拒绝权限和未知异常只返回安全错误码，不回传本机路径', async () => {
   context.server.workspaces[0].permissions.write = false
   const denied = await handleGatewayMessage(
-    rpc('file.delete', { path: 'README.md', expectedSha256: sha('before') }),
+    rpc('file.delete', { path: 'README.md', expectedSha256: shaText('before') }),
     context,
   )
   expect(denied).toMatchObject({
@@ -219,7 +410,7 @@ test('RPC 拒绝权限和未知异常只返回安全错误码，不回传本机�
 test('审批明确拒绝时传递安全业务错误码，文件保持原样', async () => {
   context.server.workspaces[0].policies.file = 'approval'
   const pending = handleGatewayMessage(
-    rpc('file.delete', { path: 'README.md', expectedSha256: sha('before') }),
+    rpc('file.delete', { path: 'README.md', expectedSha256: shaText('before') }),
     context,
   )
   for (let i = 0; i < 40 && !context.approvals.list().length; i++)

@@ -1,4 +1,5 @@
 import { WebSocket } from 'ws'
+import { RPC_MESSAGE_LIMIT_BYTES } from '@rcm/protocol'
 import { runtimeVersion } from '../version'
 import { publicWs, activeServer, serverWorkspaces, type Config } from '../workspace/state'
 import { WriteApprovalQueue } from '../requests/write-approvals'
@@ -93,7 +94,10 @@ export class RuntimeConnection {
     logger.debug('gateway.connecting')
     const connection = new WebSocket(wsURL.toString(), {
       headers: { Authorization: 'Bearer ' + server.deviceToken },
+      maxPayload: RPC_MESSAGE_LIMIT_BYTES,
     })
+    const connectionAbort = new AbortController()
+    connection.once('close', () => connectionAbort.abort())
     this.socket = connection
     connection.on('open', () => {
       if (this.socket !== connection) return
@@ -111,6 +115,7 @@ export class RuntimeConnection {
           approvals: this.approvals,
           events: this.events,
           isConnected: () => this.socket === connection && connection.readyState === WebSocket.OPEN,
+          connectionSignal: connectionAbort.signal,
           sendApproval: (event) => {
             if (this.socket !== connection || connection.readyState !== WebSocket.OPEN) return
             connection.send(JSON.stringify(event), (error) => {

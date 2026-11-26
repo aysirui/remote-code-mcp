@@ -4,8 +4,8 @@ import path from 'node:path'
 import http from 'node:http'
 import { execFileSync } from 'node:child_process'
 import { execute } from '../src/operations/executors'
+import { readFileBytes } from '../src/workspace/io'
 import {
-  readChecked,
   inspectDeleteTarget,
   moveChecked,
   mkdirChecked,
@@ -179,7 +179,9 @@ test('硬链接不能被读取、搜索、写入、移动、递归检查或 Git 
   const outside = path.join(base, 'private.txt')
   await fs.writeFile(outside, 'PRIVATE_CANARY')
   await fs.link(outside, path.join(root, 'alias.txt'))
-  await expect(readChecked(workspace(), 'alias.txt')).rejects.toThrow('HARD_DENY_HARDLINK')
+  await expect(readFileBytes(workspace(), 'alias.txt', 512 * 1024)).rejects.toThrow(
+    'HARD_DENY_HARDLINK',
+  )
   await expect(execute(workspace(), rpc('file.read', { path: 'alias.txt' }))).rejects.toThrow(
     'HARD_DENY_HARDLINK',
   )
@@ -243,8 +245,12 @@ test('默认凭据目录及其内部子目录不能作为授权根目录', async
   const privateDir = path.join(root, '.remote-code-mcp')
   await fs.mkdir(path.join(privateDir, 'nested'), { recursive: true })
   await fs.writeFile(path.join(privateDir, 'config.json'), '{"deviceToken":"FAKE"}')
-  await expect(readChecked(workspace(), '.remote-code-mcp/config.json')).rejects.toThrow()
-  await expect(readChecked({ ...workspace(), root: privateDir }, 'config.json')).rejects.toThrow()
+  await expect(
+    readFileBytes(workspace(), '.remote-code-mcp/config.json', 512 * 1024),
+  ).rejects.toThrow()
+  await expect(
+    readFileBytes({ ...workspace(), root: privateDir }, 'config.json', 512 * 1024),
+  ).rejects.toThrow()
   await expect(
     execute(
       { ...workspace(), root: path.join(privateDir, 'nested') },
@@ -267,7 +273,9 @@ test('工作区祖先被替换为链接时不能重新解释原授权根目录',
   await fs.rename(parent, path.join(base, 'original-parent'))
   await fs.symlink(outside, parent, process.platform === 'win32' ? 'junction' : 'dir')
   try {
-    await expect(readChecked(w, 'sample.txt')).rejects.toThrow('HARD_DENY_WORKSPACE_ROOT_CHANGED')
+    await expect(readFileBytes(w, 'sample.txt', 512 * 1024)).rejects.toThrow(
+      'HARD_DENY_WORKSPACE_ROOT_CHANGED',
+    )
   } finally {
     await fs.unlink(parent)
     root = originalRoot
@@ -279,11 +287,11 @@ test('自定义 Runtime 数据目录按真实路径保护，不能通过重命�
   await fs.mkdir(custom)
   await fs.writeFile(path.join(custom, 'config.json'), 'FAKE_TOKEN')
   const previous = process.env.RUNTIME_DATA_DIR
-  let safety!: typeof import('../src/operations/file/path-safety')
+  let safety!: typeof import('../src/workspace/path-safety')
   try {
     process.env.RUNTIME_DATA_DIR = custom
     jest.isolateModules(() => {
-      safety = jest.requireActual('../src/operations/file/path-safety')
+      safety = jest.requireActual('../src/workspace/path-safety')
     })
   } finally {
     if (previous === undefined) delete process.env.RUNTIME_DATA_DIR

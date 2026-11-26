@@ -5,7 +5,7 @@ import {
 } from '../src/workspace/state'
 import { WriteApprovalQueue, WRITE_APPROVAL_TIMEOUT_MS } from '../src/requests/write-approvals'
 import { validateLocalCommand } from '../src/operations/command/command-operations'
-import { assertSafeRelativePath } from '../src/operations/file/path-safety'
+import { assertSafeRelativePath } from '../src/workspace/path-safety'
 import {
   operationRequiresWrite,
   operationRequiresLocalApproval,

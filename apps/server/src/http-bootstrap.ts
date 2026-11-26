@@ -1,11 +1,13 @@
 import type { INestApplication } from '@nestjs/common'
 import cookieParser from 'cookie-parser'
 import { json, urlencoded, type Request, type Response, type NextFunction } from 'express'
+import { RPC_MESSAGE_LIMIT_BYTES } from '@rcm/protocol'
 import { env } from './config/env'
 
 /** 集中装配全局 HTTP 安全头、请求体限制、Cookie、CORS 与认证入口限流。 */
 export function configureHttp(app: INestApplication) {
-  // MCP 文件内容受 1MB 限制；OAuth 表单单独限制为 16KB。
+  // MCP JSON 请求允许携带 Base64 文件；其他 JSON 接口和 OAuth 表单使用各自的上限。
+  app.use('/mcp', json({ limit: RPC_MESSAGE_LIMIT_BYTES }))
   app.use(json({ limit: '1mb' }))
   app.use(urlencoded({ extended: false, limit: '16kb' }))
   app.use((_req: Request, res: Response, next: NextFunction) => {

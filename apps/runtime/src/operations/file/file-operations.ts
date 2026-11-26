@@ -1,70 +1,110 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { constants } from 'node:fs'
-import { randomUUID, createHash } from 'node:crypto'
+import { createHash } from 'node:crypto'
+import { Readable } from 'node:stream'
+import {
+  FILE_BINARY_LIMIT_BYTES,
+  FILE_PREVIEW_LIMIT_BYTES,
+  FILE_TEXT_LIMIT_BYTES,
+  type ToolOutput,
+} from '@rcm/protocol'
 import type { LocalWorkspace } from '../../workspace/state'
-import { logger, summarizeError } from '../../logger'
+import {
+  decodeUtf8,
+  detectFileMimeType,
+  hashFileBytes,
+  readFileBytes,
+  readFileChunks,
+  writeFileStream,
+} from '../../workspace/io'
 import {
   resolveSafe,
   isSensitive,
   assertSafeRelativePath,
   assertNotRuntimeData,
-} from './path-safety'
+} from '../../workspace/path-safety'
 
-/** 单次文件读写允许的最大字节数，避免大文件导致内存耗尽。 */
-const MAX_FILE = 512 * 1024
-
-/** 计算文件内容的 SHA-256，用于乐观并发控制。 */
-export const sha = (content: string) => createHash('sha256').update(content).digest('hex')
-
-/**
- * 校验路径并以文件描述符读取内容，限制文件大小及普通文件类型。
- * 校验后仍需 OS 级授权限制，不能视为无竞态沙箱。
- */
-export async function readBufferChecked(w: LocalWorkspace, relative: string, maxSize = MAX_FILE) {
-  const filename = await resolveSafe(w, relative)
-  const fd = await fs.open(filename, constants.O_RDONLY | (constants.O_NOFOLLOW || 0))
-  try {
-    const st = await fd.stat()
-    if (st.nlink > 1) throw Error('HARD_DENY_HARDLINK')
-    if (!st.isFile() || st.size > maxSize) throw Error('FILE_TOO_LARGE_OR_UNSUPPORTED')
-    // Verify name still resolves to the same inode after opening.
-    const latest = await resolveSafe(w, relative)
-    const named = await fs.stat(latest)
-    if (named.dev !== st.dev || named.ino !== st.ino) throw Error('FILE_CHANGED')
-    // 有界读取防止校验后文件增长导致内存耗尽；读取后重新校验链接和路径。
-    const buffer = Buffer.alloc(maxSize + 1)
-    let length = 0
-    while (length < buffer.length) {
-      const { bytesRead } = await fd.read(buffer, length, buffer.length - length, null)
-      if (!bytesRead) break
-      length += bytesRead
-    }
-    if (length > maxSize) throw Error('FILE_TOO_LARGE_OR_UNSUPPORTED')
-    const after = await fd.stat()
-    const finalPath = await resolveSafe(w, relative)
-    const finalStat = await fs.lstat(finalPath)
-    if (after.nlink > 1 || finalStat.nlink > 1) throw Error('HARD_DENY_HARDLINK')
-    if (
-      after.size !== st.size ||
-      after.mtimeMs !== st.mtimeMs ||
-      after.ctimeMs !== st.ctimeMs ||
-      finalStat.dev !== st.dev ||
-      finalStat.ino !== st.ino
-    )
-      throw Error('FILE_CHANGED')
-    return buffer.subarray(0, length)
-  } finally {
-    await fd.close()
-  }
+/** 设备传输仅回连已配对 Server，并在网络或授权失效时终止。 */
+export interface FileTransferContext {
+  /** 当前已配对 Server 的 HTTP(S) 地址。 */
+  gateway: string
+  /** 连接关闭或本次请求过期时中止传输。 */
+  signal: AbortSignal
+  /** 在覆盖目标前校验当前连接和工作区授权。 */
+  assertActive: () => void
 }
 
-/** 文本工具额外拒绝二进制数据；Git 暂存复用相同边界检查并保留原始字节。 */
-export async function readChecked(w: LocalWorkspace, relative: string, maxSize = MAX_FILE) {
-  const data = (await readBufferChecked(w, relative, maxSize)).toString('utf8')
-  if (Buffer.byteLength(data, 'utf8') > maxSize || data.includes('\0'))
-    throw Error('FILE_TOO_LARGE_OR_UNSUPPORTED')
-  return data
+/** 将经校验的传输标识绑定到当前 Server 地址。 */
+function transferUrl(gateway: string, id: string): URL {
+  return new URL('/mcp/files/' + id + '/device', gateway)
+}
+
+/** 读取 UTF-8 正文，或将完整原文件分块发送，同时计算大小、MIME 和摘要。 */
+export async function readWorkspaceFile(
+  w: LocalWorkspace,
+  relative: string,
+  encoding: ToolOutput<'file.read'>['encoding'],
+  transfer?: { id: string; key: string },
+  context?: FileTransferContext,
+): Promise<ToolOutput<'file.read'>> {
+  if (encoding === 'utf8') {
+    const bytes = await readFileBytes(w, relative, FILE_TEXT_LIMIT_BYTES)
+    return {
+      content: decodeUtf8(bytes),
+      encoding,
+      mimeType: 'text/plain',
+      size: bytes.length,
+      sha256: hashFileBytes(bytes),
+    }
+  }
+  if (!transfer || !context) throw Error('INVALID_TOOL_ARGUMENTS')
+  const limit = encoding === 'preview' ? FILE_PREVIEW_LIMIT_BYTES : FILE_BINARY_LIMIT_BYTES
+  const chunks = readFileChunks(w, relative, limit)
+  const hash = createHash('sha256')
+  let size = 0
+  let readError: unknown
+  const first = await chunks.next()
+  const mimeType = detectFileMimeType(first.done ? Buffer.alloc(0) : first.value)
+  async function* body() {
+    try {
+      for (let chunk = first; !chunk.done; chunk = await chunks.next()) {
+        hash.update(chunk.value)
+        size += chunk.value.length
+        yield chunk.value
+      }
+    } catch (error) {
+      readError = error
+      throw error
+    } finally {
+      await chunks.return(undefined)
+    }
+  }
+  const stream = Readable.from(body(), { objectMode: false })
+  try {
+    const options: RequestInit & { duplex: 'half' } = {
+      method: 'PUT',
+      headers: {
+        Authorization: 'Bearer ' + transfer.key,
+        'Content-Type': 'application/octet-stream',
+      },
+      body: stream as unknown as RequestInit['body'],
+      duplex: 'half',
+      redirect: 'error',
+      signal: context.signal,
+    }
+    const response = await fetch(transferUrl(context.gateway, transfer.id), options)
+    if (!response.ok) {
+      await response.body?.cancel()
+      throw Error('FILE_TRANSFER_FAILED')
+    }
+    return { encoding, mimeType, size, sha256: hash.digest('hex') }
+  } catch (error) {
+    throw readError ?? error
+  } finally {
+    stream.destroy()
+    await chunks.return(undefined)
+  }
 }
 
 /**
@@ -101,7 +141,7 @@ export async function searchChecked(w: LocalWorkspace, relative: string, query: 
     if (stat.isFile()) {
       let source: string
       try {
-        source = await readChecked(w, relative, 256 * 1024)
+        source = decodeUtf8(await readFileBytes(w, relative, 256 * 1024))
       } catch {
         return
       }
@@ -122,64 +162,50 @@ export async function searchChecked(w: LocalWorkspace, relative: string, query: 
   return matches
 }
 
-/**
- * 通过预期内容 Hash 防止覆盖旧版本，再写入临时文件并原子替换。
- * 不允许无 Hash 覆盖现有文件。
- */
-export async function writeChecked(
+/** 将文本字节或 Server 转发的上传流写入临时文件，通过版本校验后发布。 */
+export async function writeWorkspaceFile(
   w: LocalWorkspace,
   relative: string,
-  content: string,
-  expected?: string,
-) {
-  if (Buffer.byteLength(content, 'utf8') > MAX_FILE) throw Error('FILE_TOO_LARGE')
-  const target = await resolveSafe(w, relative, true)
-  let previous: string | undefined
-  try {
-    previous = await readChecked(w, relative)
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
-  }
-  if (previous === undefined && expected) throw Error('FILE_CONFLICT')
-  if (previous !== undefined && (!expected || sha(previous) !== expected))
-    throw Error('FILE_CONFLICT')
-
-  const temporary = path.join(path.dirname(target), '.rcm-' + randomUUID() + '.tmp')
-  const fd = await fs.open(
-    temporary,
-    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0),
-    0o600,
-  )
-  try {
-    await fd.writeFile(content, 'utf8')
-    await fd.sync()
-  } finally {
-    await fd.close()
-  }
-  try {
-    // Recheck directory & optimistic version immediately before rename.
-    await resolveSafe(w, relative, true)
-    if (previous !== undefined) {
-      const current = await readChecked(w, relative)
-      if (sha(current) !== expected) throw Error('FILE_CONFLICT')
-    } else {
-      try {
-        await fs.lstat(target)
-        throw Error('FILE_CONFLICT')
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
-      }
-    }
-    await fs.rename(temporary, target)
-  } finally {
-    await fs.rm(temporary, { force: true }).catch((error: unknown) => {
-      logger.error('file.temporary.cleanup_failed', {
-        code: 'FILE_TEMP_CLEANUP_FAILED',
-        error: summarizeError(error),
-      })
+  content: string | undefined,
+  encoding: 'utf8' | 'stream',
+  expectedSha256?: string,
+  size?: number,
+  transfer?: { id: string; key: string },
+  context?: FileTransferContext,
+): Promise<ToolOutput<'file.write'>> {
+  if (encoding === 'utf8' && content !== undefined) {
+    const bytes = Buffer.from(content, 'utf8')
+    const sha256 = await writeFileStream(w, relative, [bytes], {
+      maxBytes: FILE_BINARY_LIMIT_BYTES,
+      size: bytes.length,
+      expectedSha256,
     })
+    return { path: relative, sha256, written: true }
   }
-  return { path: relative, sha256: sha(content), written: true }
+  if (!transfer || !context || size === undefined) throw Error('INVALID_TOOL_ARGUMENTS')
+  const { gateway, signal, assertActive } = context
+  const { id, key } = transfer
+  // 在旧文件版本校验通过前，保持客户端的上传流未消费。
+  async function* source() {
+    const response = await fetch(transferUrl(gateway, id), {
+      headers: { Authorization: 'Bearer ' + key },
+      redirect: 'error',
+      signal,
+    })
+    if (!response.ok || !response.body) {
+      await response.body?.cancel()
+      throw Error('FILE_TRANSFER_FAILED')
+    }
+    yield* Readable.fromWeb(response.body as import('node:stream/web').ReadableStream<Uint8Array>)
+  }
+  const sha256 = await writeFileStream(w, relative, source(), {
+    maxBytes: FILE_BINARY_LIMIT_BYTES,
+    size,
+    expectedSha256,
+    signal,
+    assertActive,
+  })
+  return { path: relative, sha256, written: true }
 }
 
 /**

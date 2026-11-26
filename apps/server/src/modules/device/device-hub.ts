@@ -12,6 +12,7 @@ import { URL } from 'node:url'
 import {
   COMMAND_RPC_TIMEOUT_MS,
   RPC_APPROVAL_TIMEOUT_MS,
+  RPC_MESSAGE_LIMIT_BYTES,
   ApprovalNoticeSchema,
   ApprovalClosedSchema,
   type RpcRequest,
@@ -23,6 +24,7 @@ import { authenticateDevice } from './device-auth'
 import { authorizeDeviceRpc } from './device-rpc-authorization'
 import { synchronizeDeviceHello, StaleDeviceConnectionError } from './device-workspace-sync'
 import { DeviceRpcError, DeviceRpcPending } from './device-rpc-pending'
+import { FileTransfers } from './file-transfers'
 import { recordDeviceOperation } from './device-operation-audit'
 import { ApprovalChannelService, type ApprovalRecipient } from './approval-channel.service'
 import type { CardRef } from '@rcm/bot-sdk/cards'
@@ -45,6 +47,8 @@ interface ApprovalRoute {
 /** 设备通道与 RPC 路由服务；不持久化任何工具参数或执行结果正文。 */
 @Injectable()
 export class DeviceHub implements OnApplicationBootstrap, OnApplicationShutdown {
+  /** 传输地址与设备流仅驻留在当前 Server 实例内。 */
+  readonly files = new FileTransfers()
   private sockets = new Map<string, WebSocket>()
   private wss: WebSocketServer | undefined
   private upgradeHandler:
@@ -66,6 +70,7 @@ export class DeviceHub implements OnApplicationBootstrap, OnApplicationShutdown 
 
   /** 应用关闭时停止接受升级连接，并释放设备 WebSocket 与心跳。 */
   onApplicationShutdown() {
+    this.files.close()
     const http = this.httpAdapter?.httpAdapter?.getHttpServer() as HttpServer | undefined
     if (this.upgradeHandler && http) http.off('upgrade', this.upgradeHandler)
     for (const socket of this.sockets.values()) socket.terminate()
@@ -80,10 +85,39 @@ export class DeviceHub implements OnApplicationBootstrap, OnApplicationShutdown 
     return this.sockets.get(id)?.readyState === WebSocket.OPEN
   }
 
+  /** 核对归属和权限后创建一次性地址；领取地址时 execute 会再核对当前授权。 */
+  async prepareFileTransfer(
+    userId: string,
+    clientId: string,
+    workspaceId: string,
+    operation: 'file.read' | 'file.write',
+    payload: Record<string, unknown>,
+    publicUrl: string,
+  ) {
+    try {
+      const device = await authorizeDeviceRpc(this.store, userId, workspaceId, operation)
+      if (!this.isOnline(device.id)) throw new DeviceRpcError('DEVICE_OFFLINE')
+    } catch (error) {
+      if (error instanceof HttpException) throw new DeviceRpcError(error.message)
+      throw error
+    }
+    return this.files.prepare(
+      {
+        userId,
+        clientId,
+        method: operation === 'file.read' ? 'GET' : 'PUT',
+        size: operation === 'file.write' ? Number(payload.size) : undefined,
+        run: (transfer) =>
+          this.execute(userId, clientId, workspaceId, operation, { ...payload, transfer }),
+      },
+      publicUrl,
+    )
+  }
+
   /** 为 HTTP Server 挂载设备 WSS 握手认证，验证设备凭据和账号状态。 */
   attach(http: HttpServer) {
     if (this.wss) return
-    const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 })
+    const wss = new WebSocketServer({ noServer: true, maxPayload: RPC_MESSAGE_LIMIT_BYTES })
     this.wss = wss
     const upgradeHandler = async (
       req: IncomingMessage,
@@ -184,6 +218,8 @@ export class DeviceHub implements OnApplicationBootstrap, OnApplicationShutdown 
       if (this.sockets.get(deviceId) === ws) this.sockets.delete(deviceId)
       this.rpc.disconnect(deviceId, ws)
     })
+    // 协议错误（包括超过消息上限）由 ws 关闭该连接，记录类型供排查。
+    ws.on('error', (error) => console.warn('设备 WebSocket 消息失败', error.name))
   }
 
   /** 由管理员或用户主动撤销设备连接。 */

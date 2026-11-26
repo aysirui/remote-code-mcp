@@ -59,7 +59,7 @@ docker compose up -d --build
 
 在 Dokploy 中选择 **Docker Compose 应用**，连接仓库并使用根目录 `docker-compose.yml`。Environment 中按 `docker/.env.example` 的说明配置全部必填变量，包括 SMTP；这些变量通过 Compose 显式传入容器。
 
-在 Domains 中为 `server`（端口 3000）、`console`、`website`、`docs`（均为端口 80）配置公开入口。一个域名承载多个服务时，应按 Host 和路径匹配，确保 API、OAuth、MCP、WebSocket 以及文档路径不会被官网根路由覆盖。路由及 TLS 的具体实现由部署环境决定，对应 `PUBLIC_URL`、`CONSOLE_URL`。反向代理必须保留 `/agent/connect` 的 WebSocket Upgrade，允许 `/mcp` 的流式 HTTP 响应。推荐启用 Dokploy 的 Isolated Deployments，由其管理路由与网络。
+在 Domains 中为 `server`（端口 3000）、`console`、`website`、`docs`（均为端口 80）配置公开入口。一个域名承载多个服务时，应按 Host 和路径匹配，确保 API、OAuth、MCP、WebSocket 以及文档路径不会被官网根路由覆盖。路由及 TLS 的具体实现由部署环境决定，对应 `PUBLIC_URL`、`CONSOLE_URL`。反向代理必须保留 `/agent/connect` 的 WebSocket Upgrade，允许 `/mcp` 的流式 HTTP 响应，并将 `/mcp/` 下所有子路径转发至 Server。推荐启用 Dokploy 的 Isolated Deployments，由其管理路由与网络。
 
 ### Traefik Labels 版本
 
@@ -73,7 +73,9 @@ docker compose up -d --build
 - `TRAEFIK_NETWORK`：Traefik 和四个 Web 服务额外加入的**已存在外部 Docker 网络**，默认 `traefik-public`；五个服务仍保留相同的 `internal` 内网，MySQL 不加入 `proxy`。
 - `TRAEFIK_ENTRYPOINT`：已有 Traefik 入口名，默认 `web`（HTTP）。此示例**不自动申请证书、不开启 TLS 也不配置 HTTPS 跳转**。如果由 Traefik 自行终止 HTTPS，应把入口改为正确的 TLS 入口，并按部署环境增加 Router TLS/证书配置；如果由上游网关终止 HTTPS，则应按实际上游与 Traefik 的安全边界配置。
 
-`PUBLIC_URL`、`CONSOLE_URL`、`WEBSITE_URL`、`DOCS_URL` 是应用使用的**完整公开 URL**，`SERVER_HOST`、`CONSOLE_HOST`、`WEBSITE_HOST` 只填域名。每项 Host 与对应 URL 的主机名保持一致。Server 与官网可共用一个域名，使用独立的 Console 域名。共用域名时，`SERVER_HOST` 与 `WEBSITE_HOST` 相同，`PUBLIC_URL` 与 `WEBSITE_URL` 相同。Traefik 先按路径匹配文档和 Server，其余请求交给官网。
+`PUBLIC_URL`、`CONSOLE_URL`、`WEBSITE_URL`、`DOCS_URL` 是应用使用的**完整公开 URL**，`SERVER_HOST`、`CONSOLE_HOST`、`WEBSITE_HOST` 只填域名。每项 Host 与对应 URL 的主机名保持一致。Server 与官网可共用一个域名，使用独立的 Console 域名。共用域名时，`SERVER_HOST` 与 `WEBSITE_HOST` 相同，`PUBLIC_URL` 与 `WEBSITE_URL` 相同。Traefik 先按路径匹配文档和 Server，其余请求交给官网。Server 路由优先级为 50，文档为 100，官网为 10。
+
+MCP 路由使用 ``Path(`/mcp`) || PathPrefix(`/mcp/`)``（精确匹配根路径及带斜杠的子路径），覆盖文件传输及后续 MCP 子接口，不匹配 `/mcptest`。其他反向代理也应采用等价规则，保留原始路径，不剥离 `/mcp` 前缀。若上游代理已将整个域名转发至 Traefik，则无需调整上游路由；若上游按路径分流，则需确保覆盖上述路径。修改 Compose Labels 后重新创建 Server 容器即可生效，无需重新签发证书。
 
 官网与文档使用相同域名，`DOCS_URL` 应为 `${WEBSITE_URL}/docs/`。两套 Compose 中 Console 的 `VITE_DOCS_URL` 默认使用 `DOCS_URL`，未配置时依次回退 `WEBSITE_URL/docs/`、`PUBLIC_URL/docs/`。官网和文档的 `PUBLIC_SITE_URL` 默认回退 `PUBLIC_URL`。官网与 Server 分开部署时，显式设置 `WEBSITE_URL` 和 `DOCS_URL`。
 
@@ -99,6 +101,8 @@ Server 容器启动顺序：
 
 持久化并备份 `mysql_data` 数据卷，不要在重部署时删除。迁移 SQL、快照及 `meta/_journal.json` 随源码和镜像分发，无需单独挂载迁移目录。更新前备份数据库，核对目标提交及迁移；多副本部署需要改为单独执行迁移任务，当前方案不提供多实例 WSS 路由。
 
+原文件流传输要求 Server 与 Runtime 一同升级。统一 MCP 路由已覆盖 `/mcp/files/*`，反向代理仍需针对文件传输支持 GET 和 PUT 请求以及最多 64 MiB 的流式请求体，保留 Authorization 请求头，并关闭此路径的请求和响应缓冲。仍需保留 `/mcp` 的流式响应和 `/agent/connect` 的 WebSocket Upgrade。传输地址与对应设备连接驻留在发起操作的 Server 实例。
+
 ## 官网与在线文档
 
 产品官网由 `apps/website` 使用 Astro 静态生成，在线文档由根目录 `docs/` 使用 VitePress 生成；两者均采用独立 Docker 镜像，不依赖 Console 的构建与发布。
@@ -109,7 +113,7 @@ Server 容器启动顺序：
 
 官网和文档的 Nginx 对符合大小和类型条件的静态文本启用 gzip，并为带内容哈希的资源配置长期缓存。部署后可在浏览器网络面板检查文档 HTML 的 `Content-Encoding` 及带哈希 CSS、JS 的 `Cache-Control`，确认上游代理正确传递响应头。
 
-建议的公开路径为：官网 `/`、文档 `/docs/`、MCP `/mcp`、REST API `/api/*`、OAuth `/oauth/*`，Console 使用独立域名。代理层需要保留 OAuth 元数据发现路径、健康检查和 WebSocket Upgrade，同时支持 MCP 流式响应。
+建议的公开路径为：官网 `/`、文档 `/docs/`、MCP `/mcp` 及 `/mcp/*`、REST API `/api/*`、OAuth `/oauth/*`，Console 使用独立域名。代理层需要保留 OAuth 元数据发现路径、健康检查和 WebSocket Upgrade，同时支持 MCP 流式响应。
 
 长命令和细分错误码建议先升级 Server，再升级 Runtime；旧 Runtime 的成功响应不会被重新解读为失败。要支持最长命令及审批，检查 MCP 客户端、反向代理和上游网关对 `/mcp` 的等待限制是否能覆盖 Server 的 25 分钟 15 秒预算及网络余量。若调用仍在约 30 秒中断，分别检查客户端和代理，不要仅提高 Runtime 的命令超时。
 
@@ -138,7 +142,8 @@ Server 容器启动顺序：
 
 - `GET /health` 返回健康状态；OAuth 两个 `.well-known` 元数据入口可用。
 - 官网根路径正确展示产品入口，Console 和 GitHub 按钮有效；文档 `/docs` 跳转至 `/docs/`，未登录可阅读、搜索并直接刷新页面，未知文档路径返回 HTTP 404；控制台登录及现有页面保持可用。
-- 未授权访问 `/mcp` 返回 401 和 `WWW-Authenticate`，OAuth 授权、刷新、重放拒绝及撤销符合预期。
+- 未授权 POST `/mcp` 返回 401 和 `WWW-Authenticate`，GET / DELETE `/mcp` 返回 405；OAuth 授权、刷新、重放拒绝及撤销符合预期。
+- 未授权 GET `/mcp/files/test` 返回 401 而不是官网 HTML；实际文件上传和下载通过授权客户端验证，未知 MCP 子路径由 Server 返回 404。
 - 两个用户只能访问自己的设备和工作区，管理员也不能通过 MCP 跨用户读文件。
 - Runtime 离线、设备撤销、工作区停用、连接替换及断线重连后权限仍正确，旧凭据失效。
 - 只读工作区拒绝写入，SHA-256 冲突被拒绝，路径穿越、敏感文件及链接绕过被拒绝。

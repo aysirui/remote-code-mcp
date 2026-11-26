@@ -70,6 +70,22 @@ Git 暂存、提交和高危递归删除保留强制审批；临时命令也需�
 
 存在待审批操作时，标签页显示红点和待审批数量，处理完成或请求过期后恢复。支持 Web Locks 的浏览器由一个标签页发送通知，其他标签页更新角标；不支持时通过稳定通知 tag 合并相同审批。页面关闭后不保证继续通知。
 
+## 文件读写
+
+`file_read` 和 `file_write` 使用工作区相对路径。默认的 `encoding: "utf8"` 用于 UTF-8 文本，单文件最多 512 KiB。`file_search` 逐行搜索 UTF-8 文本，单文件最多 256 KiB。
+
+读取图片、PDF、Office 或其他原文件时，用以下参数调用 `file_read`：
+
+```json
+{ "workspaceId": "工作区 ID", "path": "public/logo.png", "encoding": "stream" }
+```
+
+工具返回 `url`、`method` 和 `expiresAt`。客户端须在 2 分钟内使用同一账号和 OAuth 客户端的 Bearer Token 向该地址发出 GET 请求。响应为原始文件字节。HTTP/1.1 中继可在响应末尾提供 `X-Content-SHA256`，客户端也可自行计算下载文件的摘要。每个地址只能领取一次，断开后重新调用工具获取地址。
+
+写入时调用 `file_write`，指定 `encoding: "stream"` 和原文件准确的字节数 `size`。随后向返回的地址发起 PUT 请求，使用同一 OAuth Bearer Token，并以 `Content-Type: application/octet-stream` 发送原始文件。上传成功会返回写入后的 SHA-256。新建时省略 `expectedSha256`，覆盖时提供当前文件的原始字节 SHA-256。Runtime 在确认权限和审批后才开始消费上传流。
+
+原文件上传和下载上限为 64 MiB。查看不超过 512 KiB 的图片时，可以直接调用 `file_read` 并指定 `encoding: "preview"`。Server 仅在生成 MCP `image` 内容块时进行 Base64 编码。预览显示取决于客户端，原文件模式要求客户端能够另外发起带 OAuth 的 HTTP 请求。
+
 ## 命令执行
 
 在项目的更多操作菜单选择 **添加本地命令**，登记命令 ID、显示名称、可执行程序和固定参数。AI 使用 `command_list` 查询可用 ID。`command_run` 的 MCP 参数包含 `workspaceId`，另加以下两种互斥形式之一：

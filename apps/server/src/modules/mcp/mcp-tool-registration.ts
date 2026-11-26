@@ -1,11 +1,12 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { DeviceRpcError } from '../device/device-rpc-pending'
 
 /**
- * 统一包装 MCP 工具的文本结果、结构化结果和异常响应，保持现有协议格式。
+ * 统一包装 MCP 工具的文本、结构化结果和异常；需要图片等内容块时由操作自定义结果。
  * @param server 已创建的 MCP 服务实例。
- * @returns 工具注册函数，接收名称、中文描述、共享输入输出 Schema、执行回调和只读提示。
+ * @returns 工具注册函数，接收工具契约、执行回调、只读提示及可选的结果格式化函数。
  */
 export function createMcpToolRegistrar(server: McpServer) {
   return (
@@ -13,15 +14,18 @@ export function createMcpToolRegistrar(server: McpServer) {
     description: string,
     inputSchema: z.ZodObject,
     outputSchema: z.ZodObject,
-    handler: (args: Record<string, unknown>) => Promise<unknown>,
+    handler: (args: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>,
     readOnly = true,
+    formatResult?: (data: unknown) => CallToolResult | undefined,
   ) =>
     server.registerTool(
       name,
       { description, inputSchema, outputSchema, annotations: { readOnlyHint: readOnly } },
-      async (args) => {
+      async (args, extra) => {
         try {
-          const data = await handler(args)
+          const data = await handler(args, extra?.signal)
+          const formatted = formatResult?.(data)
+          if (formatted) return formatted
           const objectData =
             typeof data === 'object' && data !== null && !Array.isArray(data)
               ? (data as Record<string, unknown>)

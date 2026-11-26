@@ -14,7 +14,7 @@ import {
 import type { WriteApprovalQueue } from '../requests/write-approvals'
 import type { LocalEvents } from './local-events'
 import { validateLocalCommand } from '../operations/command/command-operations'
-import { resolveSafe } from '../operations/file/path-safety'
+import { resolveSafe } from '../workspace/path-safety'
 
 /** 本地工作区路由只接收授权状态与配置能力，不管理 HTTP Server 生命周期。 */
 export interface WorkspaceRoutesContext {

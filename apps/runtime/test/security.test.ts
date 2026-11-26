@@ -1,4 +1,5 @@
-import { execute, resolveSafe } from '../src/operations/executors'
+import { execute } from '../src/operations/executors'
+import { resolveSafe } from '../src/workspace/path-safety'
 import { mkdtemp, rm, symlink, writeFile, mkdir, stat, utimes } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'

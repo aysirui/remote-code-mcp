@@ -21,7 +21,7 @@ services:
       retries: 15
     networks: [internal]
 
-  # RCM Server 提供 MCP、API、OAuth 和设备 WebSocket；独立域名承载所有后端路径。
+  # RCM Server 提供 MCP、API、OAuth 和设备 WebSocket；可与官网共用域名，按路径分流。
   server:
     build: { context: ., dockerfile: docker/Dockerfile.server }
     restart: unless-stopped
@@ -60,8 +60,8 @@ services:
     labels:
       - 'traefik.enable=true'
       - 'traefik.docker.network=${TRAEFIK_NETWORK:-traefik-public}'
-      # 以下路径配置才访问 server 服务
-      - 'traefik.http.routers.rcm-server.rule=Host(`${SERVER_HOST:?Set SERVER_HOST}`) && (Path(`/health`) || Path(`/mcp`) || Path(`/agent/connect`) || Path(`/.well-known/oauth-protected-resource`) || Path(`/.well-known/oauth-authorization-server`) || PathPrefix(`/api/`) || PathPrefix(`/oauth/`))'
+      # MCP 根路径及其子路径统一交给 Server，避免误匹配 /mcptest。
+      - 'traefik.http.routers.rcm-server.rule=Host(`${SERVER_HOST:?Set SERVER_HOST}`) && (Path(`/health`) || Path(`/mcp`) || PathPrefix(`/mcp/`) || Path(`/agent/connect`) || Path(`/.well-known/oauth-protected-resource`) || Path(`/.well-known/oauth-authorization-server`) || PathPrefix(`/api/`) || PathPrefix(`/oauth/`))'
       - 'traefik.http.routers.rcm-server.entrypoints=${TRAEFIK_ENTRYPOINT:-web}'
       - 'traefik.http.routers.rcm-server.priority=50'
       - 'traefik.http.routers.rcm-server.service=rcm-server'

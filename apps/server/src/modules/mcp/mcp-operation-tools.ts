@@ -1,12 +1,40 @@
 import {
   ToolInputs,
+  ToolOutputs,
   McpToolInputs,
   McpToolOutputs,
   operationRequiresWrite,
   type Operation,
 } from '@rcm/protocol'
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
+import { env } from '../../config/env'
 import { DeviceHub } from '../device/device-hub'
+import { DeviceRpcError } from '../device/device-rpc-pending'
 import { createMcpToolRegistrar } from './mcp-tool-registration'
+
+/** 只在 MCP 图片块中编码有上限的预览，原文件下载工具仅返回地址。 */
+function formatFileRead(data: unknown): CallToolResult | undefined {
+  if (data && typeof data === 'object' && 'url' in data) return
+  if (
+    data &&
+    typeof data === 'object' &&
+    'metadata' in data &&
+    'bytes' in data &&
+    Buffer.isBuffer(data.bytes)
+  ) {
+    const metadata = ToolOutputs['file.read'].parse(data.metadata)
+    return {
+      content: [
+        { type: 'text', text: JSON.stringify(metadata) },
+        { type: 'image', data: data.bytes.toString('base64'), mimeType: metadata.mimeType },
+      ],
+      structuredContent: metadata,
+    }
+  }
+  const result = ToolOutputs['file.read'].safeParse(data)
+  if (!result.success || result.data.encoding !== 'utf8' || result.data.content === undefined)
+    throw new DeviceRpcError('INVALID_TOOL_RESULT')
+}
 
 /**
  * 注册文件、Git 与命令工具，输入输出均使用 protocol 中的共享契约。
@@ -28,21 +56,45 @@ export function registerMcpOperationTools(
       description,
       McpToolInputs[op],
       McpToolOutputs[op],
-      async (args) => {
+      async (args, signal) => {
         const { workspaceId, ...payload } = args
+        const workspace = String(workspaceId)
+        if ((op === 'file.read' || op === 'file.write') && payload.encoding === 'stream') {
+          const ticket = await hub.prepareFileTransfer(
+            userId,
+            clientId,
+            workspace,
+            op,
+            payload,
+            env.publicUrl,
+          )
+          return op === 'file.read'
+            ? { encoding: 'stream', ...ticket }
+            : { path: payload.path, ...ticket }
+        }
+        if (op === 'file.read' && payload.encoding === 'preview') {
+          return hub.files.preview(
+            (transfer) => hub.execute(userId, clientId, workspace, op, { ...payload, transfer }),
+            signal,
+          )
+        }
         // 普通操作已由 SDK 使用共享对象 Schema 校验；命令联合参数在此校验互斥形式并补齐默认值。
         const input = op === 'command.run' ? ToolInputs[op].parse(payload) : payload
-        return hub.execute(userId, clientId, String(workspaceId), op, input)
+        return hub.execute(userId, clientId, workspace, op, input)
       },
       !operationRequiresWrite(op) && op !== 'command.run',
+      op === 'file.read' ? formatFileRead : undefined,
     )
 
   exec('file.list', '列出已授权工作区内指定目录的文件和子目录')
-  exec('file.read', '读取已授权工作区内的文件，返回原始正文和 SHA-256 摘要')
+  exec(
+    'file.read',
+    '默认读取 UTF-8 文本及 SHA-256；encoding=stream 返回原文件下载地址，encoding=preview 返回不超过 512 KiB 的图片预览',
+  )
   exec('file.search', '在已授权工作区内搜索包含指定文本的行，返回相对路径、行号和匹配文本')
   exec(
     'file.write',
-    '向已授权工作区内写入文件；可通过 expectedSha256 检查原文件版本，返回写入后的摘要',
+    '默认写入 UTF-8 文本；原文件上传使用 encoding=stream 并提供精确 size，随后使用原 OAuth Bearer Token 向返回的地址 PUT 原始字节。覆盖必须提供原文件 expectedSha256',
   )
   exec('file.mkdir', '在已授权工作区内创建目录，可选择递归创建父目录')
   exec('file.move', '移动或重命名已授权工作区内的文件或目录')

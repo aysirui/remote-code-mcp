@@ -1,7 +1,7 @@
 import { operationRequiresLocalApproval, type RpcRequest } from '@rcm/protocol'
 import { commandRequiresApproval } from '../operations/command/command-operations'
 import { inspectDeleteTarget, HIGH_RISK_DELETE_THRESHOLD } from '../operations/file/file-operations'
-import { resolveSafe } from '../operations/file/path-safety'
+import { resolveSafe } from '../workspace/path-safety'
 import { policyForOperation, type LocalWorkspace } from '../workspace/state'
 
 /**

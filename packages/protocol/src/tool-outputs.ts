@@ -1,8 +1,9 @@
 import { z } from 'zod'
+import type { Operation } from './operations'
+import { FileReadModeSchema } from './tool-inputs'
 
 /** 命令合并输出的 UTF-8 字节上限，不包含响应的其他字段。 */
 export const COMMAND_OUTPUT_LIMIT_BYTES = 48 * 1024
-import type { Operation } from './operations'
 
 /** Server 与 Runtime 共享的原始操作结果；MCP 的 value 包装由 MCP 契约派生。 */
 export const ToolOutputs = {
@@ -13,11 +14,16 @@ export const ToolOutputs = {
     }),
   ),
   'file.read': z.object({
-    content: z.string().describe('文件原始正文，不包含工具附加的摘要或其他元数据'),
+    content: z.string().optional().describe('完整 UTF-8 文本正文；文件流通过独立 HTTP 请求传输'),
+    encoding: FileReadModeSchema.describe('读取方式：文本、原文件流或图片预览'),
+    mimeType: z
+      .string()
+      .describe('文本为 text/plain；二进制按内容识别，未知时为 application/octet-stream'),
+    size: z.number().int().nonnegative().describe('原始文件大小，单位为字节'),
     sha256: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
-      .describe('文件正文的 SHA-256 摘要，可用于后续写入或删除时的 expectedSha256'),
+      .describe('原始文件字节的 SHA-256 摘要，可用于后续写入或删除时的 expectedSha256'),
   }),
   'file.search': z.array(
     z.object({
@@ -31,7 +37,7 @@ export const ToolOutputs = {
     sha256: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
-      .describe('写入后文件正文的 SHA-256 摘要'),
+      .describe('写入后原始文件字节的 SHA-256 摘要'),
     written: z.literal(true).describe('文件已成功写入'),
   }),
   'file.mkdir': z.object({

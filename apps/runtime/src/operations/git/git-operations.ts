@@ -4,8 +4,8 @@ import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { LocalWorkspace } from '../../workspace/state'
-import { readBufferChecked } from '../file/file-operations'
-import { assertSafeRelativePath, resolveSafe, isSensitive } from '../file/path-safety'
+import { measureFile } from '../../workspace/io'
+import { assertSafeRelativePath, resolveSafe, isSensitive } from '../../workspace/path-safety'
 
 const exec = promisify(execFile)
 const nullDevice = process.platform === 'win32' ? 'NUL' : '/dev/null'
@@ -237,11 +237,10 @@ async function addSnapshot(workspace: LocalWorkspace, files: string[]) {
     if (stat.size > 5 * 1024 * 1024) throw Error('GIT_ADD_FILE_TOO_LARGE')
     totalBytes += stat.size
     if (totalBytes > 20 * 1024 * 1024) throw Error('GIT_ADD_TOTAL_TOO_LARGE')
-    const content = await readBufferChecked(workspace, file, 5 * 1024 * 1024)
+    const content = await measureFile(workspace, file, 5 * 1024 * 1024)
     entries.push({
       path: file,
-      size: content.length,
-      sha256: createHash('sha256').update(content).digest('hex'),
+      ...content,
     })
   }
   entries.sort((a, b) => a.path.localeCompare(b.path))

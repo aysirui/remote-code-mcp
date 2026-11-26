@@ -1,6 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { McpToolInputs, McpToolOutputs, type RpcRequest } from '@rcm/protocol'
 import type { Store } from '../src/infrastructure/database/store'
 import type { DeviceHub } from '../src/modules/device/device-hub'
@@ -14,7 +15,13 @@ describe('MCP 工具结果包装', () => {
     async (content) => {
       const registerTool = jest.fn()
       const register = createMcpToolRegistrar({ registerTool } as unknown as McpServer)
-      const data = { content, sha256: 'a'.repeat(64) }
+      const data = {
+        content,
+        sha256: 'a'.repeat(64),
+        encoding: 'utf8',
+        mimeType: 'text/plain',
+        size: Buffer.byteLength(content),
+      }
       register(
         'file_read',
         '读取文件',
@@ -40,14 +47,16 @@ describe('MCP 输出契约', () => {
   let server: McpServer
   let client: Client
   const execute = jest.fn()
+  const preview = jest.fn()
   const where = jest.fn()
 
   beforeEach(async () => {
     execute.mockReset()
+    preview.mockReset()
     where.mockReset()
     server = new McpServer({ name: 'rcm-test', version: '1.0.0' })
     client = new Client({ name: 'rcm-test-client', version: '1.0.0' })
-    const hub = { execute, isOnline: () => true } as unknown as DeviceHub
+    const hub = { execute, files: { preview }, isOnline: () => true } as unknown as DeviceHub
     const store = {
       db: { select: () => ({ from: () => ({ where }) }) },
     } as unknown as Store
@@ -121,7 +130,11 @@ describe('MCP 输出契约', () => {
           { name: 'a.ts', type: 'file' },
         ],
       },
-      { operation: 'file.read', args: { path: 'a.ts' }, data: { content: '正文\n', sha256 } },
+      {
+        operation: 'file.read',
+        args: { path: 'a.ts' },
+        data: { content: '正文\n', sha256, encoding: 'utf8', mimeType: 'text/plain', size: 7 },
+      },
       {
         operation: 'file.search',
         args: { query: '正文' },
@@ -187,7 +200,7 @@ describe('MCP 输出契约', () => {
     }
   })
 
-  test('SDK 拒绝缺少摘要的成功结果，业务错误仍按错误结果返回', async () => {
+  test('缺少摘要的读取结果被拒绝，业务错误仍按错误结果返回', async () => {
     await client.listTools()
     execute.mockResolvedValueOnce({ content: '缺少摘要' })
     const invalid = await client.callTool({
@@ -195,9 +208,7 @@ describe('MCP 输出契约', () => {
       arguments: { workspaceId: 'workspace-1', path: 'a.ts' },
     })
     expect(invalid.isError).toBe(true)
-    expect(invalid.content).toEqual([
-      { type: 'text', text: expect.stringContaining('Output validation error') },
-    ])
+    expect(invalid.content).toEqual([{ type: 'text', text: 'INVALID_TOOL_RESULT' }])
     execute.mockRejectedValueOnce(new DeviceRpcError('WORKSPACE_DISABLED'))
     const failed = await client.callTool({
       name: 'file_read',
@@ -209,6 +220,24 @@ describe('MCP 输出契约', () => {
     })
     expect(failed.structuredContent).toBeUndefined()
   })
+
+  test.each(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])(
+    'MIME 为 %s 的读取结果统一生成 MCP 图片块',
+    async (mimeType) => {
+      const metadata = { mimeType, encoding: 'preview', size: 2, sha256: 'a'.repeat(64) }
+      const content = '/9g='
+      preview.mockResolvedValueOnce({ metadata, bytes: Buffer.from(content, 'base64') })
+      const result = await client.callTool({
+        name: 'file_read',
+        arguments: { workspaceId: 'workspace-1', path: 'asset', encoding: 'preview' },
+      })
+      expect(result.structuredContent).toEqual(metadata)
+      const [summary, image] = result.content as CallToolResult['content']
+      expect(summary.type).toBe('text')
+      if (summary.type === 'text') expect(JSON.parse(summary.text)).toEqual(metadata)
+      expect(image).toEqual({ type: 'image', data: content, mimeType })
+    },
+  )
 
   test.each(['COMMAND_EXIT_NONZERO', 'COMMAND_PROCESS_TERMINATED', 'COMMAND_TIMEOUT'])(
     '命令失败 %s 标记为 MCP 错误并保留输出',
@@ -243,6 +272,12 @@ describe('MCP 输出契约', () => {
       { name: 'file_search', arguments: { query: '' } },
       { name: 'file_search', arguments: { query: 'a'.repeat(201) } },
       { name: 'file_read', arguments: { path: '' } },
+      { name: 'file_write', arguments: { path: 'a.png', encoding: 'stream' } },
+      {
+        name: 'file_write',
+        arguments: { path: 'a.png', encoding: 'stream', size: 4, content: 'abcd' },
+      },
+      { name: 'file_write', arguments: { path: 'a.png', size: 4, content: 'abcd' } },
       { name: 'command_run', arguments: {} },
       { name: 'command_run', arguments: { command: 'build', args: [] } },
       { name: 'command_run', arguments: { command: 'build', executable: 'node' } },

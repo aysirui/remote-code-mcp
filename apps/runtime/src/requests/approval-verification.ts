@@ -3,7 +3,7 @@ import type { LocalWorkspace } from '../workspace/state'
 import { commandFingerprint, resolveCommandRequest } from '../operations/command/command-operations'
 import { inspectDeleteTarget } from '../operations/file/file-operations'
 import { gitApprovalContext } from '../operations/git/git-operations'
-import { resolveSafe } from '../operations/file/path-safety'
+import { resolveSafe } from '../workspace/path-safety'
 
 /** 审批确认后重新计算资源指纹，确保实际执行对象与用户看到的一致。 */
 export async function verifyApprovalResource(

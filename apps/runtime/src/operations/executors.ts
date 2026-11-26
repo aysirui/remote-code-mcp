@@ -8,15 +8,15 @@ import {
   type CommandAudit,
 } from '@rcm/protocol'
 import { policyForOperation, type LocalWorkspace } from '../workspace/state'
-import { resolveSafe, isSensitive, assertSafeRelativePath } from './file/path-safety'
+import { resolveSafe, isSensitive, assertSafeRelativePath } from '../workspace/path-safety'
 import {
-  readChecked,
+  readWorkspaceFile,
   searchChecked,
-  writeChecked,
+  writeWorkspaceFile,
   mkdirChecked,
   moveChecked,
   deleteChecked,
-  sha,
+  type FileTransferContext,
 } from './file/file-operations'
 import {
   runCheckedCommand,
@@ -43,9 +43,6 @@ export function assertRequestAccess(w: LocalWorkspace, req: RpcRequest): void {
   if (policyForOperation(w, req.operation) === 'deny') throw Error('POLICY_DENIED')
 }
 
-/** 保持路径安全检查为工具执行器的公共入口，便于安全测试直接调用。 */
-export { resolveSafe } from './file/path-safety'
-
 /** 在审批前执行参数与路径 Hard Deny 检查；该函数不产生文件系统副作用。 */
 export async function validateOperationSafety(w: LocalWorkspace, req: RpcRequest): Promise<void> {
   switch (req.operation) {
@@ -56,6 +53,7 @@ export async function validateOperationSafety(w: LocalWorkspace, req: RpcRequest
     }
     case 'file.read': {
       const p = ToolInputs['file.read'].parse(req.payload)
+      if (p.encoding !== 'utf8' && !p.transfer) throw Error('INVALID_TOOL_ARGUMENTS')
       await resolveSafe(w, p.path)
       return
     }
@@ -66,6 +64,7 @@ export async function validateOperationSafety(w: LocalWorkspace, req: RpcRequest
     }
     case 'file.write': {
       const p = ToolInputs['file.write'].parse(req.payload)
+      if (p.encoding === 'stream' && !p.transfer) throw Error('INVALID_TOOL_ARGUMENTS')
       await resolveSafe(w, p.path, true)
       return
     }
@@ -136,6 +135,7 @@ export async function validateOperationSafety(w: LocalWorkspace, req: RpcRequest
  * @param req 待执行的 RPC 请求，包含工作区标识、操作、参数和截止时间。
  * @param approvalResourceHash 本机审批绑定的资源指纹，用于执行前检查资源是否变化。
  * @param onCommandExecution 命令实际执行时接收脱敏审计元数据的回调。
+ * @param fileTransfer 文件流连接上下文，仅用于经过设备授权的二进制操作。
  * @returns 符合对应 ToolOutputs 契约的原始业务结果，不含 MCP 包装。
  */
 export async function execute(
@@ -143,6 +143,7 @@ export async function execute(
   req: RpcRequest,
   approvalResourceHash?: string,
   onCommandExecution?: (command: CommandAudit) => void,
+  fileTransfer?: FileTransferContext,
 ): Promise<ToolOutput> {
   assertRequestAccess(w, req)
   await validateOperationSafety(w, req)
@@ -161,8 +162,13 @@ export async function execute(
     }
     case 'file.read': {
       const payload = ToolInputs['file.read'].parse(req.payload)
-      const content = await readChecked(w, payload.path)
-      data = { content, sha256: sha(content) }
+      data = await readWorkspaceFile(
+        w,
+        payload.path,
+        payload.encoding,
+        payload.transfer,
+        fileTransfer,
+      )
       break
     }
     case 'file.search': {
@@ -172,7 +178,16 @@ export async function execute(
     }
     case 'file.write': {
       const payload = ToolInputs['file.write'].parse(req.payload)
-      data = await writeChecked(w, payload.path, payload.content, payload.expectedSha256)
+      data = await writeWorkspaceFile(
+        w,
+        payload.path,
+        payload.content,
+        payload.encoding,
+        payload.expectedSha256,
+        payload.size,
+        payload.transfer,
+        fileTransfer,
+      )
       break
     }
     case 'file.mkdir': {

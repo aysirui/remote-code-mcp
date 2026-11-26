@@ -26,6 +26,7 @@
     "@rcm/protocol": "workspace:*",
     "cross-spawn": "7.0.6",
     "express": "^5.1.0",
+    "magic-bytes.js": "^1.13.1",
     "pino": "^10.4.0",
     "pino-pretty": "^13.2.0",
     "ws": "catalog:",

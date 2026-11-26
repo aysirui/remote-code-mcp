@@ -1,4 +1,4 @@
-import { Controller, Get, Delete, Post, Req, Res } from '@nestjs/common'
+import { All, Controller, Get, Delete, Param, Post, Req, Res } from '@nestjs/common'
 import type { Request, Response } from 'express'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
@@ -8,7 +8,7 @@ import { Store } from '../../infrastructure/database/store'
 import { OAuthService } from '../oauth/oauth.service'
 import { registerMcpTools } from './mcp-tools'
 
-/** MCP Streamable HTTP 接口：由 NestJS 管理路由及依赖，原生传输协议保持不变。 */
+/** MCP HTTP 入口：/mcp 处理协议请求，/mcp/files 下处理原文件流；代理须保留原始路径。 */
 @Controller('mcp')
 export class McpController {
   constructor(
@@ -28,9 +28,8 @@ export class McpController {
     return res.status(405).end()
   }
 
-  /** 每次已认证请求独立创建 MCP Server 和 Transport，避免跨客户端状态共享。 */
-  @Post()
-  async post(@Req() req: Request, @Res() res: Response) {
+  /** MCP 控制请求和文件流领取使用同一套 OAuth 凭据校验。 */
+  private async authenticate(req: Request, res: Response) {
     const bearer = req.headers.authorization?.startsWith('Bearer ')
       ? req.headers.authorization.slice(7)
       : ''
@@ -39,19 +38,39 @@ export class McpController {
         'WWW-Authenticate',
         `Bearer resource_metadata="${env.publicUrl}/.well-known/oauth-protected-resource"`,
       )
-      return res.status(401).json({ error: 'unauthorized' })
+      res.status(401).json({ error: 'unauthorized' })
+      return
     }
-    let user
     try {
-      user = await this.oauth.token(bearer)
+      return await this.oauth.token(bearer)
     } catch {
       // 过期、撤销或无效 Token 的 401 也必须携带 Bearer challenge，供客户端刷新或重新发现授权。
       res.set(
         'WWW-Authenticate',
         `Bearer error="invalid_token", resource_metadata="${env.publicUrl}/.well-known/oauth-protected-resource"`,
       )
-      return res.status(401).json({ error: 'invalid_token' })
+      res.status(401).json({ error: 'invalid_token' })
     }
+  }
+
+  /** 已认证的客户端依据一次性传输地址上传或下载原始字节。 */
+  @All('files/:id')
+  async file(@Param('id') id: string, @Req() req: Request, @Res() res: Response) {
+    const user = await this.authenticate(req, res)
+    if (user) await this.hub.files.client(id, user.id, user.clientId, req, res)
+  }
+
+  /** 设备使用由已授权 RPC 单独下发的一次性凭证接入对应原文件流。 */
+  @All('files/:id/device')
+  async deviceFile(@Param('id') id: string, @Req() req: Request, @Res() res: Response) {
+    await this.hub.files.device(id, req, res)
+  }
+
+  /** 每次已认证请求独立创建 MCP Server 和 Transport，避免跨客户端状态共享。 */
+  @Post()
+  async post(@Req() req: Request, @Res() res: Response) {
+    const user = await this.authenticate(req, res)
+    if (!user) return
     const server = new McpServer({ name: 'remote-code-mcp', version: '0.1.0' })
     registerMcpTools(server, this.hub, this.store, user.id, user.clientId)
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })

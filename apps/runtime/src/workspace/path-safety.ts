@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { dataDir, type LocalWorkspace } from '../../workspace/state'
+import { dataDir, type LocalWorkspace } from './state'
 
 /** 远程文件与 Git 工具共用的敏感名称规则，避免不同读取入口出现过滤差异。 */
 export const SENSITIVE_NAMES = [
@@ -58,6 +58,8 @@ export const isSensitive = (name: string) => {
   const n = name.toLowerCase()
   return (
     forbidden.has(n) ||
+    // 同目录临时文件可能仍在接收上传，所有远程文件及 Git 入口均须屏蔽。
+    /^\.rcm-[0-9a-f-]{36}\.tmp$/.test(n) ||
     (n.startsWith('.env.') && !n.endsWith('.example')) ||
     sensitiveExtensionPattern.test(n)
   )

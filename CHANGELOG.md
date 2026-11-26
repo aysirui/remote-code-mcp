@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/aysirui/remote-code-mcp/compare/v0.3.0...v0.3.1) (2026-11-26)
+
+
+### Documentation
+
+* 完善 AI 客户端接入教程及 Runtime 和 Console 使用指南 ([aff1f2b](https://github.com/aysirui/remote-code-mcp/commit/aff1f2bcb1e95c224672980fb209c1d553f723d0))
+
 ## [0.3.0](https://github.com/aysirui/remote-code-mcp/compare/v0.2.0...v0.3.0) (2026-11-26)
 
 

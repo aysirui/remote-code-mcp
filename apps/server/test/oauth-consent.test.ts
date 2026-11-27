@@ -1,6 +1,11 @@
 import { OAuthController } from '../src/modules/oauth/oauth.controller'
 import { hash } from '../src/common/security'
-import { canonicalResource, oauthConsentSignature } from '../src/modules/oauth/oauth-utils'
+import {
+  canonicalResource,
+  frontend,
+  origin,
+  oauthConsentSignature,
+} from '../src/modules/oauth/oauth-utils'
 
 /** 授权确认入口安全回归：拒绝请求不得创建授权码或重定向到客户端。 */
 function setup() {
@@ -93,4 +98,38 @@ describe('OAuth 授权确认安全边界', () => {
       'workbuddy://workbuddy/mcp/test?code=issued-code&state=opaque-state',
     )
   })
+})
+
+describe('OAuth 未登录及首次改密回跳', () => {
+  test.each([null, { id: 'user-1', status: 'active', passwordChangeRequired: true }])(
+    '未完成登录的账号进入 Console 并保留完整授权参数：%j',
+    async (user) => {
+      const query = {
+        client_id: 'client-1',
+        redirect_uri: 'https://client.example/callback',
+        state: 'opaque&state',
+        code_challenge: 'a'.repeat(43),
+        code_challenge_method: 'S256',
+        response_type: 'code',
+        resource: canonicalResource(),
+        scope: 'mcp:tools',
+      }
+      const auth = { userBySession: jest.fn().mockResolvedValue(user) }
+      const oauth = {
+        client: jest.fn().mockResolvedValue({ redirectUris: JSON.stringify([query.redirect_uri]) }),
+        createConsent: jest.fn(),
+      }
+      const response = { redirect: jest.fn() }
+      const controller = new OAuthController(auth as never, oauth as never)
+      await controller.authorize({} as never, response as never, query)
+      const destination = new URL(response.redirect.mock.calls[0][0])
+      expect(destination.origin).toBe(new URL(frontend()).origin)
+      expect(destination.pathname).toBe('/console')
+      const target = new URL(destination.searchParams.get('returnTo')!)
+      expect(target.origin).toBe(new URL(origin()).origin)
+      expect(target.pathname).toBe('/oauth/authorize')
+      expect(Object.fromEntries(target.searchParams)).toEqual(query)
+      expect(oauth.createConsent).not.toHaveBeenCalled()
+    },
+  )
 })

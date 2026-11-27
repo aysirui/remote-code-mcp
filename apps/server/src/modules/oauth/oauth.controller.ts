@@ -97,7 +97,8 @@ export class OAuthController {
       const next = encodeURIComponent(
         origin() + '/oauth/authorize?' + new URLSearchParams(q).toString(),
       )
-      return res.redirect(frontend() + '/login?returnTo=' + next)
+      // Console 实际入口为 /console，避免依赖未知路径的兜底路由保留查询参数。
+      return res.redirect(frontend().replace(/\/$/, '') + '/console?returnTo=' + next)
     }
     // 仅允许提交到本站以及已经通过 client_id + redirect_uris 精确匹配的回调源。
     // Chromium 会对表单 POST 后的重定向链校验 form-action；只设 'self' 会拦截 OAuth 回跳。

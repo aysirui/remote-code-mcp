@@ -34,7 +34,7 @@ export function useConsole() {
   async function load() {
     try {
       me.value = await request<Account>('/api/auth/me')
-      if (!me.value?.passwordChangeRequired) await refresh()
+      if (me.value && !me.value.passwordChangeRequired && !resumeOAuth()) await refresh()
     } catch {
       me.value = null
     } finally {
@@ -63,6 +63,7 @@ export function useConsole() {
     newPassword,
     newPasswordConfirm,
     signIn,
+    resumeOAuth,
     changePassword,
     logout,
   } = useAuth(me, refresh, reportError)
@@ -86,7 +87,8 @@ export function useConsole() {
   }
 
   onMounted(() => {
-    void load()
+    // 等待初始路由就绪，避免首次加载时丢失 OAuth 查询参数。
+    void router.isReady().then(load)
   })
 
   /** 页面标识到中文标题的映射，未匹配时统一使用默认标题。 */

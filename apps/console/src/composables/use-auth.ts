@@ -2,6 +2,7 @@ import { ref, watch, onUnmounted, type Ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ApiError, request, type User as Account } from '../api'
 import { useRoute, useRouter } from 'vue-router'
+import { resolveOAuthReturn } from './oauth-return'
 
 /** 认证表单及会话操作；登录成功后由 Console 刷新业务数据。 */
 export function useAuth(
@@ -86,8 +87,21 @@ export function useAuth(
   const currentPassword = ref('')
   const newPassword = ref('')
   const newPasswordConfirm = ref('')
-  const location = window.location
-  const returnTo = new URLSearchParams(location.search).get('returnTo')
+  /** 登录和恢复会话共用授权回跳；首次改密时保留当前路由查询参数。 */
+  function resumeOAuth(): boolean {
+    if (!me.value || me.value.passwordChangeRequired || route.name === 'activate-email')
+      return false
+    const result = resolveOAuthReturn(
+      route.query.returnTo,
+      import.meta.env.VITE_API_URL || '',
+      window.location.origin,
+      import.meta.env.DEV,
+    )
+    if (result.error) ElMessage.error(result.error)
+    if (!result.target) return false
+    window.location.replace(result.target)
+    return true
+  }
 
   /** 登录与注册均维护加载状态；未激活账号只弹出恢复提示，不自动发送或替换密码。 */
   async function signIn() {
@@ -116,14 +130,7 @@ export function useAuth(
         ElMessage.warning('首次登录请先修改临时密码')
         return
       }
-      if (returnTo) {
-        const target = new URL(returnTo)
-        const allow = new URL(import.meta.env.VITE_API_URL || location.origin)
-        if (target.origin === allow.origin) {
-          location.href = target.toString()
-          return
-        }
-      }
+      if (resumeOAuth()) return
       await refresh()
       ElMessage.success('登录成功')
     } catch (error: unknown) {
@@ -141,7 +148,7 @@ export function useAuth(
     }
   }
 
-  /** 校验新密码确认值后提交修改；成功后要求用户使用新密码重新登录。 */
+  /** 校验新密码并提交；保留 OAuth 查询参数，重新登录后继续原授权。 */
   async function changePassword() {
     if (!currentPassword.value || !newPassword.value) {
       ElMessage.warning('请输入旧密码和新密码')
@@ -189,6 +196,7 @@ export function useAuth(
     newPassword,
     newPasswordConfirm,
     signIn,
+    resumeOAuth,
     changePassword,
     logout,
   }

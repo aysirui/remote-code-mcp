@@ -193,7 +193,7 @@ pnpm dev:runtime
 
 ## 6. 登录 Console 并配对 Runtime
 
-1. 浏览器访问 `https://example.ngrok-free.app/login`，使用本地初始化的管理员账号登录并完成首次改密，再重新登录。
+1. 浏览器访问 `https://example.ngrok-free.app/console`，使用本地初始化的管理员账号登录并完成首次改密，再重新登录。
 2. 打开 Runtime 日志输出的完整本地管理链接，添加 Server 地址 `http://localhost:3000`。
 3. 按 [Runtime 使用指南](./usage.md) 完成配对及工作区授权，使用公网 Console 页面和本地账号确认配对。
 4. 在 Console 检查设备在线状态，先添加不含敏感信息的只读测试工作区。
@@ -212,7 +212,7 @@ pnpm dev:runtime
 
 按 [ChatGPT](./connect-chatgpt.md)、[WorkBuddy](./connect-workbuddy.md) 或 [豆包](./connect-doubao.md) 的接入步骤完成授权，将其中官方地址替换为实际 ngrok 地址。客户端必须支持相应的远程 MCP 和 OAuth 能力。
 
-授权时浏览器应进入自己的 ngrok 域名，确认授权后返回客户端。首次调用建议使用 `device_list`、`workspace_list` 和 `file_read` 验证只读访问，然后再按需启用写入权限。
+授权时浏览器应进入自己的 ngrok 域名。未登录时 Server 跳转到同域名的 `/console?returnTo=...`；登录成功或恢复已有会话后自动回到 `/oauth/authorize`，首次改密后使用新密码重新登录也会保留原授权参数。确认授权后返回客户端。首次调用建议使用 `device_list`、`workspace_list` 和 `file_read` 验证只读访问，然后再按需启用写入权限。
 
 ## 8. 验证连接及文件流
 
@@ -240,7 +240,22 @@ curl.exe -i -X POST https://example.ngrok-free.app/mcp
 
 通过 MCP Inspector 或目标客户端执行文本读取、图片预览和原文件流读取。原文件流返回的一次性地址必须使用同一 OAuth 客户端的有效令牌访问，并比较下载文件与原文件的 SHA-256。服务端支持文件流不代表所有 AI 客户端都支持自动下载和解析原文件，具体见 [文件读写](./usage.md#文件读写)。
 
-## 9. 常见问题
+## 9. 本地与生产域名配置的区别
+
+本地 ngrok 联调只需要一个隧道：`ngrok http 5173`。不要再启动 3000 端口的独立隧道，也不要把 CONSOLE_URL 设置为 localhost。
+
+| 配置              | 普通本地开发            | ngrok 本地联调          | 生产独立子域名（示例）           |
+| ----------------- | ----------------------- | ----------------------- | -------------------------------- |
+| PUBLIC_URL        | `http://localhost:3000` | 隧道 HTTPS 地址         | `https://rcm.aysirui.com`        |
+| CONSOLE_URL       | `http://localhost:5173` | 同一隧道 HTTPS 地址     | `https://rcmconsole.aysirui.com` |
+| VITE_API_URL      | `http://localhost:3000` | 同一隧道 HTTPS 地址     | `https://rcm.aysirui.com`        |
+| VITE_PROXY_TARGET | `http://localhost:3000` | `http://localhost:3000` | 不需要                           |
+
+开发模式下浏览器走 Vite 同源代理，登录 Cookie 属于浏览器访问的主机；生产构建直接请求公开 Server，Cookie 属于 Server。生产两个 HTTPS 子域名同站但不同源，需要现有的带凭据 CORS 配置，不需要扩大 Cookie Domain 或关闭 CSRF 校验。
+
+若授权跳到 localhost，检查 Server 实际生效的 CONSOLE_URL；若提示回跳地址不受信任，检查 Console 的 VITE_API_URL。修改配置后重启两个应用并重新从 AI 客户端发起授权，不复用过期授权链接。
+
+## 10. 常见问题
 
 | 问题                         | 排查方法                                                                                               |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------ |
@@ -256,7 +271,7 @@ curl.exe -i -X POST https://example.ngrok-free.app/mcp
 
 ngrok 的本地调试界面通常为 `http://127.0.0.1:4040`。可以检查请求状态、OAuth 注册及 Token 兑换是否成功，但不要分享包含密码、Cookie、令牌、文件正文或授权码的请求记录。若遇到 ngrok 浏览器警告页，应核对实际域名和响应内容，不要关闭 RCM 安全校验。
 
-## 10. 停止服务或更换域名
+## 11. 停止服务或更换域名
 
 测试结束后关闭 ngrok，再停止本地 Server、Console 和 Runtime。关闭隧道不会删除本地数据库和工作区。
 

@@ -145,8 +145,10 @@ export async function writeFileStream(
         if (expectedSha256 === undefined) await fs.lstat(target)
         else currentSha256 = (await measureFile(workspace, relative, maxBytes)).sha256
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-        if (expectedSha256 === undefined) return
+        // 仅新建允许目标缺失。覆盖时保留 ENOENT，由 RPC 返回文件不存在状态。
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT' && expectedSha256 === undefined)
+          return
+        throw error
       }
       if (expectedSha256 === undefined || currentSha256 !== expectedSha256)
         throw Error('FILE_CONFLICT')

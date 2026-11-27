@@ -475,10 +475,10 @@ test('大于文本工具限制的二进制文件仍可以通过内容摘要安�
   await expect(readFile(filename)).rejects.toMatchObject({ code: 'ENOENT' })
 })
 
-test('RPC 拒绝权限和未知异常只返回安全错误码，不回传本机路径', async () => {
+test('无权执行时优先返回权限错误，有权访问的缺失目标返回安全错误码', async () => {
   context.server.workspaces[0].permissions.write = false
   const denied = await handleGatewayMessage(
-    rpc('file.delete', { path: 'README.md', expectedSha256: shaText('before') }),
+    rpc('file.delete', { path: 'absent.png', expectedSha256: shaText('before') }),
     context,
   )
   expect(denied).toMatchObject({
@@ -486,15 +486,39 @@ test('RPC 拒绝权限和未知异常只返回安全错误码，不回传本机�
     error: { code: 'PERMISSION_DENIED', message: 'PERMISSION_DENIED' },
   })
   context.server.workspaces[0].permissions.write = true
-  const unknown = await handleGatewayMessage(
+  const missing = await handleGatewayMessage(
     rpc('file.delete', { path: 'absent.png', expectedSha256: 'a'.repeat(64) }),
     context,
   )
-  expect(unknown).toMatchObject({
+  expect(missing).toMatchObject({
     success: false,
-    error: { code: 'FILE_OPERATION_FAILED', message: 'FILE_OPERATION_FAILED' },
+    error: { code: 'FILE_NOT_FOUND', message: 'FILE_NOT_FOUND' },
   })
-  expect(JSON.stringify(unknown)).not.toContain(dir)
+  expect(JSON.stringify(missing)).not.toContain(dir)
+})
+
+test.each([
+  ['file.read', { path: 'absent.txt' }],
+  ['file.read', { path: 'absent.png', encoding: 'inline', transfer: transferRef() }],
+  ['file.stat', { path: 'absent.png' }],
+  ['file.write', { path: 'absent/child.txt', content: '内容' }],
+  ['file.write', { path: 'absent.txt', content: '内容', expectedSha256: shaText('before') }],
+] as const)('%s 找不到操作所需文件或目录时返回 FILE_NOT_FOUND', async (operation, args) => {
+  const result = await handleGatewayMessage(rpc(operation, args), context)
+  expect(result).toMatchObject({
+    success: false,
+    error: { code: 'FILE_NOT_FOUND', message: 'FILE_NOT_FOUND' },
+  })
+  expect(await readdir(dir)).toEqual(['README.md'])
+})
+
+test('写入时省略旧版摘要可以在已有目录下创建缺失的文件', async () => {
+  const result = await handleGatewayMessage(
+    rpc('file.write', { path: 'new.txt', content: '新文件' }),
+    context,
+  )
+  expect(result).toMatchObject({ success: true, data: { path: 'new.txt', written: true } })
+  expect(await readFile(path.join(dir, 'new.txt'), 'utf8')).toBe('新文件')
 })
 
 test('审批明确拒绝时传递安全业务错误码，文件保持原样', async () => {
@@ -610,11 +634,6 @@ test('参数无效、未知命令和领域执行错误使用不同的公开错�
   ).resolves.toMatchObject({
     error: { code: 'INVALID_TOOL_ARGUMENTS' },
   })
-  await expect(
-    handleGatewayMessage(rpc('file.read', { path: 'missing.txt' }), context),
-  ).resolves.toMatchObject({
-    error: { code: 'FILE_OPERATION_FAILED' },
-  })
   await expect(handleGatewayMessage(rpc('git.status', {}), context)).resolves.toMatchObject({
     error: { code: 'GIT_OPERATION_FAILED' },
   })
@@ -639,7 +658,7 @@ test('文件读取失败的绝对路径和系统错误只进入本地日志', as
     expect(entry.error).not.toHaveProperty('stack')
     expect(response).toMatchObject({
       success: false,
-      error: { code: 'FILE_OPERATION_FAILED', message: 'FILE_OPERATION_FAILED' },
+      error: { code: 'FILE_NOT_FOUND', message: 'FILE_NOT_FOUND' },
     })
     expect(JSON.stringify(response)).not.toMatch(/missing\.txt|ENOENT|stack/)
   } finally {

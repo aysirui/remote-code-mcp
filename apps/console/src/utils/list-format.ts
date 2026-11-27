@@ -34,10 +34,12 @@ export const eventLabel = (value: string) =>
       'user.status.change': '变更用户状态',
     }) as Record<string, string>
   )[value] || value
+/** 将 MCP 工具名或 RPC 操作名转换为记录列表中的中文名称。 */
 export const operationLabel = (value: string) =>
   (
     ({
       'file.read': '读取文件',
+      'file.stat': '读取文件属性',
       'file.list': '浏览目录',
       'file.search': '搜索文件',
       'file.write': '写入文件',

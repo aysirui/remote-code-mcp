@@ -61,7 +61,8 @@ export async function handleGatewayMessage(
   // 文件正文和一次性流传输凭证不写入诊断日志。
   const usesFileContent = req.operation === 'file.read' || req.operation === 'file.write'
   const logPayload = usesFileContent ? undefined : req.payload
-  const fallback = req.operation.startsWith('file.')
+  const isFileOperation = req.operation.startsWith('file.')
+  const fallback = isFileOperation
     ? 'FILE_OPERATION_FAILED'
     : req.operation.startsWith('git.')
       ? 'GIT_OPERATION_FAILED'
@@ -134,11 +135,21 @@ export async function handleGatewayMessage(
     logger.info('rpc.completed', { ...logContext, durationMs: Date.now() - startedAt })
     return { kind: 'response', id: req.id, success: true, data, commandAudit }
   } catch (error: unknown) {
-    // 只发送稳定业务错误码；原始异常可能包含工作区绝对路径或命令信息。
-    const code =
-      error instanceof ZodError
-        ? 'INVALID_TOOL_ARGUMENTS'
-        : rpcPublicErrorCode(error instanceof Error ? error.message : undefined, fallback)
+    // 文件路径可能在校验、审批或读写时消失。统一返回缺失状态，绝对路径和系统异常留在本机日志。
+    let code: string
+    if (error instanceof ZodError) {
+      code = 'INVALID_TOOL_ARGUMENTS'
+    } else if (
+      isFileOperation &&
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      error.code === 'ENOENT'
+    ) {
+      code = 'FILE_NOT_FOUND'
+    } else {
+      code = rpcPublicErrorCode(error instanceof Error ? error.message : undefined, fallback)
+    }
     const result = error instanceof CommandResultError ? error.result : undefined
     logger.error('rpc.failed', {
       ...logContext,

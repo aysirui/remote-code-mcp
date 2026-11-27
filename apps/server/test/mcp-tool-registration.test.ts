@@ -286,6 +286,21 @@ describe('MCP 输出契约', () => {
     expect(failed.structuredContent).toBeUndefined()
   })
 
+  test('MCP 文件查询、读取和覆盖调用保留设备返回的文件缺失状态', async () => {
+    const args = { workspaceId: 'workspace-1', path: 'missing.txt' }
+    for (const name of ['file_stat', 'file_read', 'file_write']) {
+      execute.mockRejectedValueOnce(new DeviceRpcError('FILE_NOT_FOUND'))
+      const input =
+        name === 'file_write' ? { ...args, content: '正文', expectedSha256: 'a'.repeat(64) } : args
+      const result = await client.callTool({ name, arguments: input })
+      expect(result).toMatchObject({
+        isError: true,
+        content: [{ type: 'text', text: 'FILE_NOT_FOUND' }],
+      })
+    }
+    expect(execute).toHaveBeenCalledTimes(3)
+  })
+
   test.each(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])(
     'MIME 为 %s 的读取结果统一生成 MCP 图片块',
     async (mimeType) => {

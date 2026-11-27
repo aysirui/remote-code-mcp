@@ -169,6 +169,8 @@ export class FileTransfers {
         POLICY_DENIED: 403,
         APPROVAL_DENIED: 403,
         WORKSPACE_NOT_FOUND: 404,
+        // 下载目标或必须存在的上传目标缺失。
+        FILE_NOT_FOUND: 404,
       }
       res.status(statuses[code] ?? 502).json({ error: code })
     }

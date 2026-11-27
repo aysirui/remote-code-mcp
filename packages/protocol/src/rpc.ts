@@ -42,6 +42,8 @@ export const RpcPublicErrorCodes = [
   'APPROVAL_EXPIRED',
   'APPROVAL_RESOURCE_CHANGED',
   'EXPECTED_SHA256_REQUIRED',
+  // 工作区目标或其父目录不存在，用于文件工具及原文件传输。
+  'FILE_NOT_FOUND',
   'FILE_CONFLICT',
   'FILE_CHANGED',
   'FILE_TOO_LARGE',

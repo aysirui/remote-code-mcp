@@ -113,6 +113,18 @@ test('一次性地址免请求头下载原始字节，上传和下载签发授�
           encoding: string
           path: string
         }
+        if (payload.path === 'missing.bin') {
+          // 目标检查失败时，设备直接返回错误，字节流尚未开始。
+          runtime.send(
+            JSON.stringify({
+              kind: 'response',
+              id: request.id,
+              success: false,
+              error: { code: 'FILE_NOT_FOUND', message: 'FILE_NOT_FOUND' },
+            }),
+          )
+          return
+        }
         const url = new URL('/mcp/files/' + payload.transfer.id + '/device', base)
         const auth = { Authorization: 'Bearer ' + payload.transfer.key }
         let data: unknown
@@ -319,6 +331,30 @@ test('一次性地址免请求头下载原始字节，上传和下载签发授�
       isError: true,
       content: [{ type: 'text', text: 'FILE_ATTACHMENT_DOWNLOAD_FAILED' }],
     })
+
+    revoked = false
+    const missingArgs = { ...args, path: 'missing.bin' }
+    const missingRead = await client.callTool({ name: 'file_read', arguments: missingArgs })
+    const missingDownload = await fetch(
+      String(McpToolOutputs['file.read'].parse(missingRead.structuredContent).url),
+    )
+    expect(missingDownload.status).toBe(404)
+    expect(await missingDownload.json()).toEqual({ error: 'FILE_NOT_FOUND' })
+
+    const missingWrite = await client.callTool({
+      name: 'file_write',
+      arguments: { ...missingArgs, expectedSha256: sha256, size: 1 },
+    })
+    const missingUpload = await fetch(
+      String(McpToolOutputs['file.write'].parse(missingWrite.structuredContent).url),
+      {
+        method: 'PUT',
+        headers: { ...headers, 'Content-Type': 'application/octet-stream' },
+        body: Buffer.from([1]),
+      },
+    )
+    expect(missingUpload.status).toBe(404)
+    expect(await missingUpload.json()).toEqual({ error: 'FILE_NOT_FOUND' })
   } finally {
     restoreAttachmentFetch?.()
     if (publicUrl === undefined) delete process.env.PUBLIC_URL

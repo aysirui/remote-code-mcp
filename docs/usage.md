@@ -90,6 +90,8 @@ Git 暂存、提交和高危递归删除保留强制审批；临时命令也需�
 
 大小未知时，先用 `file_stat` 获取目标类型和文件字节数。它只查询属性。文本格式错误返回 `INVALID_UTF8`，读取超限返回 `FILE_TOO_LARGE`，卡片无法预览的格式返回 `FILE_PREVIEW_UNSUPPORTED`。
 
+文件或其所在目录不存在时，文件工具返回 `FILE_NOT_FOUND`。写入时，省略 `expectedSha256` 可以在已存在的目录下新建文件；提供摘要的覆盖操作要求目标已存在。流式传输在实际 GET 或 PUT 时检查文件，此时若找不到目标或目录，HTTP 返回 `404` 和 `FILE_NOT_FOUND`。
+
 通过 HTTP 下载图片、PDF、Office 或其他原文件时，用以下参数调用 `file_read`：
 
 ```json

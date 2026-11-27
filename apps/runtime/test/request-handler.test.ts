@@ -16,7 +16,7 @@ import {
   COMMAND_MAX_TIMEOUT_MS,
   COMMAND_RPC_TIMEOUT_MS,
   FILE_BINARY_LIMIT_BYTES,
-  FILE_INLINE_LIMIT_BYTES,
+  FILE_PREVIEW_LIMIT_BYTES,
   FILE_THUMBNAIL_MAX_EDGE,
   RPC_APPROVAL_TIMEOUT_MS,
 } from '@rcm/protocol'
@@ -271,7 +271,7 @@ test('文件流限制为 64 MiB 原始字节', async () => {
   })
 })
 
-test('查询大图大小，普通内联明确拒绝超限，预览只中继缩略图', async () => {
+test('查询大图大小，流式下载保留原图，媒体预览只中继缩略图', async () => {
   const { downloads } = await startRelay()
   const filename = 'photo.png'
   const original = await sharp({
@@ -279,7 +279,7 @@ test('查询大图大小，普通内联明确拒绝超限，预览只中继缩�
   })
     .png({ compressionLevel: 0 })
     .toBuffer()
-  expect(original.length).toBeGreaterThan(FILE_INLINE_LIMIT_BYTES)
+  expect(original.length).toBeGreaterThan(FILE_PREVIEW_LIMIT_BYTES)
   await writeFile(path.join(dir, filename), original)
   expect(await handleGatewayMessage(rpc('file.stat', { path: filename }), context)).toMatchObject({
     success: true,
@@ -289,28 +289,32 @@ test('查询大图大小，普通内联明确拒绝超限，预览只中继缩�
     success: true,
     data: { type: 'directory' },
   })
-  const transfer = transferRef()
-  const args = { path: filename, encoding: 'inline', transfer }
-  expect(await handleGatewayMessage(rpc('file.read', args), context)).toMatchObject({
-    success: false,
-    error: { code: 'FILE_TOO_LARGE' },
+  const originalTransfer = transferRef()
+  const args = { path: filename, encoding: 'stream' }
+  expect(
+    await handleGatewayMessage(rpc('file.read', { ...args, transfer: originalTransfer }), context),
+  ).toMatchObject({
+    success: true,
+    data: { encoding: 'stream', mimeType: 'image/png', size: original.length },
   })
-  expect(downloads.has(transfer.id)).toBe(false)
+  expect(downloads.get(originalTransfer.id)).toEqual(original)
+  const previewTransfer = transferRef()
   const viewed = await handleGatewayMessage(
-    rpc('file.read', { ...args, mediaPreview: true }),
+    rpc('file.read', { ...args, transfer: previewTransfer, mediaPreview: true }),
     context,
   )
-  const thumb = downloads.get(transfer.id)!
+  const thumb = downloads.get(previewTransfer.id)!
   expect(viewed).toMatchObject({
     success: true,
     data: {
+      encoding: 'stream',
       mimeType: 'image/webp',
       size: thumb.length,
       originalSize: original.length,
       sha256: createHash('sha256').update(thumb).digest('hex'),
     },
   })
-  expect(thumb.length).toBeLessThan(FILE_INLINE_LIMIT_BYTES)
+  expect(thumb.length).toBeLessThanOrEqual(FILE_PREVIEW_LIMIT_BYTES)
   expect((await sharp(thumb).metadata()).width).toBe(FILE_THUMBNAIL_MAX_EDGE)
   expect(await readFile(path.join(dir, filename))).toEqual(original)
 })
@@ -499,7 +503,10 @@ test('无权执行时优先返回权限错误，有权访问的缺失目标返�
 
 test.each([
   ['file.read', { path: 'absent.txt' }],
-  ['file.read', { path: 'absent.png', encoding: 'inline', transfer: transferRef() }],
+  [
+    'file.read',
+    { path: 'absent.png', encoding: 'stream', transfer: transferRef(), mediaPreview: true },
+  ],
   ['file.stat', { path: 'absent.png' }],
   ['file.write', { path: 'absent/child.txt', content: '内容' }],
   ['file.write', { path: 'absent.txt', content: '内容', expectedSha256: shaText('before') }],

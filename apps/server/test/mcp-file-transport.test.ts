@@ -112,6 +112,7 @@ test('一次性地址免请求头下载原始字节，上传和下载签发授�
           transfer: { id: string; key: string }
           encoding: string
           path: string
+          mediaPreview?: true
         }
         if (payload.path === 'missing.bin') {
           // 目标检查失败时，设备直接返回错误，字节流尚未开始。
@@ -140,7 +141,7 @@ test('一次性地址免请求头下载原始字节，上传和下载签发授�
           }
           data = { path: payload.path, written: true, sha256: hash.digest('hex') }
         } else {
-          const image = payload.encoding === 'inline'
+          const image = payload.mediaPreview === true
           const options: RequestInit & { duplex: 'half' } = {
             method: 'PUT',
             headers: auth,
@@ -239,15 +240,6 @@ test('一次性地址免请求头下载原始字节，上传和下载签发授�
     expect(tokenByHash).toHaveBeenCalledTimes(2)
     expect(controlSizes).toHaveLength(2)
 
-    const viewed = await client.callTool({
-      name: 'file_read',
-      arguments: { ...args, path: 'pixel.png', encoding: 'inline' },
-    })
-    expect(viewed.content).toContainEqual({
-      type: 'image',
-      mimeType: 'image/png',
-      data: preview.toString('base64'),
-    })
     const card = await client.callTool({
       name: 'file_preview',
       arguments: { workspaceId: workspace.id, path: 'assets/pixel.png' },
@@ -263,9 +255,9 @@ test('一次性地址免请求头下载原始字节，上传和下载签发授�
     })
     expect(card.structuredContent).not.toHaveProperty('content')
     expect(card.content).not.toContainEqual(expect.objectContaining({ type: 'image' }))
-    expect(controlSizes).toHaveLength(4)
+    expect(controlSizes).toHaveLength(3)
     expect(Math.max(...controlSizes)).toBeLessThan(1024)
-    expect(store.logOperation).toHaveBeenCalledTimes(4)
+    expect(store.logOperation).toHaveBeenCalledTimes(3)
 
     // 宿主文件引用替身没有 Content-Length，MCP 调用完成时应已精确写入字节。
     const attachmentUrl = 'https://files.example.net/file-fixture?signature=test'
@@ -309,7 +301,7 @@ test('一次性地址免请求头下载原始字节，上传和下载签发授�
       isError: true,
       content: [{ type: 'text', text: 'FILE_ATTACHMENT_URL_DENIED' }],
     })
-    expect(controlSizes).toHaveLength(4)
+    expect(controlSizes).toHaveLength(3)
     expect(downloadAttachment).not.toHaveBeenCalled()
     const saved = await client.callTool({ name: 'file_write', arguments: attachmentArgs })
     expect(saved.structuredContent).toEqual({
@@ -322,7 +314,7 @@ test('一次性地址免请求头下载原始字节，上传和下载签发授�
       signal: expect.any(AbortSignal),
       redirect: 'error',
     })
-    expect(controlSizes).toHaveLength(5)
+    expect(controlSizes).toHaveLength(4)
     expect(Math.max(...controlSizes)).toBeLessThan(1024)
 
     downloadAttachment.mockResolvedValueOnce(new Response(null, { status: 410 }))

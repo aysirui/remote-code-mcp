@@ -113,7 +113,7 @@ MCP 接入地址为 `https://你的服务器域名/mcp`，使用平台账号进�
 
 覆盖已有文件须提供当前 `expectedSha256`；命令执行需要工作区写权限。工具输入和输出契约以 [共享协议](packages/protocol/src/mcp-tools.ts) 为准。
 
-`file_stat` 查询路径类型和文件大小，`file_read` 和 `file_write` 默认使用 UTF-8 文本（最多 512 KiB）。指定 `encoding: "stream"` 后通过一次性地址传输原文件（最多 64 MiB）。下载可直接 GET，上传仍需 OAuth。客户端可用 `file_write attachment` 保存来自可信 HTTPS 源的附件。用 `file_read inline` 读取小文件原始内容，或用 `file_preview` 在 MCP Apps 中查看媒体及大图缩略图。传输详情和示例见 [文件读写](docs/usage.md#文件读写)。
+`file_stat` 查询路径类型和文件大小，`file_read` 和 `file_write` 默认使用 UTF-8 文本（最多 512 KiB）。指定 `encoding: "stream"` 后通过一次性地址传输原文件（最多 64 MiB）。下载可直接 GET，上传仍需 OAuth。客户端可用 `file_write attachment` 保存来自可信 HTTPS 源的附件。支持 MCP Apps 的客户端可用 `file_preview` 查看媒体及大图缩略图。传输详情和示例见 [文件读写](docs/usage.md#文件读写)。
 
 ## 文档与贡献
 

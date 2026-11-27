@@ -1,5 +1,4 @@
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
-import { McpToolInputs, McpToolOutputs, ToolOutputs, type ToolOutput } from '@rcm/protocol'
+import { McpToolInputs, McpToolOutputs, ToolOutputs } from '@rcm/protocol'
 import type { z } from 'zod'
 import { env } from '../../../../config/env'
 import { DeviceRpcError } from '../../../device/device-rpc-pending'
@@ -7,11 +6,15 @@ import type { McpToolContext } from '../register'
 
 const inputSchema = McpToolInputs['file.read']
 
-/** 读取文本、通过设备流取得内联字节，或签发原文件下载地址。 */
+/**
+ * 读取文本或签发原文件下载地址。
+ * @param input 目标工作区、相对路径和读取方式。
+ * @param context 请求身份、设备路由及下载授权复查。
+ * @returns 文本正文及摘要，或一次性下载凭据。
+ */
 async function readFile(
   { workspaceId, ...payload }: z.output<typeof inputSchema>,
   { hub, userId, clientId, authorizeDownload }: McpToolContext,
-  signal: AbortSignal,
 ) {
   if (payload.encoding === 'stream') {
     const ticket = await hub.prepareFileTransfer(
@@ -25,14 +28,7 @@ async function readFile(
     )
     return { encoding: 'stream', ...ticket }
   }
-  if (payload.encoding === 'inline') {
-    return hub.files.readInline(
-      (transfer) =>
-        hub.execute(userId, clientId, workspaceId, 'file.read', { ...payload, transfer }),
-      signal,
-    )
-  }
-
+  // 文本读取必须包含正文，空文件的正文为空字符串。
   const result = ToolOutputs['file.read'].safeParse(
     await hub.execute(userId, clientId, workspaceId, 'file.read', payload),
   )
@@ -41,33 +37,14 @@ async function readFile(
   return result.data
 }
 
-/** 将已校验的字节编码为 MCP 内容块，结构化结果只保留文件元数据。 */
-function formatInlineFile(bytes: Buffer, metadata: ToolOutput<'file.read'>): CallToolResult {
-  const { mimeType, sha256 } = metadata
-  const base64 = bytes.toString('base64')
-  let file: CallToolResult['content'][number]
-  if (mimeType.startsWith('image/')) {
-    file = { type: 'image', data: base64, mimeType }
-  } else if (mimeType.startsWith('audio/')) {
-    file = { type: 'audio', data: base64, mimeType }
-  } else {
-    // 按文件摘要标识内嵌资源，客户端可直接取得完整内容。
-    file = { type: 'resource', resource: { uri: 'urn:sha256:' + sha256, mimeType, blob: base64 } }
-  }
-  return {
-    content: [{ type: 'text', text: JSON.stringify(metadata) }, file],
-    structuredContent: metadata,
-  }
-}
-
-/** file_read 的工具契约及内联响应。 */
+// 旧 inline 模式通过 MCP content 返回 ImageContent（type: 'image'），structuredContent 只含元数据。
+// 部分 AI 客户端未将图片块传给模型，模型只能读取元数据，无法据此分析图片。
+/** file_read 向 MCP 客户端提供文本读取和原文件下载。 */
 export const fileRead = {
   name: 'file_read',
   description:
-    '读取工作区原始文件。utf8 读取文本；inline 在 MCP 内容块中返回最多 512 KiB 的完整字节；stream 签发下载地址，须实际 GET 才取得完整原文件，最多 64 MiB。大小未知时可查 file_stat。仅在对话中查看媒体时使用 file_preview',
+    '读取工作区文件。默认 utf8 读取最多 512 KiB 的文本。stream 签发一次性下载地址，须实际 GET 才能取得最多 64 MiB 的原文件。支持 MCP Apps 的客户端可用 file_preview 展示媒体',
   inputSchema,
   outputSchema: McpToolOutputs['file.read'],
   execute: readFile,
-  formatResult: (result: Awaited<ReturnType<typeof readFile>>) =>
-    'bytes' in result ? formatInlineFile(result.bytes, result.metadata) : undefined,
 }

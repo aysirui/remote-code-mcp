@@ -1,7 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { McpToolInputs, McpToolOutputs, type RpcRequest } from '@rcm/protocol'
 import type { Store } from '../src/infrastructure/database/store'
 import type { DeviceHub } from '../src/modules/device/device-hub'
@@ -58,17 +57,20 @@ describe('MCP 输出契约', () => {
   let client: Client
   const execute = jest.fn()
   const preview = jest.fn()
+  const prepareFileTransfer = jest.fn()
   const where = jest.fn()
 
   beforeEach(async () => {
     execute.mockReset()
     preview.mockReset()
+    prepareFileTransfer.mockReset()
     where.mockReset()
     server = new McpServer({ name: 'rcm-test', version: '1.0.0' })
     client = new Client({ name: 'rcm-test-client', version: '1.0.0' })
     const hub = {
       execute,
-      files: { readInline: preview },
+      files: { readPreview: preview },
+      prepareFileTransfer,
       isOnline: () => true,
     } as unknown as DeviceHub
     const store = {
@@ -168,7 +170,7 @@ describe('MCP 输出契约', () => {
     })
     expect(execute).toHaveBeenLastCalledWith('user-1', 'client-1', 'workspace-1', 'file.read', {
       path: 'images/logo.png',
-      encoding: 'inline',
+      encoding: 'stream',
       mediaPreview: true,
       transfer: { id: 'transfer-1', key: 'test-transfer-key' },
     })
@@ -301,47 +303,43 @@ describe('MCP 输出契约', () => {
     expect(execute).toHaveBeenCalledTimes(3)
   })
 
-  test.each(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])(
-    'MIME 为 %s 的读取结果统一生成 MCP 图片块',
-    async (mimeType) => {
-      const metadata = { mimeType, encoding: 'inline', size: 2, sha256: 'a'.repeat(64) }
-      const content = '/9g='
-      preview.mockResolvedValueOnce({ metadata, bytes: Buffer.from(content, 'base64') })
-      const result = await client.callTool({
-        name: 'file_read',
-        arguments: { workspaceId: 'workspace-1', path: 'asset', encoding: 'inline' },
-      })
-      expect(result.structuredContent).toEqual(metadata)
-      const [summary, image] = result.content as CallToolResult['content']
-      expect(summary.type).toBe('text')
-      if (summary.type === 'text') expect(JSON.parse(summary.text)).toEqual(metadata)
-      expect(image).toEqual({ type: 'image', data: content, mimeType })
-    },
-  )
-
-  test('内联读取使用原生音频块；普通二进制文件使用嵌入资源且不开放媒体卡片', async () => {
-    const args = { workspaceId: 'workspace-1', path: 'file', encoding: 'inline' }
-    const base = { encoding: 'inline', size: 2, sha256: 'a'.repeat(64) }
-    const blob = '/9g='
-    const bytes = Buffer.from(blob, 'base64')
-    const audio = { ...base, mimeType: 'audio/wav' }
-    preview.mockResolvedValueOnce({ metadata: audio, bytes })
-    const sound = await client.callTool({ name: 'file_read', arguments: args })
-    expect(sound.structuredContent).toEqual(audio)
-    expect(sound.content).toContainEqual({ type: 'audio', mimeType: audio.mimeType, data: blob })
-
-    const pdf = { ...base, mimeType: 'application/pdf' }
-    preview.mockResolvedValueOnce({ metadata: pdf, bytes })
-    const raw = await client.callTool({ name: 'file_read', arguments: args })
-    expect(raw.structuredContent).toEqual(pdf)
-    expect(raw.content).toContainEqual({
-      type: 'resource',
-      resource: { uri: 'urn:sha256:' + base.sha256, mimeType: pdf.mimeType, blob },
+  test('文件读取工具声明文本和下载模式，默认读取文本', async () => {
+    const { tools } = await client.listTools()
+    expect(tools.find(({ name }) => name === 'file_read')).toMatchObject({
+      inputSchema: { properties: { encoding: { enum: ['utf8', 'stream'], default: 'utf8' } } },
+      outputSchema: { properties: { encoding: { enum: ['utf8', 'stream'] } } },
     })
+  })
+
+  test('原文件下载模式返回领取凭据，媒体预览仍向卡片提供字节', async () => {
+    const args = { workspaceId: 'workspace-1', path: 'image.png' }
+    const ticket = { method: 'GET', url: 'https://rcm.example/mcp/files/ticket', expiresAt: 12345 }
+    prepareFileTransfer.mockResolvedValueOnce(ticket)
+    const download = await client.callTool({
+      name: 'file_read',
+      arguments: { ...args, encoding: 'stream' },
+    })
+    const expected = { encoding: 'stream', ...ticket }
+    expect(download).toEqual({
+      structuredContent: expected,
+      content: [{ type: 'text', text: JSON.stringify(expected) }],
+    })
+
+    const metadata = { mimeType: 'image/png', size: 3, sha256: 'a'.repeat(64) }
+    const bytes = Buffer.from([1, 2, 3])
+    preview.mockResolvedValueOnce({ metadata: { ...metadata, encoding: 'stream' }, bytes })
+    const card = await client.callTool({ name: 'file_preview', arguments: args })
+    expect(card).toMatchObject({
+      structuredContent: { ...metadata, name: 'image.png' },
+      _meta: { 'rcm/previewMedia': bytes.toString('base64') },
+    })
+  })
+
+  test('不支持预览的文件返回业务错误且不提供卡片媒体数据', async () => {
     preview.mockRejectedValueOnce(new DeviceRpcError('FILE_PREVIEW_UNSUPPORTED'))
     const card = await client.callTool({
       name: 'file_preview',
-      arguments: { workspaceId: args.workspaceId, path: args.path },
+      arguments: { workspaceId: 'workspace-1', path: 'file.pdf' },
     })
     expect(card).toMatchObject({
       isError: true,

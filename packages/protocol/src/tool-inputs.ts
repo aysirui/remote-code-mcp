@@ -6,10 +6,10 @@ export const FILE_TEXT_LIMIT_BYTES = 512 * 1024
 /** 单次原文件流传输上限，单位为字节。 */
 export const FILE_BINARY_LIMIT_BYTES = 64 * 1024 * 1024
 
-/** 内联文件读取的原始字节上限。 */
-export const FILE_INLINE_LIMIT_BYTES = 512 * 1024
+/** 媒体卡片接收的原文件或缩略图的字节上限。 */
+export const FILE_PREVIEW_LIMIT_BYTES = 512 * 1024
 
-/** 媒体卡片优先展示原文件；大图使用同样的内联字节预算承载缩略图。 */
+/** 大图预览缩略图的最长边，单位为像素。 */
 export const FILE_THUMBNAIL_MAX_EDGE = 768
 
 /** 控制消息中的短期设备传输凭证；Relay URL 始终由 Runtime 根据当前 Server 生成。 */
@@ -21,14 +21,14 @@ export const FileTransferSchema = z.object({
     .describe('仅对应设备 RPC 可见的一次性传输凭证'),
 })
 
-/** 文件读取支持文本、原文件流和有大小上限的内联文件内容。 */
-export const FileReadModeSchema = z.enum(['utf8', 'stream', 'inline'])
+/** 文件读取模式，分别对应 UTF-8 文本和 HTTP 字节流。 */
+export const FileReadModeSchema = z.enum(['utf8', 'stream'])
 
-/** MCP 文件读取参数；省略 encoding 时读取 UTF-8 文本。 */
+/** 文件读取的基础参数；省略 encoding 时读取 UTF-8 文本。 */
 export const FileReadInputSchema = z.object({
   path: z.string().min(1).max(500).describe('相对于工作区根目录的文件路径'),
   encoding: FileReadModeSchema.default('utf8').describe(
-    '读取方式：utf8 返回文本，stream 获取无需 OAuth 请求头的一次性下载地址，inline 返回最多 512 KiB 的原始文件内容',
+    '读取方式：utf8 返回文本，stream 通过 HTTP 传输文件字节',
   ),
 })
 
@@ -173,8 +173,8 @@ export const ToolInputs = {
     mediaPreview: z
       .literal(true)
       .optional()
-      .describe('由 Server 的 file_preview 设置，仅 inline 模式允许生成大图缩略图'),
-  }).refine(({ encoding, mediaPreview }) => !mediaPreview || encoding === 'inline'),
+      .describe('由 Server 的 file_preview 设置，使用 stream 传输可展示的媒体或大图缩略图'),
+  }).refine(({ encoding, mediaPreview }) => !mediaPreview || encoding === 'stream'),
   'file.search': z.object({
     path: z
       .string()

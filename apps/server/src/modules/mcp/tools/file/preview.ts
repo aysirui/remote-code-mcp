@@ -22,17 +22,23 @@ const outputSchema = ToolOutputs['file.read']
   .pick({ mimeType: true, size: true, sha256: true, originalSize: true })
   .extend({ name: z.string().describe('预览媒体的文件名') })
 
-/** 沿用工作区读取授权，取得原媒体或缩略图以及卡片所需的元数据。 */
+/**
+ * 沿用工作区读取授权，通过设备流取得媒体卡片所需的数据。
+ * @param input 目标工作区和媒体相对路径。
+ * @param context 请求身份及设备路由。
+ * @param signal 当前 MCP 调用的取消信号。
+ * @returns 原媒体或缩略图字节、卡片元数据与可选的原图下载定位。
+ */
 async function previewFile(
   { workspaceId, path: relative }: z.output<typeof inputSchema>,
   { hub, userId, clientId }: McpToolContext,
   signal: AbortSignal,
 ) {
-  const preview = await hub.files.readInline(
+  const preview = await hub.files.readPreview(
     (transfer) =>
       hub.execute(userId, clientId, workspaceId, 'file.read', {
         path: relative,
-        encoding: 'inline',
+        encoding: 'stream',
         mediaPreview: true,
         transfer,
       }),
@@ -53,7 +59,7 @@ async function previewFile(
 export const filePreview = {
   name: 'file_preview',
   description:
-    '在对话中展示媒体时使用。小媒体展示原文件，大图展示缩略图并提供原图下载。要分析、编辑或处理原文件时，使用 file_read 获取完整内容',
+    '在支持 MCP Apps 的客户端中展示图片、音频和视频。大图展示缩略图并提供原图下载。需要原文件字节时，使用 file_read stream 下载',
   inputSchema,
   outputSchema,
   execute: previewFile,

@@ -20,7 +20,7 @@ export const ToolOutputs = {
   }),
   'file.read': z.object({
     content: z.string().optional().describe('完整 UTF-8 文本正文，仅 utf8 模式返回此字段'),
-    encoding: FileReadModeSchema.describe('读取方式：文本、原文件流或内联文件内容'),
+    encoding: FileReadModeSchema.describe('设备读取方式：UTF-8 文本或 HTTP 字节流'),
     mimeType: z
       .string()
       .describe('文本为 text/plain；二进制按内容识别，未知时为 application/octet-stream'),

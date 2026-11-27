@@ -6,13 +6,18 @@ import { WorkspacePoliciesSchema } from './workspace'
 /** MCP 操作的目标工作区标识；不包含 Runtime 本地路径。 */
 const workspaceId = z.string().describe('已授权的工作区 ID，通过 workspace_list 获取')
 
-/** MCP 输入契约：从 RPC 参数派生，仅增加工作区路由字段。 */
+/** MCP 输入契约：从 RPC 参数派生，补充工作区路由与公开工具的参数限制。 */
 export const McpToolInputs = {
   device_list: z.object({}),
   workspace_list: z.object({}),
   'file.list': ToolInputs['file.list'].extend({ workspaceId }),
   'file.stat': ToolInputs['file.stat'].extend({ workspaceId }),
-  'file.read': FileReadInputSchema.extend({ workspaceId }),
+  'file.read': FileReadInputSchema.extend({
+    workspaceId,
+    encoding: FileReadInputSchema.shape.encoding.describe(
+      '读取方式：utf8 返回文本，stream 获取无需 OAuth 请求头的一次性下载地址',
+    ),
+  }),
   'file.search': ToolInputs['file.search'].extend({ workspaceId }),
   'file.write': FileWriteInputSchema.safeExtend({ workspaceId }),
   'file.mkdir': ToolInputs['file.mkdir'].extend({ workspaceId }),
@@ -41,7 +46,7 @@ export const McpToolInputs = {
 /** 原文件流的上传和下载地址均有领取期限，单位为 Unix 毫秒。 */
 const expiresAt = z.number().int().optional().describe('传输地址过期时间，Unix 毫秒时间戳')
 
-/** MCP 结构化输出契约：数组和字符串包装为 value，内联原始字节使用单独的内容块。 */
+/** MCP 结构化输出契约：数组和字符串包装为 value。 */
 export const McpToolOutputs = {
   device_list: z.object({
     value: z
@@ -77,6 +82,9 @@ export const McpToolOutputs = {
     .omit({ originalSize: true })
     .partial({ mimeType: true, size: true, sha256: true })
     .extend({
+      encoding: ToolOutputs['file.read'].shape.encoding.describe(
+        '读取方式：utf8 对应文本，stream 对应原文件下载地址',
+      ),
       url: z.string().optional().describe('一次性下载凭据，直接 GET，无需 OAuth 请求头'),
       method: z.literal('GET').optional().describe('下载文件时使用的 HTTP 方法'),
       expiresAt,

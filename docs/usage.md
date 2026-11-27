@@ -104,9 +104,7 @@ Git 暂存、提交和高危递归删除保留强制审批；临时命令也需�
 
 客户端可用 `file_write` 的 `attachment` 模式保存附件或编辑产物，传入附件标识 `file.file_id` 和临时下载地址 `file.download_url`。Server 从已配置的可信附件源取回字节，复用设备写入流。附件源未配置或地址不匹配时返回 `FILE_ATTACHMENT_URL_DENIED`。新建时指定目的路径，覆盖时还须提供编辑前原文件的 `expectedSha256`。以 `written: true` 确认写入完成，`stream` 模式要等 PUT 成功。附件源配置见 [私有化部署](./deployment.md)。
 
-原文件上传和下载上限为 64 MiB。小文件可用 `file_read` 的 `encoding: "inline"` 在同一次调用中取得原始内容及元数据，上限为 512 KiB。Server 仅在 MCP JSON 边界将原始字节编码为 Base64，图片和音频使用原生内容块，其他数据使用嵌入资源块。模型能否收到视觉输入取决于客户端对内容块的处理。
-
-在支持 MCP Apps 的客户端中，用 `file_preview` 查看图片、音频和视频。最多 512 KiB 的媒体直接展示，具体编码由客户端浏览器解码。超过 512 KiB 的图片由 Runtime 生成最长边 768 像素的 WebP 缩略图，原图限 64 MiB 和 4000 万解码像素，卡片支持按需下载原图。缩略图结果的 `size` 和 `sha256` 属于缩略图，`originalSize` 标明原图字节数。大音视频、PDF 和 Office 文件可获取原始内容。
+在支持 MCP Apps 的客户端中，用 `file_preview` 查看图片、音频和视频。媒体字节提供给预览卡片，模型侧收到预览元数据。最多 512 KiB 的媒体直接展示，具体编码由客户端浏览器解码。超过 512 KiB 的图片由 Runtime 生成最长边 768 像素的 WebP 缩略图，原图限 64 MiB 和 4000 万解码像素，卡片支持按需下载原图。缩略图结果的 `size` 和 `sha256` 属于缩略图，`originalSize` 标明原图字节数。大音视频、PDF 和 Office 文件可使用 `file_read stream` 获取原始内容。
 
 自动编辑需要宿主的编辑工具能接收完整原图，并将编辑结果作为文件引用交给 `file_write`。读取时使用 `file_read`，然后编辑并保存实际产物。能否在同一条聊天指令里自动完成文件交接，取决于所用宿主。
 

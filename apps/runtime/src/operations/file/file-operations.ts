@@ -6,7 +6,7 @@ import { Readable } from 'node:stream'
 import sharp from 'sharp'
 import {
   FILE_BINARY_LIMIT_BYTES,
-  FILE_INLINE_LIMIT_BYTES,
+  FILE_PREVIEW_LIMIT_BYTES,
   FILE_TEXT_LIMIT_BYTES,
   FILE_THUMBNAIL_MAX_EDGE,
   type ToolOutput,
@@ -55,13 +55,13 @@ export async function statWorkspaceFile(
 }
 
 /**
- * 读取并解码 UTF-8 正文，或按读取模式的字节上限分块转发原文件。
+ * 读取 UTF-8 正文，或分块传输原文件及媒体预览所需的字节。
  * @param w 已获访问授权的工作区。
  * @param relative 文件的工作区相对路径。
- * @param encoding 文本、原文件流或限量内联读取模式。
+ * @param encoding UTF-8 文本或 HTTP 字节流。
  * @param transfer 原文件传输的单次设备凭证。
  * @param context 当前设备连接及中断信号。
- * @param mediaPreview 预览时允许将大图在本机转换为内联缩略图。
+ * @param mediaPreview 为媒体卡片读取文件，超过预览上限的图片在本机转换为缩略图。
  * @returns 传输内容的大小、MIME 和 SHA-256；缩略图另外标明原图大小。
  */
 export async function readWorkspaceFile(
@@ -84,9 +84,9 @@ export async function readWorkspaceFile(
   }
   if (!transfer || !context) throw Error('INVALID_TOOL_ARGUMENTS')
   const largePreview =
-    mediaPreview && ((await statWorkspaceFile(w, relative)).size ?? 0) > FILE_INLINE_LIMIT_BYTES
-  const limit =
-    encoding === 'inline' && !largePreview ? FILE_INLINE_LIMIT_BYTES : FILE_BINARY_LIMIT_BYTES
+    mediaPreview && ((await statWorkspaceFile(w, relative)).size ?? 0) > FILE_PREVIEW_LIMIT_BYTES
+  // 小媒体限制原文件字节数，大图按原文件上限读取后再限制缩略图字节数。
+  const limit = mediaPreview && !largePreview ? FILE_PREVIEW_LIMIT_BYTES : FILE_BINARY_LIMIT_BYTES
   const chunks = readFileChunks(w, relative, limit)
   const hash = createHash('sha256')
   let size = 0
@@ -120,7 +120,7 @@ export async function readWorkspaceFile(
         } catch {
           throw Error('FILE_PREVIEW_UNSUPPORTED')
         }
-        if (thumbnail.length > FILE_INLINE_LIMIT_BYTES) throw Error('FILE_TOO_LARGE')
+        if (thumbnail.length > FILE_PREVIEW_LIMIT_BYTES) throw Error('FILE_TOO_LARGE')
         mimeType = 'image/webp'
       }
     } finally {

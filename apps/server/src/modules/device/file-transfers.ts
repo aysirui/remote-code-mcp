@@ -5,7 +5,7 @@ import type { Request, Response } from 'express'
 import { UnauthorizedException } from '@nestjs/common'
 import {
   FILE_BINARY_LIMIT_BYTES,
-  FILE_INLINE_LIMIT_BYTES,
+  FILE_PREVIEW_LIMIT_BYTES,
   RPC_APPROVAL_TIMEOUT_MS,
   ToolOutputs,
 } from '@rcm/protocol'
@@ -209,8 +209,13 @@ export class FileTransfers {
     }
   }
 
-  /** 通过设备流读取小文件，返回已核对的原始字节和元数据，调用方决定输出形式。 */
-  async readInline(run: Ticket['run'], signal?: AbortSignal) {
+  /**
+   * 通过设备流接收媒体卡片的预览内容，并在内存中按预览上限收集字节。
+   * @param run 下发绑定原工作区和相对路径的预览读取请求。
+   * @param signal 当前 MCP 调用的取消信号。
+   * @returns 已核对大小和摘要的媒体或缩略图字节及对应元数据。
+   */
+  async readPreview(run: Ticket['run'], signal?: AbortSignal) {
     const controller = new AbortController()
     const cancel = () => controller.abort()
     if (signal?.aborted) cancel()
@@ -225,11 +230,11 @@ export class FileTransfers {
     try {
       const { data, receipt } = await this.relay(randomUUID(), run, controller, {
         toClient: sink,
-        limit: FILE_INLINE_LIMIT_BYTES,
+        limit: FILE_PREVIEW_LIMIT_BYTES,
       })
       const metadata = ToolOutputs['file.read'].parse(data)
       if (
-        metadata.encoding !== 'inline' ||
+        metadata.encoding !== 'stream' ||
         metadata.content !== undefined ||
         metadata.size !== receipt.size ||
         metadata.sha256 !== receipt.sha256

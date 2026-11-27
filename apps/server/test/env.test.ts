@@ -4,6 +4,25 @@ import path from 'node:path'
 import { Env } from '../src/config/env'
 
 describe('Server 环境配置', () => {
+  test('附件源接受多个精确 HTTPS 源，拒绝 HTTP、路径和内嵌凭据', () => {
+    expect(new Env({}, []).mcpAttachmentOrigins).toEqual([])
+    expect(
+      new Env(
+        { MCP_ATTACHMENT_ORIGINS: ' https://files.example.net/ , https://store.example.org:8443 ' },
+        [],
+      ).mcpAttachmentOrigins,
+    ).toEqual(['https://files.example.net', 'https://store.example.org:8443'])
+    for (const source of [
+      'http://files.example.net',
+      'https://files.example.net/files',
+      'https://user:pass@files.example.net',
+      'https://files.example.net/?token=example',
+    ])
+      expect(() => new Env({ MCP_ATTACHMENT_ORIGINS: source }, []).mcpAttachmentOrigins).toThrow(
+        'MCP_ATTACHMENT_ORIGINS',
+      )
+  })
+
   test('企微结果卡使用官网首页，不能把控制台路径或查询参数带入链接', () => {
     expect(new Env({ WEBSITE_URL: 'https://www.example.com/path?from=test' }, []).websiteUrl).toBe(
       'https://www.example.com/',

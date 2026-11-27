@@ -5,7 +5,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { McpToolInputs, McpToolOutputs, type RpcRequest } from '@rcm/protocol'
 import type { Store } from '../src/infrastructure/database/store'
 import type { DeviceHub } from '../src/modules/device/device-hub'
-import { createMcpToolRegistrar } from '../src/modules/mcp/mcp-tool-registration'
+import { register } from '../src/modules/mcp/tools/register'
 import { registerMcpTools } from '../src/modules/mcp/mcp-tools'
 import { DeviceRpcError } from '../src/modules/device/device-rpc-pending'
 
@@ -14,7 +14,13 @@ describe('MCP 工具结果包装', () => {
     '读取文件时正文与摘要保持独立：%j',
     async (content) => {
       const registerTool = jest.fn()
-      const register = createMcpToolRegistrar({ registerTool } as unknown as McpServer)
+      const context = {
+        hub: {} as DeviceHub,
+        store: {} as Store,
+        userId: 'user-1',
+        clientId: 'client-1',
+        authorizeDownload: async () => {},
+      }
       const data = {
         content,
         sha256: 'a'.repeat(64),
@@ -23,11 +29,15 @@ describe('MCP 工具结果包装', () => {
         size: Buffer.byteLength(content),
       }
       register(
-        'file_read',
-        '读取文件',
-        McpToolInputs['file.read'],
-        McpToolOutputs['file.read'],
-        async () => data,
+        { registerTool } as unknown as McpServer,
+        {
+          name: 'file_read',
+          description: '读取文件',
+          inputSchema: McpToolInputs['file.read'],
+          outputSchema: McpToolOutputs['file.read'],
+          execute: async () => data,
+        },
+        context,
       )
 
       const handler = registerTool.mock.calls[0][2] as (args: Record<string, unknown>) => Promise<{
@@ -56,11 +66,15 @@ describe('MCP 输出契约', () => {
     where.mockReset()
     server = new McpServer({ name: 'rcm-test', version: '1.0.0' })
     client = new Client({ name: 'rcm-test-client', version: '1.0.0' })
-    const hub = { execute, files: { preview }, isOnline: () => true } as unknown as DeviceHub
+    const hub = {
+      execute,
+      files: { readInline: preview },
+      isOnline: () => true,
+    } as unknown as DeviceHub
     const store = {
       db: { select: () => ({ from: () => ({ where }) }) },
     } as unknown as Store
-    registerMcpTools(server, hub, store, 'user-1', 'client-1')
+    registerMcpTools(server, hub, store, 'user-1', 'client-1', async () => {})
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
     await server.connect(serverTransport)
     await client.connect(clientTransport)
@@ -73,10 +87,24 @@ describe('MCP 输出契约', () => {
 
   test('客户端可发现所有工具的输出契约，并读取设备和工作区列表', async () => {
     const { tools } = await client.listTools()
-    expect(tools).toHaveLength(16)
+    expect(tools).toHaveLength(18)
     for (const tool of tools) {
       expect(tool.outputSchema).toMatchObject({ type: 'object' })
     }
+    expect(
+      tools
+        .filter(({ annotations }) => annotations?.readOnlyHint === false)
+        .map(({ name }) => name)
+        .sort(),
+    ).toEqual([
+      'command_run',
+      'file_delete',
+      'file_mkdir',
+      'file_move',
+      'file_write',
+      'git_add',
+      'git_commit',
+    ])
     const device = { id: 'device-1', name: '本机', status: 'active' }
     where.mockResolvedValueOnce([device])
     expect(await client.callTool({ name: 'device_list' })).toMatchObject({
@@ -112,6 +140,43 @@ describe('MCP 输出契约', () => {
         ],
       },
     })
+  })
+
+  test('图片预览工具声明可读取的组件资源，读取失败时不返回组件图片数据', async () => {
+    const { tools } = await client.listTools()
+    const tool = tools.find(({ name }) => name === 'file_preview')
+    const uri = 'ui://rcm/file-preview-v3.html'
+    expect(tool).toMatchObject({
+      annotations: { readOnlyHint: true },
+      _meta: { ui: { resourceUri: uri } },
+    })
+    const resource = await client.readResource({ uri })
+    expect(resource.contents).toEqual([
+      expect.objectContaining({
+        uri,
+        mimeType: 'text/html;profile=mcp-app',
+        text: expect.stringContaining('ui/notifications/tool-result'),
+      }),
+    ])
+    preview.mockImplementationOnce(async (run) =>
+      run({ id: 'transfer-1', key: 'test-transfer-key' }),
+    )
+    execute.mockRejectedValueOnce(new DeviceRpcError('POLICY_DENIED'))
+    const result = await client.callTool({
+      name: 'file_preview',
+      arguments: { workspaceId: 'workspace-1', path: 'images/logo.png' },
+    })
+    expect(execute).toHaveBeenLastCalledWith('user-1', 'client-1', 'workspace-1', 'file.read', {
+      path: 'images/logo.png',
+      encoding: 'inline',
+      mediaPreview: true,
+      transfer: { id: 'transfer-1', key: 'test-transfer-key' },
+    })
+    expect(result).toMatchObject({
+      isError: true,
+      content: [{ type: 'text', text: 'POLICY_DENIED' }],
+    })
+    expect(result._meta).toBeUndefined()
   })
 
   test('各领域成功结果与声明匹配，保留对象、数组和字符串的现有包装', async () => {
@@ -224,12 +289,12 @@ describe('MCP 输出契约', () => {
   test.each(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])(
     'MIME 为 %s 的读取结果统一生成 MCP 图片块',
     async (mimeType) => {
-      const metadata = { mimeType, encoding: 'preview', size: 2, sha256: 'a'.repeat(64) }
+      const metadata = { mimeType, encoding: 'inline', size: 2, sha256: 'a'.repeat(64) }
       const content = '/9g='
       preview.mockResolvedValueOnce({ metadata, bytes: Buffer.from(content, 'base64') })
       const result = await client.callTool({
         name: 'file_read',
-        arguments: { workspaceId: 'workspace-1', path: 'asset', encoding: 'preview' },
+        arguments: { workspaceId: 'workspace-1', path: 'asset', encoding: 'inline' },
       })
       expect(result.structuredContent).toEqual(metadata)
       const [summary, image] = result.content as CallToolResult['content']
@@ -238,6 +303,37 @@ describe('MCP 输出契约', () => {
       expect(image).toEqual({ type: 'image', data: content, mimeType })
     },
   )
+
+  test('内联读取使用原生音频块；普通二进制文件使用嵌入资源且不开放媒体卡片', async () => {
+    const args = { workspaceId: 'workspace-1', path: 'file', encoding: 'inline' }
+    const base = { encoding: 'inline', size: 2, sha256: 'a'.repeat(64) }
+    const blob = '/9g='
+    const bytes = Buffer.from(blob, 'base64')
+    const audio = { ...base, mimeType: 'audio/wav' }
+    preview.mockResolvedValueOnce({ metadata: audio, bytes })
+    const sound = await client.callTool({ name: 'file_read', arguments: args })
+    expect(sound.structuredContent).toEqual(audio)
+    expect(sound.content).toContainEqual({ type: 'audio', mimeType: audio.mimeType, data: blob })
+
+    const pdf = { ...base, mimeType: 'application/pdf' }
+    preview.mockResolvedValueOnce({ metadata: pdf, bytes })
+    const raw = await client.callTool({ name: 'file_read', arguments: args })
+    expect(raw.structuredContent).toEqual(pdf)
+    expect(raw.content).toContainEqual({
+      type: 'resource',
+      resource: { uri: 'urn:sha256:' + base.sha256, mimeType: pdf.mimeType, blob },
+    })
+    preview.mockRejectedValueOnce(new DeviceRpcError('FILE_PREVIEW_UNSUPPORTED'))
+    const card = await client.callTool({
+      name: 'file_preview',
+      arguments: { workspaceId: args.workspaceId, path: args.path },
+    })
+    expect(card).toMatchObject({
+      isError: true,
+      content: [{ type: 'text', text: 'FILE_PREVIEW_UNSUPPORTED' }],
+    })
+    expect(card._meta).toBeUndefined()
+  })
 
   test.each(['COMMAND_EXIT_NONZERO', 'COMMAND_PROCESS_TERMINATED', 'COMMAND_TIMEOUT'])(
     '命令失败 %s 标记为 MCP 错误并保留输出',
@@ -278,6 +374,16 @@ describe('MCP 输出契约', () => {
         arguments: { path: 'a.png', encoding: 'stream', size: 4, content: 'abcd' },
       },
       { name: 'file_write', arguments: { path: 'a.png', size: 4, content: 'abcd' } },
+      { name: 'file_write', arguments: { path: 'a.png', encoding: 'attachment' } },
+      {
+        name: 'file_write',
+        arguments: {
+          path: 'a.png',
+          encoding: 'attachment',
+          size: 4,
+          file: { file_id: 'file-1', download_url: 'https://files.example.net/sample' },
+        },
+      },
       { name: 'command_run', arguments: {} },
       { name: 'command_run', arguments: { command: 'build', args: [] } },
       { name: 'command_run', arguments: { command: 'build', executable: 'node' } },

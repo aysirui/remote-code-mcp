@@ -4,6 +4,7 @@ import { once } from 'node:events'
 import { Readable } from 'node:stream'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { UnauthorizedException } from '@nestjs/common'
 import { NestFactory } from '@nestjs/core'
 import { McpToolOutputs, RPC_MESSAGE_LIMIT_BYTES, type RpcRequest } from '@rcm/protocol'
 import { WebSocket } from 'ws'
@@ -13,7 +14,7 @@ import { DeviceHub } from '../src/modules/device/device-hub'
 import { McpController } from '../src/modules/mcp/mcp.controller'
 import { OAuthService } from '../src/modules/oauth/oauth.service'
 
-test('MCP 授权地址双向转发字节流，设备 RPC 只携带控制信息', async () => {
+test('一次性地址免请求头下载原始字节，上传和下载签发授权仍受 OAuth 约束', async () => {
   const workspace = { id: randomUUID(), deviceId: 'device', localRead: true, localWrite: true }
   const device = { id: workspace.deviceId, userId: 'owner', status: 'active' }
   const query = {
@@ -32,6 +33,11 @@ test('MCP 授权地址双向转发字节流，设备 RPC 只携带控制信息',
     logOperation: jest.fn().mockResolvedValue(undefined),
   }
   const hub = new DeviceHub(store as unknown as Store)
+  const tokenHash = 'test-token-hash'
+  let revoked = false
+  const tokenByHash = jest.fn(async (hash: string) => {
+    if (hash !== tokenHash || revoked) throw new UnauthorizedException()
+  })
   const app = await NestFactory.create(
     {
       module: class TestModule {},
@@ -41,7 +47,10 @@ test('MCP 授权地址双向转发字节流，设备 RPC 只携带控制信息',
         { provide: DeviceHub, useValue: hub },
         {
           provide: OAuthService,
-          useValue: { token: async (clientId: string) => ({ id: device.userId, clientId }) },
+          useValue: {
+            token: async (clientId: string) => ({ id: device.userId, clientId, tokenHash }),
+            tokenByHash,
+          },
         },
       ],
     },
@@ -49,13 +58,16 @@ test('MCP 授权地址双向转发字节流，设备 RPC 只携带控制信息',
   )
   const client = new Client({ name: 'file-transfer-test', version: '1.0.0' })
   const publicUrl = process.env.PUBLIC_URL
+  const attachmentOrigins = process.env.MCP_ATTACHMENT_ORIGINS
   let socket: WebSocket | undefined
+  let restoreAttachmentFetch: (() => void) | undefined
   try {
     configureHttp(app)
     hub.attach(app.getHttpServer())
     await app.listen(0, '127.0.0.1')
     const base = await app.getUrl()
     process.env.PUBLIC_URL = base
+    process.env.MCP_ATTACHMENT_ORIGINS = ''
     const mcpUrl = new URL('/mcp', base)
     const socketUrl = new URL('/agent/connect', base)
     socketUrl.protocol = 'ws:'
@@ -99,6 +111,7 @@ test('MCP 授权地址双向转发字节流，设备 RPC 只携带控制信息',
         const payload = request.payload as {
           transfer: { id: string; key: string }
           encoding: string
+          path: string
         }
         const url = new URL('/mcp/files/' + payload.transfer.id + '/device', base)
         const auth = { Authorization: 'Bearer ' + payload.transfer.key }
@@ -113,9 +126,9 @@ test('MCP 授权地址双向转发字节流，设备 RPC 只携带控制信息',
             deviceSawUpload()
             hash.update(chunk)
           }
-          data = { path, written: true, sha256: hash.digest('hex') }
+          data = { path: payload.path, written: true, sha256: hash.digest('hex') }
         } else {
-          const image = payload.encoding === 'preview'
+          const image = payload.encoding === 'inline'
           const options: RequestInit & { duplex: 'half' } = {
             method: 'PUT',
             headers: auth,
@@ -150,6 +163,12 @@ test('MCP 授权地址双向转发字节流，设备 RPC 只携带控制信息',
     const write = await client.callTool({ name: 'file_write', arguments: { ...args, size } })
     const uploadUrl = String(McpToolOutputs['file.write'].parse(write.structuredContent).url)
     expect(write.structuredContent).toMatchObject({ method: 'PUT', path })
+    const wrongMethod = await fetch(uploadUrl, { method: 'POST', headers })
+    expect(wrongMethod.status).toBe(404)
+    await wrongMethod.body?.cancel()
+    const noUploadAuth = await fetch(uploadUrl, { method: 'PUT' })
+    expect(noUploadAuth.status).toBe(401)
+    await noUploadAuth.body?.cancel()
     const wrongClient = await fetch(uploadUrl, {
       method: 'PUT',
       headers: { Authorization: 'Bearer other-client' },
@@ -176,9 +195,17 @@ test('MCP 授权地址双向转发字节流，设备 RPC 只携带控制信息',
     const read = await client.callTool({ name: 'file_read', arguments: args })
     expect(read.structuredContent).toMatchObject({ method: 'GET', encoding: 'stream' })
     const downloadUrl = String(McpToolOutputs['file.read'].parse(read.structuredContent).url)
-    const download = await fetch(downloadUrl, { headers })
+    expect((await fetch(downloadUrl, { method: 'HEAD' })).status).toBe(405)
+    const [first, second] = await Promise.all([fetch(downloadUrl), fetch(downloadUrl)])
+    const download = first.ok ? first : second
+    const duplicate = first.ok ? second : first
     expect(download.status).toBe(200)
+    expect(duplicate.status).toBe(404)
+    await duplicate.body?.cancel()
     expect(download.headers.get('content-type')).toContain('application/octet-stream')
+    expect(download.headers.get('cache-control')).toBe('no-store')
+    expect(tokenByHash).toHaveBeenCalledTimes(1)
+    expect(tokenByHash).toHaveBeenCalledWith(tokenHash)
     const downloaded = createHash('sha256')
     for await (const chunk of Readable.fromWeb(
       download.body! as import('node:stream/web').ReadableStream<Uint8Array>,
@@ -187,25 +214,117 @@ test('MCP 授权地址双向转发字节流，设备 RPC 只携带控制信息',
       downloaded.update(chunk)
     }
     expect(downloaded.digest('hex')).toBe(sha256)
-    const replay = await fetch(downloadUrl, { headers })
+    const replay = await fetch(downloadUrl)
     expect(replay.status).toBe(404)
     await replay.body?.cancel()
 
+    const revokedRead = await client.callTool({ name: 'file_read', arguments: args })
+    const revokedUrl = String(McpToolOutputs['file.read'].parse(revokedRead.structuredContent).url)
+    revoked = true
+    const rejected = await fetch(revokedUrl)
+    expect(rejected.status).toBe(401)
+    expect(await rejected.json()).toEqual({ error: 'FILE_DOWNLOAD_AUTHORIZATION_EXPIRED' })
+    expect(tokenByHash).toHaveBeenCalledTimes(2)
+    expect(controlSizes).toHaveLength(2)
+
     const viewed = await client.callTool({
       name: 'file_read',
-      arguments: { ...args, path: 'pixel.png', encoding: 'preview' },
+      arguments: { ...args, path: 'pixel.png', encoding: 'inline' },
     })
     expect(viewed.content).toContainEqual({
       type: 'image',
       mimeType: 'image/png',
       data: preview.toString('base64'),
     })
-    expect(controlSizes).toHaveLength(3)
+    const card = await client.callTool({
+      name: 'file_preview',
+      arguments: { workspaceId: workspace.id, path: 'assets/pixel.png' },
+    })
+    expect(card).toMatchObject({
+      structuredContent: {
+        name: 'pixel.png',
+        mimeType: 'image/png',
+        size: preview.length,
+        sha256: createHash('sha256').update(preview).digest('hex'),
+      },
+      _meta: { 'rcm/previewMedia': preview.toString('base64') },
+    })
+    expect(card.structuredContent).not.toHaveProperty('content')
+    expect(card.content).not.toContainEqual(expect.objectContaining({ type: 'image' }))
+    expect(controlSizes).toHaveLength(4)
     expect(Math.max(...controlSizes)).toBeLessThan(1024)
-    expect(store.logOperation).toHaveBeenCalledTimes(3)
+    expect(store.logOperation).toHaveBeenCalledTimes(4)
+
+    // 宿主文件引用替身没有 Content-Length，MCP 调用完成时应已精确写入字节。
+    const attachmentUrl = 'https://files.example.net/file-fixture?signature=test'
+    const downloadAttachment = jest.fn(
+      async (_options: RequestInit | undefined) => new Response(Uint8Array.from(preview)),
+    )
+    const originalFetch = globalThis.fetch
+    const mocked = jest
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation((input, options) =>
+        String(input) === attachmentUrl
+          ? downloadAttachment(options)
+          : originalFetch(input, options),
+      )
+    restoreAttachmentFetch = () => mocked.mockRestore()
+    const newPath = 'edited.png'
+    const attachmentArgs = {
+      workspaceId: workspace.id,
+      path: newPath,
+      encoding: 'attachment',
+      file: { file_id: 'file-fixture', download_url: attachmentUrl },
+    }
+    const { tools } = await client.listTools()
+    expect(tools.find((tool) => tool.name === 'file_write')).toMatchObject({
+      _meta: { 'openai/fileParams': ['file'] },
+    })
+    const unconfigured = await client.callTool({ name: 'file_write', arguments: attachmentArgs })
+    expect(unconfigured).toMatchObject({
+      isError: true,
+      content: [{ type: 'text', text: 'FILE_ATTACHMENT_URL_DENIED' }],
+    })
+    process.env.MCP_ATTACHMENT_ORIGINS = 'https://files.example.net'
+    const denied = await client.callTool({
+      name: 'file_write',
+      arguments: {
+        ...attachmentArgs,
+        file: { ...attachmentArgs.file, download_url: 'https://files.example.net.other.test/file' },
+      },
+    })
+    expect(denied).toMatchObject({
+      isError: true,
+      content: [{ type: 'text', text: 'FILE_ATTACHMENT_URL_DENIED' }],
+    })
+    expect(controlSizes).toHaveLength(4)
+    expect(downloadAttachment).not.toHaveBeenCalled()
+    const saved = await client.callTool({ name: 'file_write', arguments: attachmentArgs })
+    expect(saved.structuredContent).toEqual({
+      path: newPath,
+      written: true,
+      sha256: createHash('sha256').update(preview).digest('hex'),
+    })
+    expect(downloadAttachment).toHaveBeenCalledTimes(1)
+    expect(downloadAttachment).toHaveBeenCalledWith({
+      signal: expect.any(AbortSignal),
+      redirect: 'error',
+    })
+    expect(controlSizes).toHaveLength(5)
+    expect(Math.max(...controlSizes)).toBeLessThan(1024)
+
+    downloadAttachment.mockResolvedValueOnce(new Response(null, { status: 410 }))
+    const expired = await client.callTool({ name: 'file_write', arguments: attachmentArgs })
+    expect(expired).toMatchObject({
+      isError: true,
+      content: [{ type: 'text', text: 'FILE_ATTACHMENT_DOWNLOAD_FAILED' }],
+    })
   } finally {
+    restoreAttachmentFetch?.()
     if (publicUrl === undefined) delete process.env.PUBLIC_URL
     else process.env.PUBLIC_URL = publicUrl
+    if (attachmentOrigins === undefined) delete process.env.MCP_ATTACHMENT_ORIGINS
+    else process.env.MCP_ATTACHMENT_ORIGINS = attachmentOrigins
     await client.close()
     if (socket && socket.readyState !== WebSocket.CLOSED) {
       const closed = once(socket, 'close')

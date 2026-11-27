@@ -11,6 +11,7 @@ export const McpToolInputs = {
   device_list: z.object({}),
   workspace_list: z.object({}),
   'file.list': ToolInputs['file.list'].extend({ workspaceId }),
+  'file.stat': ToolInputs['file.stat'].extend({ workspaceId }),
   'file.read': FileReadInputSchema.extend({ workspaceId }),
   'file.search': ToolInputs['file.search'].extend({ workspaceId }),
   'file.write': FileWriteInputSchema.safeExtend({ workspaceId }),
@@ -37,14 +38,10 @@ export const McpToolInputs = {
     .strict(),
 }
 
-/** 二进制操作先返回短期传输地址，客户端按指定方法提交已授权的 HTTP 请求。 */
-const transferFields = {
-  url: z.string().optional().describe('一次性文件传输地址，使用本次 MCP 授权的 Bearer Token'),
-  method: z.enum(['GET', 'PUT']).optional().describe('文件传输请求的 HTTP 方法'),
-  expiresAt: z.number().int().optional().describe('传输地址过期时间，Unix 毫秒时间戳'),
-}
+/** 原文件流的上传和下载地址均有领取期限，单位为 Unix 毫秒。 */
+const expiresAt = z.number().int().optional().describe('传输地址过期时间，Unix 毫秒时间戳')
 
-/** MCP 结构化输出契约：数组和字符串包装为 value，图片正文使用单独的内容块。 */
+/** MCP 结构化输出契约：数组和字符串包装为 value，内联原始字节使用单独的内容块。 */
 export const McpToolOutputs = {
   device_list: z.object({
     value: z
@@ -75,13 +72,24 @@ export const McpToolOutputs = {
       .describe('当前用户的已授权工作区列表，不包含本地绝对路径'),
   }),
   'file.list': z.object({ value: ToolOutputs['file.list'].describe('指定目录的可访问目录项列表') }),
+  'file.stat': ToolOutputs['file.stat'],
   'file.read': ToolOutputs['file.read']
+    .omit({ originalSize: true })
     .partial({ mimeType: true, size: true, sha256: true })
-    .extend(transferFields),
+    .extend({
+      url: z.string().optional().describe('一次性下载凭据，直接 GET，无需 OAuth 请求头'),
+      method: z.literal('GET').optional().describe('下载文件时使用的 HTTP 方法'),
+      expiresAt,
+    }),
   'file.search': z.object({ value: ToolOutputs['file.search'].describe('搜索匹配结果列表') }),
-  'file.write': ToolOutputs['file.write']
-    .partial({ sha256: true, written: true })
-    .extend(transferFields),
+  'file.write': ToolOutputs['file.write'].partial({ sha256: true, written: true }).extend({
+    url: z
+      .string()
+      .optional()
+      .describe('一次性上传地址，必须使用签发地址时同一 OAuth 客户端的有效 Bearer Token'),
+    method: z.literal('PUT').optional().describe('上传原始字节时使用的 HTTP 方法'),
+    expiresAt,
+  }),
   'file.mkdir': ToolOutputs['file.mkdir'],
   'file.move': ToolOutputs['file.move'],
   'file.delete': ToolOutputs['file.delete'],

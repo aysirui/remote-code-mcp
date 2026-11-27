@@ -13,6 +13,7 @@ jest.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
     connect,
     close: closeServer,
     registerTool: jest.fn(),
+    registerResource: jest.fn(),
   })),
 }))
 jest.mock('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({

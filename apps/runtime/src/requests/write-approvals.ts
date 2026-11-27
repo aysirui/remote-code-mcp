@@ -125,11 +125,14 @@ export class WriteApprovalQueue {
     if (req.operation === 'file.write') {
       const payload = ToolInputs['file.write'].parse(req.payload)
       pathLabel = payload.path
-      // 原文件上传在审批完成后才消费，审批只展示声明的原始字节数。
+      // 只有审批通过后才开始消费文件流；附件以实际收到的大小为准。
       if (payload.encoding === 'stream') {
-        bytes = payload.size!
-        preview = '写入二进制文件'
-        externalDetails = `路径：${payload.path}\n写入大小：${bytes} 字节（二进制）`
+        bytes = payload.size ?? 0
+        preview = payload.size === undefined ? '保存附件（最多 64 MiB）' : '写入二进制文件'
+        externalDetails =
+          payload.size === undefined
+            ? `路径：${payload.path}\n${preview}`
+            : `路径：${payload.path}\n写入大小：${bytes} 字节（二进制）`
       } else {
         const content = payload.content!
         bytes = Buffer.byteLength(content, 'utf8')
@@ -175,10 +178,15 @@ export class WriteApprovalQueue {
       pathLabel = payload.path
       preview = '读取目录清单'
       externalDetails = `路径：${payload.path}\n${preview}`
+    } else if (req.operation === 'file.stat') {
+      const payload = ToolInputs['file.stat'].parse(req.payload)
+      pathLabel = payload.path
+      preview = '读取文件属性'
+      externalDetails = `路径：${payload.path}\n${preview}`
     } else if (req.operation === 'file.read') {
       const payload = ToolInputs['file.read'].parse(req.payload)
       pathLabel = payload.path
-      preview = '读取文件内容'
+      preview = payload.mediaPreview ? '预览文件内容' : '读取文件内容'
       externalDetails = `路径：${payload.path}\n${preview}`
     } else if (req.operation === 'file.search') {
       const payload = ToolInputs['file.search'].parse(req.payload)

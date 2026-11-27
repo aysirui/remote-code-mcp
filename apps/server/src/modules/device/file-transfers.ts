@@ -1,26 +1,36 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
-import { Transform, Writable, type Readable } from 'node:stream'
+import { Readable, Transform, Writable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { Request, Response } from 'express'
+import { UnauthorizedException } from '@nestjs/common'
 import {
   FILE_BINARY_LIMIT_BYTES,
-  FILE_PREVIEW_LIMIT_BYTES,
+  FILE_INLINE_LIMIT_BYTES,
   RPC_APPROVAL_TIMEOUT_MS,
   ToolOutputs,
 } from '@rcm/protocol'
 import { DeviceRpcError } from './device-rpc-pending'
 
-/** 客户端归属和工作区 RPC 闭包只在短期传输的内存记录中有效。 */
-interface Ticket {
-  /** 创建地址时的账号与 OAuth 客户端。 */
-  userId: string
-  clientId: string
-  /** 客户端使用的传输方向。 */
-  method: 'GET' | 'PUT'
-  /** 待上传文件的精确字节数，下载时省略。 */
-  size?: number
+/** 传输方向决定领取授权；短期记录只存放在 Server 内存。 */
+type TransferRequest = {
   /** 设备控制消息执行原先授权的 File 操作，审批仍由 Runtime 决定。 */
   run: (transfer: { id: string; key: string }) => Promise<unknown>
+} & (
+  | {
+      method: 'GET'
+      /** 复查签发下载地址时的 OAuth 授权。 */ authorizeDownload: () => Promise<void>
+    }
+  | {
+      method: 'PUT'
+      /** 创建上传地址时的账号与 OAuth 客户端。 */
+      userId: string
+      clientId: string
+      /** 待上传文件的精确字节数。 */
+      size: number
+    }
+)
+
+type Ticket = TransferRequest & {
   /** 尚未消费的地址过期时间，Unix 毫秒。 */
   expiresAt: number
 }
@@ -56,8 +66,8 @@ export class FileTransfers {
     for (const bridge of this.bridges.values()) bridge.controller.abort()
   }
 
-  /** 创建一次性公开地址；调用方负责先检查工作区归属和操作权限。 */
-  prepare(input: Omit<Ticket, 'expiresAt'>, publicUrl: string) {
+  /** 创建一次性传输地址；下载地址本身是凭据，调用方须先检查工作区归属和权限。 */
+  prepare(input: TransferRequest, publicUrl: string) {
     const now = Date.now()
     for (const [id, ticket] of this.tickets) {
       if (ticket.expiresAt <= now) this.tickets.delete(id)
@@ -69,15 +79,14 @@ export class FileTransfers {
     return { url: new URL('/mcp/files/' + id, publicUrl).href, method: input.method, expiresAt }
   }
 
-  /** 同一账号和客户端可按指定方法领取一次地址，字节通过 HTTP 请求或响应传输。 */
-  async client(id: string, userId: string, clientId: string, req: Request, res: Response) {
+  /** 下载凭地址领取，上传凭账号和客户端领取；按指定 HTTP 方法流式传输原始字节。 */
+  async client(id: string, req: Request, res: Response, user?: { id: string; clientId: string }) {
     res.set('Cache-Control', 'no-store')
     const ticket = this.tickets.get(id)
     if (
       !ticket ||
       ticket.expiresAt <= Date.now() ||
-      ticket.userId !== userId ||
-      ticket.clientId !== clientId
+      (ticket.method === 'PUT' && (ticket.userId !== user?.id || ticket.clientId !== user.clientId))
     ) {
       res.status(404).json({ error: 'FILE_TRANSFER_NOT_FOUND' })
       return
@@ -101,16 +110,18 @@ export class FileTransfers {
       res.set({ 'Content-Type': OCTET_STREAM, 'Content-Disposition': 'attachment' })
       if (req.httpVersion === '1.1') res.set('Trailer', 'X-Content-SHA256')
     }
+    // 在异步复查前消费地址，确保并发请求最多只有一个能进入设备中继。
     this.tickets.delete(id)
     const controller = new AbortController()
     res.once('close', () => controller.abort())
     try {
+      if (ticket.method === 'GET') await ticket.authorizeDownload()
       const { data, receipt } = await this.relay(
         id,
         ticket.run,
         controller,
         uploading
-          ? { fromClient: req, limit: ticket.size! }
+          ? { fromClient: req, limit: ticket.size }
           : { toClient: res, limit: FILE_BINARY_LIMIT_BYTES },
       )
       if (uploading) {
@@ -144,10 +155,14 @@ export class FileTransfers {
       res.removeHeader('Trailer')
       res.removeHeader('Content-Disposition')
       res.removeHeader('Content-Type')
+      if (error instanceof UnauthorizedException) {
+        res.status(401).json({ error: 'FILE_DOWNLOAD_AUTHORIZATION_EXPIRED' })
+        return
+      }
       const code = error instanceof DeviceRpcError ? error.message : 'FILE_TRANSFER_FAILED'
       const statuses: Record<string, number> = {
         FILE_TRANSFER_BUSY: 503,
-        FILE_TOO_LARGE_OR_UNSUPPORTED: 413,
+        FILE_TOO_LARGE: 413,
         FILE_SIZE_MISMATCH: 400,
         FILE_CONFLICT: 409,
         PERMISSION_DENIED: 403,
@@ -159,8 +174,41 @@ export class FileTransfers {
     }
   }
 
-  /** 小图片使用同一条设备流，只有 MCP 返回边界需要把预览字节编码为 Base64。 */
-  async preview(run: Ticket['run'], signal?: AbortSignal) {
+  /**
+   * 将已校验的附件源接入设备写入流。Runtime 通过审批并检查目标版本后才消费附件。
+   * @param open 按取消信号按需读取上游附件，正文仅在流中转发。
+   * @param run 下发绑定原工作区和目标路径的写入请求。
+   * @param signal 当前 MCP 调用的取消信号。
+   * @returns Runtime 已完成写入的结果。
+   */
+  async writeFromSource(
+    open: (signal: AbortSignal) => AsyncIterable<Uint8Array>,
+    run: Ticket['run'],
+    signal: AbortSignal,
+  ) {
+    const controller = new AbortController()
+    const cancel = () => controller.abort()
+    if (signal.aborted) cancel()
+    signal.addEventListener('abort', cancel, { once: true })
+    const source = Readable.from(open(controller.signal), { objectMode: false })
+    // 在管道关闭设备响应之前保留上游业务错误，避免笼统的断流错误覆盖附件失败原因。
+    source.once('error', (error) => controller.abort(error))
+    try {
+      const { data, receipt } = await this.relay(randomUUID(), run, controller, {
+        fromClient: source,
+        limit: FILE_BINARY_LIMIT_BYTES,
+      })
+      const result = ToolOutputs['file.write'].parse(data)
+      if (result.sha256 !== receipt.sha256) throw new DeviceRpcError('INVALID_TOOL_RESULT')
+      return result
+    } finally {
+      source.destroy()
+      signal.removeEventListener('abort', cancel)
+    }
+  }
+
+  /** 通过设备流读取小文件，返回已核对的原始字节和元数据，调用方决定输出形式。 */
+  async readInline(run: Ticket['run'], signal?: AbortSignal) {
     const controller = new AbortController()
     const cancel = () => controller.abort()
     if (signal?.aborted) cancel()
@@ -175,17 +223,16 @@ export class FileTransfers {
     try {
       const { data, receipt } = await this.relay(randomUUID(), run, controller, {
         toClient: sink,
-        limit: FILE_PREVIEW_LIMIT_BYTES,
+        limit: FILE_INLINE_LIMIT_BYTES,
       })
       const metadata = ToolOutputs['file.read'].parse(data)
       if (
-        metadata.encoding !== 'preview' ||
+        metadata.encoding !== 'inline' ||
         metadata.content !== undefined ||
         metadata.size !== receipt.size ||
         metadata.sha256 !== receipt.sha256
       )
         throw new DeviceRpcError('INVALID_TOOL_RESULT')
-      if (!metadata.mimeType.startsWith('image/')) throw new DeviceRpcError('UNSUPPORTED_FILE_TYPE')
       return { metadata, bytes: Buffer.concat(chunks, receipt.size) }
     } finally {
       sink.destroy()
@@ -215,7 +262,9 @@ export class FileTransfers {
       transform(chunk: Buffer, _encoding, done) {
         size += chunk.length
         if (size > bridge.limit) {
-          done(new DeviceRpcError('FILE_SIZE_MISMATCH'))
+          const code =
+            bridge.limit === FILE_BINARY_LIMIT_BYTES ? 'FILE_TOO_LARGE' : 'FILE_SIZE_MISMATCH'
+          done(new DeviceRpcError(code))
           return
         }
         hash.update(chunk)

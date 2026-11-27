@@ -13,9 +13,14 @@ export const ToolOutputs = {
       type: z.enum(['directory', 'file']).describe('目录项类型：directory 为目录，file 为文件'),
     }),
   ),
+  'file.stat': z.object({
+    path: z.string().describe('工作区内文件或目录的相对路径'),
+    type: z.enum(['file', 'directory']).describe('目标类型'),
+    size: z.number().int().nonnegative().optional().describe('普通文件的大小，单位为字节'),
+  }),
   'file.read': z.object({
-    content: z.string().optional().describe('完整 UTF-8 文本正文；文件流通过独立 HTTP 请求传输'),
-    encoding: FileReadModeSchema.describe('读取方式：文本、原文件流或图片预览'),
+    content: z.string().optional().describe('完整 UTF-8 文本正文，仅 utf8 模式返回此字段'),
+    encoding: FileReadModeSchema.describe('读取方式：文本、原文件流或内联文件内容'),
     mimeType: z
       .string()
       .describe('文本为 text/plain；二进制按内容识别，未知时为 application/octet-stream'),
@@ -24,6 +29,11 @@ export const ToolOutputs = {
       .string()
       .regex(/^[a-f0-9]{64}$/)
       .describe('原始文件字节的 SHA-256 摘要，可用于后续写入或删除时的 expectedSha256'),
+    originalSize: z
+      .number()
+      .int()
+      .optional()
+      .describe('仅缩略图预览提供，表示原图字节数，此时 size 和 sha256 属于缩略图'),
   }),
   'file.search': z.array(
     z.object({

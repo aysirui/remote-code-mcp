@@ -85,7 +85,7 @@ export class DeviceHub implements OnApplicationBootstrap, OnApplicationShutdown 
     return this.sockets.get(id)?.readyState === WebSocket.OPEN
   }
 
-  /** 核对归属和权限后创建一次性地址；领取地址时 execute 会再核对当前授权。 */
+  /** 核对归属后签发一次性地址；下载复查原 OAuth 授权，执行时再核对工作区权限。 */
   async prepareFileTransfer(
     userId: string,
     clientId: string,
@@ -93,6 +93,7 @@ export class DeviceHub implements OnApplicationBootstrap, OnApplicationShutdown 
     operation: 'file.read' | 'file.write',
     payload: Record<string, unknown>,
     publicUrl: string,
+    authorizeDownload: () => Promise<void>,
   ) {
     try {
       const device = await authorizeDeviceRpc(this.store, userId, workspaceId, operation)
@@ -101,15 +102,12 @@ export class DeviceHub implements OnApplicationBootstrap, OnApplicationShutdown 
       if (error instanceof HttpException) throw new DeviceRpcError(error.message)
       throw error
     }
+    const run = (transfer: { id: string; key: string }) =>
+      this.execute(userId, clientId, workspaceId, operation, { ...payload, transfer })
     return this.files.prepare(
-      {
-        userId,
-        clientId,
-        method: operation === 'file.read' ? 'GET' : 'PUT',
-        size: operation === 'file.write' ? Number(payload.size) : undefined,
-        run: (transfer) =>
-          this.execute(userId, clientId, workspaceId, operation, { ...payload, transfer }),
-      },
+      operation === 'file.read'
+        ? { method: 'GET', authorizeDownload, run }
+        : { method: 'PUT', userId, clientId, size: Number(payload.size), run },
       publicUrl,
     )
   }

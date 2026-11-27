@@ -65,6 +65,20 @@ export class Env {
     return this.source.CONSOLE_URL || 'http://localhost:5173'
   }
 
+  /** Server 可请求的附件 HTTPS 源，逗号分隔；默认不信任任何远程源。 */
+  get mcpAttachmentOrigins(): string[] {
+    return (this.source.MCP_ATTACHMENT_ORIGINS || '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .map((value) => {
+        const url = URL.canParse(value) ? new URL(value) : undefined
+        if (!url || url.protocol !== 'https:' || url.href !== url.origin + '/')
+          throw new Error('MCP_ATTACHMENT_ORIGINS 只能配置不含凭据、路径或参数的 HTTPS 源')
+        return url.origin
+      })
+  }
+
   /** 公开官网首页，供企微结果卡跳转；未单独配置时与 Compose 一样使用 PUBLIC_URL 的根路径。 */
   get websiteUrl(): string {
     return new URL('/', this.source.WEBSITE_URL || this.publicUrl).href
@@ -197,13 +211,14 @@ export class Env {
     return { host, port, user, password, from, secure: secureValue === 'true' }
   }
 
-  /** 启动服务时校验基础与邮件配置；迁移和管理员初始化只校验各自所需配置。 */
+  /** 启动时校验基础、邮件及可选的附件和集成配置；运维命令只校验所需配置。 */
   validateServer(): void {
     void this.databaseUrl
     void this.appSecret
     void this.port
     void this.mail
     void this.oauthCustomRedirectRules
+    void this.mcpAttachmentOrigins
     void this.feishuApproval
     void this.wecomApproval
     void this.dingtalkApproval

@@ -5,6 +5,7 @@ import { once } from 'node:events'
 import type { AddressInfo } from 'node:net'
 import { randomUUID, createHash } from 'node:crypto'
 import path from 'node:path'
+import sharp from 'sharp'
 import { handleGatewayMessage, type RequestContext } from '../src/requests/request-handler'
 import { activeServer, migrateConfig } from '../src/workspace/state'
 import { WriteApprovalQueue } from '../src/requests/write-approvals'
@@ -15,6 +16,8 @@ import {
   COMMAND_MAX_TIMEOUT_MS,
   COMMAND_RPC_TIMEOUT_MS,
   FILE_BINARY_LIMIT_BYTES,
+  FILE_INLINE_LIMIT_BYTES,
+  FILE_THUMBNAIL_MAX_EDGE,
   RPC_APPROVAL_TIMEOUT_MS,
 } from '@rcm/protocol'
 
@@ -236,7 +239,7 @@ test('文本模式拒绝无效 UTF-8，原字节仍可下载', async () => {
   await writeFile(path.join(dir, filename), bytes)
   expect(await handleGatewayMessage(rpc('file.read', { path: filename }), context)).toMatchObject({
     success: false,
-    error: { code: 'FILE_TOO_LARGE_OR_UNSUPPORTED' },
+    error: { code: 'INVALID_UTF8' },
   })
   const transfer = transferRef()
   expect(
@@ -264,8 +267,95 @@ test('文件流限制为 64 MiB 原始字节', async () => {
   await truncate(path.join(dir, target.path), FILE_BINARY_LIMIT_BYTES + 1)
   expect(await handleGatewayMessage(rpc('file.read', target), context)).toMatchObject({
     success: false,
-    error: { code: 'FILE_TOO_LARGE_OR_UNSUPPORTED' },
+    error: { code: 'FILE_TOO_LARGE' },
   })
+})
+
+test('查询大图大小，普通内联明确拒绝超限，预览只中继缩略图', async () => {
+  const { downloads } = await startRelay()
+  const filename = 'photo.png'
+  const original = await sharp({
+    create: { width: 1200, height: 900, channels: 3, background: '#247' },
+  })
+    .png({ compressionLevel: 0 })
+    .toBuffer()
+  expect(original.length).toBeGreaterThan(FILE_INLINE_LIMIT_BYTES)
+  await writeFile(path.join(dir, filename), original)
+  expect(await handleGatewayMessage(rpc('file.stat', { path: filename }), context)).toMatchObject({
+    success: true,
+    data: { path: filename, type: 'file', size: original.length },
+  })
+  expect(await handleGatewayMessage(rpc('file.stat', { path: '.' }), context)).toMatchObject({
+    success: true,
+    data: { type: 'directory' },
+  })
+  const transfer = transferRef()
+  const args = { path: filename, encoding: 'inline', transfer }
+  expect(await handleGatewayMessage(rpc('file.read', args), context)).toMatchObject({
+    success: false,
+    error: { code: 'FILE_TOO_LARGE' },
+  })
+  expect(downloads.has(transfer.id)).toBe(false)
+  const viewed = await handleGatewayMessage(
+    rpc('file.read', { ...args, mediaPreview: true }),
+    context,
+  )
+  const thumb = downloads.get(transfer.id)!
+  expect(viewed).toMatchObject({
+    success: true,
+    data: {
+      mimeType: 'image/webp',
+      size: thumb.length,
+      originalSize: original.length,
+      sha256: createHash('sha256').update(thumb).digest('hex'),
+    },
+  })
+  expect(thumb.length).toBeLessThan(FILE_INLINE_LIMIT_BYTES)
+  expect((await sharp(thumb).metadata()).width).toBe(FILE_THUMBNAIL_MAX_EDGE)
+  expect(await readFile(path.join(dir, filename))).toEqual(original)
+})
+
+test('受控附件流可省略长度，仍校验目标版本并写入完整文件', async () => {
+  const { uploads } = await startRelay()
+  const transfer = transferRef()
+  const bytes = Buffer.from(pixelPng, 'base64')
+  uploads.set(transfer.id, bytes)
+  const args = { path: 'README.md', encoding: 'stream', transfer }
+  expect(
+    await handleGatewayMessage(
+      rpc('file.write', { ...args, expectedSha256: shaText('wrong') }),
+      context,
+    ),
+  ).toMatchObject({ success: false, error: { code: 'FILE_CONFLICT' } })
+  expect(await readFile(path.join(dir, 'README.md'), 'utf8')).toBe('before')
+  expect(
+    await handleGatewayMessage(
+      rpc('file.write', { ...args, expectedSha256: shaText('before') }),
+      context,
+    ),
+  ).toMatchObject({ success: true, data: { written: true } })
+  expect(await readFile(path.join(dir, 'README.md'))).toEqual(bytes)
+})
+
+test('无声明长度的附件传输中断时保留原文件', async () => {
+  await startRelay()
+  relay!.removeAllListeners('request')
+  relay!.on('request', (_request, response) => {
+    // 已送达部分有效字节时切断响应，模拟上游下载中断。
+    response.write(Buffer.alloc(64 * 1024, 0x41), () => response.destroy())
+  })
+  const result = await handleGatewayMessage(
+    rpc('file.write', {
+      path: 'README.md',
+      encoding: 'stream',
+      transfer: transferRef(),
+      expectedSha256: shaText('before'),
+    }),
+    context,
+  )
+  expect(result).toMatchObject({ success: false })
+  expect(await readFile(path.join(dir, 'README.md'), 'utf8')).toBe('before')
+  expect(await readdir(dir)).toEqual(['README.md'])
 })
 
 test('approval 策略等待本地决定后执行', async () => {

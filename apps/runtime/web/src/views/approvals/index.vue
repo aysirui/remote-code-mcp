@@ -39,6 +39,7 @@ function operationTitle(operation: string) {
     'file.delete': '删除文件或目录',
     'file.read': '读取文件',
     'file.list': '读取目录',
+    'file.stat': '读取文件属性',
     'file.search': '搜索文件内容',
     'git.add': '添加 Git 暂存内容',
     'git.commit': '创建 Git 提交',

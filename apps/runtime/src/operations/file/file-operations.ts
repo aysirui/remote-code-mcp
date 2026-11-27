@@ -3,10 +3,12 @@ import path from 'node:path'
 import { constants } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { Readable } from 'node:stream'
+import sharp from 'sharp'
 import {
   FILE_BINARY_LIMIT_BYTES,
-  FILE_PREVIEW_LIMIT_BYTES,
+  FILE_INLINE_LIMIT_BYTES,
   FILE_TEXT_LIMIT_BYTES,
+  FILE_THUMBNAIL_MAX_EDGE,
   type ToolOutput,
 } from '@rcm/protocol'
 import type { LocalWorkspace } from '../../workspace/state'
@@ -40,13 +42,35 @@ function transferUrl(gateway: string, id: string): URL {
   return new URL('/mcp/files/' + id + '/device', gateway)
 }
 
-/** 读取 UTF-8 正文，或将完整原文件分块发送，同时计算大小、MIME 和摘要。 */
+/** 查询安全路径的类型与大小，不读取内容；目录省略字节数。 */
+export async function statWorkspaceFile(
+  w: LocalWorkspace,
+  relative: string,
+): Promise<ToolOutput<'file.stat'>> {
+  const stat = await fs.lstat(await resolveSafe(w, relative))
+  if (stat.isDirectory()) return { path: relative, type: 'directory' }
+  if (!stat.isFile()) throw Error('NOT_REGULAR_FILE')
+  if (stat.nlink > 1) throw Error('HARD_DENY_HARDLINK')
+  return { path: relative, type: 'file', size: stat.size }
+}
+
+/**
+ * 读取并解码 UTF-8 正文，或按读取模式的字节上限分块转发原文件。
+ * @param w 已获访问授权的工作区。
+ * @param relative 文件的工作区相对路径。
+ * @param encoding 文本、原文件流或限量内联读取模式。
+ * @param transfer 原文件传输的单次设备凭证。
+ * @param context 当前设备连接及中断信号。
+ * @param mediaPreview 预览时允许将大图在本机转换为内联缩略图。
+ * @returns 传输内容的大小、MIME 和 SHA-256；缩略图另外标明原图大小。
+ */
 export async function readWorkspaceFile(
   w: LocalWorkspace,
   relative: string,
   encoding: ToolOutput<'file.read'>['encoding'],
   transfer?: { id: string; key: string },
   context?: FileTransferContext,
+  mediaPreview?: true,
 ): Promise<ToolOutput<'file.read'>> {
   if (encoding === 'utf8') {
     const bytes = await readFileBytes(w, relative, FILE_TEXT_LIMIT_BYTES)
@@ -59,15 +83,58 @@ export async function readWorkspaceFile(
     }
   }
   if (!transfer || !context) throw Error('INVALID_TOOL_ARGUMENTS')
-  const limit = encoding === 'preview' ? FILE_PREVIEW_LIMIT_BYTES : FILE_BINARY_LIMIT_BYTES
+  const largePreview =
+    mediaPreview && ((await statWorkspaceFile(w, relative)).size ?? 0) > FILE_INLINE_LIMIT_BYTES
+  const limit =
+    encoding === 'inline' && !largePreview ? FILE_INLINE_LIMIT_BYTES : FILE_BINARY_LIMIT_BYTES
   const chunks = readFileChunks(w, relative, limit)
   const hash = createHash('sha256')
   let size = 0
   let readError: unknown
   const first = await chunks.next()
-  const mimeType = detectFileMimeType(first.done ? Buffer.alloc(0) : first.value)
+  let mimeType = detectFileMimeType(first.done ? Buffer.alloc(0) : first.value)
+  let thumbnail: Buffer | undefined
+  let originalSize: number | undefined
+  if (mediaPreview) {
+    try {
+      if (!/^(image|audio|video)\//.test(mimeType)) throw Error('FILE_PREVIEW_UNSUPPORTED')
+      if (largePreview) {
+        if (!mimeType.startsWith('image/')) throw Error('FILE_TOO_LARGE')
+        // 仅图片才解码缩放，限制像素数，动画取首帧。原文件不会写入预览目录。
+        const parts: Buffer[] = []
+        for (let chunk = first; !chunk.done; chunk = await chunks.next()) {
+          context.signal.throwIfAborted()
+          parts.push(chunk.value)
+        }
+        const source = Buffer.concat(parts)
+        originalSize = source.length
+        try {
+          thumbnail = await sharp(source, { limitInputPixels: 40_000_000 })
+            .autoOrient()
+            .resize(FILE_THUMBNAIL_MAX_EDGE, FILE_THUMBNAIL_MAX_EDGE, {
+              fit: 'inside',
+              withoutEnlargement: true,
+            })
+            .webp({ quality: 75 })
+            .toBuffer()
+        } catch {
+          throw Error('FILE_PREVIEW_UNSUPPORTED')
+        }
+        if (thumbnail.length > FILE_INLINE_LIMIT_BYTES) throw Error('FILE_TOO_LARGE')
+        mimeType = 'image/webp'
+      }
+    } finally {
+      if (largePreview || !/^(image|audio|video)\//.test(mimeType)) await chunks.return(undefined)
+    }
+  }
   async function* body() {
     try {
+      if (thumbnail) {
+        hash.update(thumbnail)
+        size = thumbnail.length
+        yield thumbnail
+        return
+      }
       for (let chunk = first; !chunk.done; chunk = await chunks.next()) {
         hash.update(chunk.value)
         size += chunk.value.length
@@ -98,7 +165,7 @@ export async function readWorkspaceFile(
       await response.body?.cancel()
       throw Error('FILE_TRANSFER_FAILED')
     }
-    return { encoding, mimeType, size, sha256: hash.digest('hex') }
+    return { encoding, mimeType, size, sha256: hash.digest('hex'), originalSize }
   } catch (error) {
     throw readError ?? error
   } finally {
@@ -182,7 +249,7 @@ export async function writeWorkspaceFile(
     })
     return { path: relative, sha256, written: true }
   }
-  if (!transfer || !context || size === undefined) throw Error('INVALID_TOOL_ARGUMENTS')
+  if (!transfer || !context) throw Error('INVALID_TOOL_ARGUMENTS')
   const { gateway, signal, assertActive } = context
   const { id, key } = transfer
   // 在旧文件版本校验通过前，保持客户端的上传流未消费。

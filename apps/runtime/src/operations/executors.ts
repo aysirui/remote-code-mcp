@@ -11,6 +11,7 @@ import { policyForOperation, type LocalWorkspace } from '../workspace/state'
 import { resolveSafe, isSensitive, assertSafeRelativePath } from '../workspace/path-safety'
 import {
   readWorkspaceFile,
+  statWorkspaceFile,
   searchChecked,
   writeWorkspaceFile,
   mkdirChecked,
@@ -49,6 +50,11 @@ export async function validateOperationSafety(w: LocalWorkspace, req: RpcRequest
     case 'file.list': {
       const p = ToolInputs['file.list'].parse(req.payload)
       await resolveSafe(w, p.path)
+      return
+    }
+    case 'file.stat': {
+      const payload = ToolInputs['file.stat'].parse(req.payload)
+      await resolveSafe(w, payload.path)
       return
     }
     case 'file.read': {
@@ -160,6 +166,11 @@ export async function execute(
         .map((e) => ({ name: e.name, type: e.isDirectory() ? 'directory' : 'file' }))
       break
     }
+    case 'file.stat': {
+      const payload = ToolInputs['file.stat'].parse(req.payload)
+      data = await statWorkspaceFile(w, payload.path)
+      break
+    }
     case 'file.read': {
       const payload = ToolInputs['file.read'].parse(req.payload)
       data = await readWorkspaceFile(
@@ -168,6 +179,7 @@ export async function execute(
         payload.encoding,
         payload.transfer,
         fileTransfer,
+        payload.mediaPreview,
       )
       break
     }

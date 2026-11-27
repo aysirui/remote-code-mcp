@@ -36,7 +36,8 @@ export async function* readFileChunks(
   try {
     const before = await fd.stat()
     if (before.nlink > 1) throw Error('HARD_DENY_HARDLINK')
-    if (!before.isFile() || before.size > maxBytes) throw Error('FILE_TOO_LARGE_OR_UNSUPPORTED')
+    if (!before.isFile()) throw Error('NOT_REGULAR_FILE')
+    if (before.size > maxBytes) throw Error('FILE_TOO_LARGE')
     const named = await fs.stat(await resolveSafe(workspace, relative))
     if (named.dev !== before.dev || named.ino !== before.ino) throw Error('FILE_CHANGED')
 
@@ -87,7 +88,7 @@ export async function measureFile(workspace: LocalWorkspace, relative: string, m
 
 /** 将文件字节无损解码为 UTF-8 文本，含 NUL 或无效 UTF-8 的文件须以二进制读取。 */
 export function decodeUtf8(bytes: Buffer): string {
-  if (bytes.includes(0) || !isUtf8(bytes)) throw Error('FILE_TOO_LARGE_OR_UNSUPPORTED')
+  if (bytes.includes(0) || !isUtf8(bytes)) throw Error('INVALID_UTF8')
   return bytes.toString('utf8')
 }
 
@@ -111,8 +112,8 @@ export async function writeFileStream(
   options: {
     /** 允许读取旧文件和写入新文件的最大字节数。 */
     maxBytes: number
-    /** 本次必须完整收到的原始字节数。 */
-    size: number
+    /** 直接上传声明的精确字节数；无长度的受控中继以完整流结束为准。 */
+    size?: number
     /** 覆盖时提供当前文件摘要；省略表示仅新建。 */
     expectedSha256?: string
     /** 网络取消或审批超时后停止写入。 */
@@ -122,7 +123,7 @@ export async function writeFileStream(
   },
 ): Promise<string> {
   const { maxBytes, size, expectedSha256, signal, assertActive } = options
-  if (size > maxBytes) throw Error('FILE_TOO_LARGE')
+  if (size !== undefined && size > maxBytes) throw Error('FILE_TOO_LARGE')
   const target = await resolveSafe(workspace, relative, true)
   const key =
     process.platform === 'win32' || process.platform === 'darwin'
@@ -166,11 +167,12 @@ export async function writeFileStream(
         for await (const chunk of source) {
           signal?.throwIfAborted()
           received += chunk.byteLength
-          if (received > size) throw Error('FILE_SIZE_MISMATCH')
+          if (received > maxBytes) throw Error('FILE_TOO_LARGE')
+          if (size !== undefined && received > size) throw Error('FILE_SIZE_MISMATCH')
           hash.update(chunk)
           await fd.writeFile(chunk)
         }
-        if (received !== size) throw Error('FILE_SIZE_MISMATCH')
+        if (size !== undefined && received !== size) throw Error('FILE_SIZE_MISMATCH')
         await fd.sync()
       } finally {
         await fd.close()

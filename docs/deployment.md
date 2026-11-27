@@ -129,6 +129,12 @@ Server 容器启动顺序：
 
 原文件流传输要求 Server 与 Runtime 一同升级。统一 MCP 路由已覆盖 `/mcp/files/*`，反向代理仍需针对文件传输支持 GET 和 PUT 请求以及最多 64 MiB 的流式请求体，保留 Authorization 请求头，并关闭此路径的请求和响应缓冲。仍需保留 `/mcp` 的流式响应和 `/agent/connect` 的 WebSocket Upgrade。传输地址与对应设备连接驻留在发起操作的 Server 实例。
 
+下载地址本身是短期一次性凭据。对 `/mcp/files/*` 的代理和请求跟踪日志应遮盖完整路径或省略该路径的访问明细。
+
+附件写入通过 Server 的 `MCP_ATTACHMENT_ORIGINS` 配置可信 HTTPS 源。使用逗号分隔多个源，例如 `https://files.example.com,https://assets.example.org:8443`。每项只填写协议、主机和可选端口，应使用专用于文件分发的可信服务。配置为空时，附件地址会被拒绝，文件仍可通过直接上传地址写入。Server 按字节流中继附件，拒绝重定向，附件地址仅留在 Server。
+
+大图缩略图在 Runtime 生成，安装依赖时须保留 Sharp 对应运行平台的可选二进制包。
+
 ## 官网与在线文档
 
 产品官网由 `apps/website` 使用 Astro 静态生成，在线文档由根目录 `docs/` 使用 VitePress 生成；两者均采用独立 Docker 镜像，不依赖 Console 的构建与发布。
@@ -216,7 +222,7 @@ pnpm build
 - `GET /health` 返回健康状态；OAuth 两个 `.well-known` 元数据入口可用。
 - 官网根路径正确展示产品入口，Console 和 GitHub 按钮有效；文档 `/docs` 跳转至 `/docs/`，未登录可阅读、搜索并直接刷新页面，未知文档路径返回 HTTP 404；控制台登录及现有页面保持可用。
 - 未授权 POST `/mcp` 返回 401 和 `WWW-Authenticate`，GET / DELETE `/mcp` 返回 405；OAuth 授权、刷新、重放拒绝及撤销符合预期。
-- 未授权 GET `/mcp/files/test` 返回 401 而不是官网 HTML；实际文件上传和下载通过授权客户端验证，未知 MCP 子路径由 Server 返回 404。
+- GET `/mcp/files/test` 返回 404。用已授权的 MCP 客户端签发地址，再验证下载无需 OAuth 请求头且只能领取一次，上传仍需 OAuth。
 - 两个用户只能访问自己的设备和工作区，管理员也不能通过 MCP 跨用户读文件。
 - Runtime 离线、设备撤销、工作区停用、连接替换及断线重连后权限仍正确，旧凭据失效。
 - 只读工作区拒绝写入，SHA-256 冲突被拒绝，路径穿越、敏感文件及链接绕过被拒绝。

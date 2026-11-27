@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>文件预览</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        color: CanvasText;
+        font:
+          0.875rem/1.5 system-ui,
+          sans-serif;
+      }
+
+      body,
+      figure {
+        margin: 0;
+      }
+
+      main {
+        border: 1px solid color-mix(in srgb, CanvasText 15%, Canvas);
+        border-radius: 0.75rem;
+        overflow: hidden;
+      }
+
+      .status,
+      figcaption {
+        margin: 0;
+        padding: 0.75rem 1rem;
+      }
+
+      .media-area {
+        display: grid;
+        justify-items: center;
+        background: color-mix(in srgb, CanvasText 5%, Canvas);
+        padding: 0.75rem;
+      }
+
+      img,
+      video {
+        display: block;
+        max-inline-size: 100%;
+        max-block-size: 26rem;
+        border-radius: 0.25rem;
+        object-fit: contain;
+      }
+
+      audio,
+      video {
+        inline-size: 100%;
+      }
+
+      figcaption {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 0.25rem 0.75rem;
+      }
+
+      #filename {
+        font-weight: 600;
+        overflow-wrap: anywhere;
+        min-inline-size: 0;
+      }
+
+      #details,
+      #download-status {
+        color: color-mix(in srgb, CanvasText 70%, Canvas);
+        font-size: 0.8125rem;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem 0.75rem;
+        padding: 0 1rem 0.75rem;
+      }
+
+      .actions[hidden] {
+        display: none;
+      }
+
+      button {
+        font: inherit;
+        color: CanvasText;
+        background: Canvas;
+        border: 1px solid color-mix(in srgb, CanvasText 30%, Canvas);
+        border-radius: 0.375rem;
+        padding: 0.375rem 0.75rem;
+      }
+
+      button:not(:disabled) {
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p id="status" class="status" role="status">正在读取文件…</p>
+      <figure hidden>
+        <div class="media-area"></div>
+        <figcaption>
+          <span id="filename"></span>
+          <span id="details"></span>
+        </figcaption>
+        <div class="actions" hidden>
+          <button type="button">下载原图</button>
+          <span id="download-status" role="status"></span>
+        </div>
+      </figure>
+    </main>
+    <script type="module">
+      const card = document.querySelector('main')
+      const figure = document.querySelector('figure')
+      const mediaArea = document.querySelector('.media-area')
+      const status = document.querySelector('#status')
+      const filename = document.querySelector('#filename')
+      const details = document.querySelector('#details')
+      const actions = document.querySelector('.actions')
+      const downloadButton = actions.querySelector('button')
+      const downloadStatus = document.querySelector('#download-status')
+      const sizeFormat = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 1 })
+      let initialized = false
+      let lastHeight = 0
+      let nextRequestId = 0
+      let downloadRequest
+
+      /** 仅向宿主 iframe 上报 MCP Apps 生命周期消息，预览在本组件内渲染。 */
+      function send(message) {
+        window.parent.postMessage({ jsonrpc: '2.0', ...message }, '*')
+      }
+
+      /** 随预览、操作回执和窗口尺寸变化上报高度，避免宿主裁剪结果。 */
+      const observer = new ResizeObserver(() => {
+        if (!initialized) return
+        const height = Math.ceil(card.getBoundingClientRect().height)
+        if (height === lastHeight) return
+        lastHeight = height
+        send({
+          method: 'ui/notifications/size-changed',
+          params: { width: window.innerWidth, height },
+        })
+      })
+
+      /** 清除前一份媒体和关联操作，展示加载、失败或取消状态。 */
+      function showStatus(message) {
+        const previous = mediaArea.firstElementChild
+        if (previous instanceof HTMLMediaElement) previous.pause()
+        mediaArea.replaceChildren()
+        clearTimeout(downloadRequest?.timeout)
+        downloadRequest = undefined
+        downloadButton.onclick = null
+        actions.hidden = true
+        figure.hidden = true
+        status.textContent = message
+        status.hidden = false
+      }
+
+      /** 下载原图时才向宿主请求临时地址，避免打开卡片后地址提前失效。 */
+      function enableOriginalDownload(originalFile) {
+        if (!originalFile) return
+        actions.hidden = false
+        downloadButton.disabled = false
+        downloadStatus.textContent = ''
+        downloadButton.onclick = () => {
+          downloadButton.disabled = true
+          downloadStatus.textContent = '正在获取下载地址…'
+          requestDownload('tools/call', {
+            name: 'file_read',
+            arguments: { ...originalFile, encoding: 'stream' },
+          })
+        }
+      }
+
+      /** 记录待响应的宿主请求，失败或超时后允许重新领取原图。 */
+      function requestDownload(method, params) {
+        const id = ++nextRequestId
+        const timeout = setTimeout(() => finishDownload('宿主未响应，请重试。'), 15000)
+        downloadRequest = { id, method, timeout }
+        send({ id, method, params })
+      }
+
+      /** 展示下载地址处理结果；再次下载需要重新领取。 */
+      function finishDownload(message) {
+        clearTimeout(downloadRequest?.timeout)
+        downloadRequest = undefined
+        downloadButton.disabled = false
+        downloadStatus.textContent = message
+      }
+
+      /** 根据 MIME 大类使用浏览器原生预览，文件名始终通过纯文本渲染。 */
+      function render(result) {
+        if (result?.isError) {
+          showStatus('无法读取文件预览。请查看工具结果。')
+          return
+        }
+        const file = result?.structuredContent
+        const data = result?._meta?.['rcm/previewMedia']
+        const originalFile = result?._meta?.['rcm/originalFile']
+        const kind = /^(image|audio|video)\/[\w.+-]+$/.exec(file?.mimeType)?.[1]
+        if (typeof data !== 'string' || !data || !kind) {
+          showStatus('未收到文件预览数据。')
+          return
+        }
+        showStatus('正在加载预览…')
+        filename.textContent = file.name
+        const originalSize = file.originalSize ?? file.size
+        const size =
+          originalSize < 1024
+            ? originalSize + ' B'
+            : sizeFormat.format(originalSize / 1024) + ' KiB'
+        const element = document.createElement(kind === 'image' ? 'img' : kind)
+        if (element instanceof HTMLImageElement) {
+          element.alt = file.name
+        } else {
+          element.controls = true
+          element.preload = 'metadata'
+          element.setAttribute('aria-label', file.name)
+          if (element instanceof HTMLVideoElement) element.playsInline = true
+        }
+        mediaArea.append(element)
+        element.addEventListener(
+          kind === 'image' ? 'load' : 'loadedmetadata',
+          () => {
+            if (mediaArea.firstElementChild !== element) return
+            details.textContent =
+              element instanceof HTMLImageElement
+                ? element.naturalWidth + ' × ' + element.naturalHeight + ' px · ' + size
+                : size
+            if (file.originalSize !== undefined) {
+              details.textContent = '缩略图 · 原图 ' + size
+              enableOriginalDownload(originalFile)
+            }
+            status.hidden = true
+            figure.hidden = false
+          },
+          { once: true },
+        )
+        element.addEventListener('error', () => {
+          if (mediaArea.firstElementChild === element) showStatus('当前客户端无法预览此文件。')
+        })
+        element.src = 'data:' + file.mimeType + ';base64,' + data
+      }
+
+      /** 仅处理宿主转发的标准 MCP Apps 消息，并确认资源释放请求。 */
+      function onMessage(event) {
+        if (event.source !== window.parent || event.data?.jsonrpc !== '2.0') return
+        const message = event.data
+        if (message.id === 'rcm-preview-init') {
+          if (message.error) {
+            showStatus('文件预览组件无法连接到客户端。')
+            return
+          }
+          if (!message.result) return
+          initialized = true
+          send({ method: 'ui/notifications/initialized' })
+          observer.observe(card)
+        } else if (downloadRequest && message.id === downloadRequest.id) {
+          const { method, timeout } = downloadRequest
+          clearTimeout(timeout)
+          if (message.error || message.result?.isError) {
+            finishDownload('无法下载原图，请重试。')
+          } else if (method === 'tools/call') {
+            const url = message.result?.structuredContent?.url
+            if (typeof url === 'string') requestDownload('ui/open-link', { url })
+            else finishDownload('未收到原图下载地址。')
+          } else {
+            finishDownload('已在浏览器打开下载地址。')
+          }
+        } else if (message.method === 'ui/notifications/tool-result') {
+          render(message.params)
+        } else if (message.method === 'ui/notifications/tool-cancelled') {
+          showStatus('文件预览已取消。')
+        } else if (message.method === 'ui/resource-teardown') {
+          observer.disconnect()
+          showStatus('')
+          window.removeEventListener('message', onMessage)
+          send({ id: message.id, result: {} })
+        }
+      }
+
+      window.addEventListener('message', onMessage)
+      send({
+        id: 'rcm-preview-init',
+        method: 'ui/initialize',
+        params: {
+          protocolVersion: '2026-01-26',
+          appInfo: { name: 'RCM 文件预览', version: '3.0.0' },
+          appCapabilities: {},
+        },
+      })
+    </script>
+  </body>
+</html>

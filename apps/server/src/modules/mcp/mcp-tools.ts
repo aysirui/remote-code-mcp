@@ -1,33 +1,60 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { McpToolInputs, McpToolOutputs } from '@rcm/protocol'
-import { DeviceHub } from '../device/device-hub'
-import { Store } from '../../infrastructure/database/store'
-import { createMcpToolRegistrar } from './mcp-tool-registration'
-import { listMcpDevices, listMcpWorkspaces } from './mcp-resource-list'
-import { registerMcpOperationTools } from './mcp-operation-tools'
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { DeviceHub } from '../device/device-hub'
+import type { Store } from '../../infrastructure/database/store'
+import { register } from './tools/register'
+import { deviceList } from './tools/device/list'
+import { workspaceList } from './tools/workspace/list'
+import { fileList } from './tools/file/list'
+import { fileStat } from './tools/file/stat'
+import { fileRead } from './tools/file/read'
+import { fileSearch } from './tools/file/search'
+import { fileWrite } from './tools/file/write'
+import { fileMkdir } from './tools/file/mkdir'
+import { fileMove } from './tools/file/move'
+import { fileDelete } from './tools/file/delete'
+import { filePreview, filePreviewResource } from './tools/file/preview'
+import { gitStatus } from './tools/git/status'
+import { gitLog } from './tools/git/log'
+import { gitDiff } from './tools/git/diff'
+import { gitAdd } from './tools/git/add'
+import { gitCommit } from './tools/git/commit'
+import { commandList } from './tools/command/list'
+import { commandRun } from './tools/command/run'
 
-/** 为单次已认证的 MCP 请求注册工具；工具操作始终绑定当前用户与客户端。 */
+/** 为当前用户与客户端注册工具；authorizeDownload 用于领取地址时复查签发授权。 */
 export function registerMcpTools(
   server: McpServer,
   hub: DeviceHub,
   store: Store,
   userId: string,
   clientId: string,
+  authorizeDownload: () => Promise<void>,
 ) {
-  const simple = createMcpToolRegistrar(server)
-  simple(
-    'device_list',
-    '列出当前用户的设备及其在线状态',
-    McpToolInputs.device_list,
-    McpToolOutputs.device_list,
-    async () => listMcpDevices(store, hub, userId),
-  )
-  simple(
-    'workspace_list',
-    '列出已授权工作区及其权限、策略和在线状态；调用其他工具时使用返回的 workspaceId',
-    McpToolInputs.workspace_list,
-    McpToolOutputs.workspace_list,
-    async () => listMcpWorkspaces(store, hub, userId),
-  )
-  registerMcpOperationTools(simple, hub, userId, clientId)
+  const context = { hub, store, userId, clientId, authorizeDownload }
+  const { name, uri, mimeType, description, text } = filePreviewResource
+  server.registerResource(name, uri, { mimeType, description }, async () => ({
+    contents: [{ uri, mimeType, text }],
+  }))
+
+  register(server, deviceList, context)
+  register(server, workspaceList, context)
+
+  register(server, fileList, context)
+  register(server, fileStat, context)
+  register(server, fileRead, context)
+  register(server, fileSearch, context)
+  register(server, fileWrite, context)
+  register(server, fileMkdir, context)
+  register(server, fileMove, context)
+  register(server, fileDelete, context)
+  register(server, filePreview, context)
+
+  register(server, gitStatus, context)
+  register(server, gitLog, context)
+  register(server, gitDiff, context)
+  register(server, gitAdd, context)
+  register(server, gitCommit, context)
+
+  register(server, commandList, context)
+  register(server, commandRun, context)
 }

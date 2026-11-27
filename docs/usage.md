@@ -88,17 +88,25 @@ Git 暂存、提交和高危递归删除保留强制审批；临时命令也需�
 
 `file_read` 和 `file_write` 使用工作区相对路径。默认的 `encoding: "utf8"` 用于 UTF-8 文本，单文件最多 512 KiB。`file_search` 逐行搜索 UTF-8 文本，单文件最多 256 KiB。
 
-读取图片、PDF、Office 或其他原文件时，用以下参数调用 `file_read`：
+大小未知时，先用 `file_stat` 获取目标类型和文件字节数。它只查询属性。文本格式错误返回 `INVALID_UTF8`，读取超限返回 `FILE_TOO_LARGE`，卡片无法预览的格式返回 `FILE_PREVIEW_UNSUPPORTED`。
+
+通过 HTTP 下载图片、PDF、Office 或其他原文件时，用以下参数调用 `file_read`：
 
 ```json
 { "workspaceId": "工作区 ID", "path": "public/logo.png", "encoding": "stream" }
 ```
 
-工具返回 `url`、`method` 和 `expiresAt`。客户端须在 2 分钟内使用同一账号和 OAuth 客户端的 Bearer Token 向该地址发出 GET 请求。响应为原始文件字节。HTTP/1.1 中继可在响应末尾提供 `X-Content-SHA256`，客户端也可自行计算下载文件的摘要。每个地址只能领取一次，断开后重新调用工具获取地址。
+工具返回 `url`、`method` 和 `expiresAt`。在 2 分钟内直接向该地址发出 GET 请求，无需 Bearer Token。地址本身是单文件、单次下载凭据，请勿共享。Server 在领取时复查签发下载地址的 OAuth 授权和工作区权限，Runtime 按原文件策略执行读取和审批。有 HTTP 下载能力的客户端可领取原始字节，用户也可在浏览器打开地址。HTTP/1.1 中继可在响应末尾提供 `X-Content-SHA256`。如果连接中断或地址已被领取，重新调用工具获取地址。
 
 写入时调用 `file_write`，指定 `encoding: "stream"` 和原文件准确的字节数 `size`。随后向返回的地址发起 PUT 请求，使用同一 OAuth Bearer Token，并以 `Content-Type: application/octet-stream` 发送原始文件。上传成功会返回写入后的 SHA-256。新建时省略 `expectedSha256`，覆盖时提供当前文件的原始字节 SHA-256。Runtime 在确认权限和审批后才开始消费上传流。
 
-原文件上传和下载上限为 64 MiB。查看不超过 512 KiB 的图片时，可以直接调用 `file_read` 并指定 `encoding: "preview"`。Server 仅在生成 MCP `image` 内容块时进行 Base64 编码。预览显示取决于客户端，原文件模式要求客户端能够另外发起带 OAuth 的 HTTP 请求。
+客户端可用 `file_write` 的 `attachment` 模式保存附件或编辑产物，传入附件标识 `file.file_id` 和临时下载地址 `file.download_url`。Server 从已配置的可信附件源取回字节，复用设备写入流。附件源未配置或地址不匹配时返回 `FILE_ATTACHMENT_URL_DENIED`。新建时指定目的路径，覆盖时还须提供编辑前原文件的 `expectedSha256`。以 `written: true` 确认写入完成，`stream` 模式要等 PUT 成功。附件源配置见 [私有化部署](./deployment.md)。
+
+原文件上传和下载上限为 64 MiB。小文件可用 `file_read` 的 `encoding: "inline"` 在同一次调用中取得原始内容及元数据，上限为 512 KiB。Server 仅在 MCP JSON 边界将原始字节编码为 Base64，图片和音频使用原生内容块，其他数据使用嵌入资源块。模型能否收到视觉输入取决于客户端对内容块的处理。
+
+在支持 MCP Apps 的客户端中，用 `file_preview` 查看图片、音频和视频。最多 512 KiB 的媒体直接展示，具体编码由客户端浏览器解码。超过 512 KiB 的图片由 Runtime 生成最长边 768 像素的 WebP 缩略图，原图限 64 MiB 和 4000 万解码像素，卡片支持按需下载原图。缩略图结果的 `size` 和 `sha256` 属于缩略图，`originalSize` 标明原图字节数。大音视频、PDF 和 Office 文件可获取原始内容。
+
+自动编辑需要宿主的编辑工具能接收完整原图，并将编辑结果作为文件引用交给 `file_write`。读取时使用 `file_read`，然后编辑并保存实际产物。能否在同一条聊天指令里自动完成文件交接，取决于所用宿主。
 
 ## 命令执行
 

@@ -238,7 +238,9 @@ curl.exe -i -X POST https://example.ngrok-free.app/mcp
 
 健康检查与元数据应返回 200；未授权 POST /mcp 应返回 401 并包含 WWW-Authenticate。OAuth 元数据中的公开地址必须为当前隧道域名。
 
-通过 MCP Inspector 或目标客户端执行文本读取、图片预览和原文件流读取。原文件流返回的一次性地址必须使用同一 OAuth 客户端的有效令牌访问，并比较下载文件与原文件的 SHA-256。服务端支持文件流不代表所有 AI 客户端都支持自动下载和解析原文件，具体见 [文件读写](./usage.md#文件读写)。
+通过 MCP Inspector 或目标客户端执行文本读取、媒体预览和原文件流读取。直接 GET 一次性地址，确认无需 OAuth 请求头即可下载且 SHA-256 与原文件一致，再验证重复下载返回 404。自动下载和解析依赖客户端能力，具体见 [文件读写](./usage.md#文件读写)。
+
+验证大图时，先用 `file_stat` 确认原图超过 512 KiB，再分别验证 `file_read inline` 返回 `FILE_TOO_LARGE`、`file_preview` 展示缩略图、卡片下载原图的字节与源文件一致。验证附件写入时，先配置 `MCP_ATTACHMENT_ORIGINS`，用 MCP 客户端把文件引用传给 `file_write attachment`，检查 `written` 与本地文件摘要，另测覆盖冲突。使用 ChatGPT 验证时，工具元数据变更后在应用设置中刷新工具列表。
 
 ## 9. 本地与生产域名配置的区别
 

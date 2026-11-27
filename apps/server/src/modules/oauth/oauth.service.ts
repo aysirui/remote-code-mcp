@@ -10,9 +10,14 @@ import { OAuthRepository } from './oauth.repository'
 export class OAuthService {
   constructor(private readonly repository: OAuthRepository) {}
 
-  /** 验证 MCP Token 并返回用户与当前授权客户端 ID。 */
+  /** 验证 MCP Token，返回用户、授权客户端 ID 和仅供服务端复查的摘要。 */
   async token(raw: string) {
-    const t = await this.repository.accessToken(hash(raw))
+    return this.tokenByHash(hash(raw))
+  }
+
+  /** 按摘要复查原授权是否有效；一次性下载地址无需保存或交付原始 Token。 */
+  async tokenByHash(tokenHash: string) {
+    const t = await this.repository.accessToken(tokenHash)
     if (
       !t ||
       t.revokedAt ||
@@ -28,7 +33,7 @@ export class OAuthService {
     }
     const u = await this.repository.user(t.userId)
     if (!u || u.status !== 'active') throw new UnauthorizedException()
-    return { ...u, clientId: t.clientId }
+    return { ...u, clientId: t.clientId, tokenHash }
   }
 
   /** 查询动态注册的客户端元数据，供授权流程校验回调 URI。 */

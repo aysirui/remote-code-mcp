@@ -1,4 +1,4 @@
-import { All, Controller, Get, Delete, Param, Post, Req, Res } from '@nestjs/common'
+import { All, Controller, Get, Delete, Param, Post, Put, Req, Res } from '@nestjs/common'
 import type { Request, Response } from 'express'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
@@ -28,7 +28,7 @@ export class McpController {
     return res.status(405).end()
   }
 
-  /** MCP 控制请求和文件流领取使用同一套 OAuth 凭据校验。 */
+  /** MCP 控制请求和上传领取使用同一套 OAuth 凭据校验。 */
   private async authenticate(req: Request, res: Response) {
     const bearer = req.headers.authorization?.startsWith('Bearer ')
       ? req.headers.authorization.slice(7)
@@ -53,11 +53,17 @@ export class McpController {
     }
   }
 
-  /** 已认证的客户端依据一次性传输地址上传或下载原始字节。 */
-  @All('files/:id')
-  async file(@Param('id') id: string, @Req() req: Request, @Res() res: Response) {
+  /** 凭 id 领取一次性下载，传输层复查签发授权后返回原始字节。 */
+  @Get('files/:id')
+  async downloadFile(@Param('id') id: string, @Req() req: Request, @Res() res: Response) {
+    await this.hub.files.client(id, req, res)
+  }
+
+  /** 凭原 OAuth 客户端授权领取上传地址，消费请求中的原始字节。 */
+  @Put('files/:id')
+  async uploadFile(@Param('id') id: string, @Req() req: Request, @Res() res: Response) {
     const user = await this.authenticate(req, res)
-    if (user) await this.hub.files.client(id, user.id, user.clientId, req, res)
+    if (user) await this.hub.files.client(id, req, res, user)
   }
 
   /** 设备使用由已授权 RPC 单独下发的一次性凭证接入对应原文件流。 */
@@ -72,7 +78,10 @@ export class McpController {
     const user = await this.authenticate(req, res)
     if (!user) return
     const server = new McpServer({ name: 'remote-code-mcp', version: '0.1.0' })
-    registerMcpTools(server, this.hub, this.store, user.id, user.clientId)
+    const { id, clientId, tokenHash } = user
+    registerMcpTools(server, this.hub, this.store, id, clientId, async () => {
+      await this.oauth.tokenByHash(tokenHash)
+    })
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
     // 监听必须在处理请求前注册：同步结束的响应也要释放本次 MCP 资源。
     // close 事件同时覆盖客户端中断连接，且清理只执行一次。

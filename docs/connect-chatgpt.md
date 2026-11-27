@@ -67,6 +67,26 @@ description: 在 ChatGPT 网页或桌面客户端添加 Remote Code MCP 插件�
 
 工具调用成功时，`workspace_list` 会返回工作区 ID 和在线状态，`file_read` 会返回文件正文和 SHA-256 摘要，`git_status` 会返回该仓库的 Git 状态。可以在调用明细中核对实际执行的工具，并在 [官方控制台](https://rcmconsole.aysirui.com/) 的操作记录中查看工作区调用。请确认读取到的是测试仓库中的 `README.md`。
 
+### 在对话中预览图片
+
+在支持 MCP Apps 的聊天中，可以让 RCM 直接显示项目图片。已连接的开发测试应用升级后，先在 ChatGPT 应用设置中刷新工具列表。
+
+```text
+调用 Remote Code MCP 的 file_preview，在对话中显示测试工作区里的 original.png。
+```
+
+卡片会显示图片、文件名和尺寸。超过 512 KiB 的图片会显示缩略图，点击 **下载原图** 会按需签发下载地址。读取按工作区文件策略执行。
+
+### 保存聊天附件到工作区
+
+ChatGPT 能为工具提供文件引用时，可调用 `file_write` 将附件保存到授权工作区。自托管 Server 在 `MCP_ATTACHMENT_ORIGINS` 中配置客户端实际使用的 HTTPS 文件源，例如 `https://files.oaiusercontent.com`。用一张非敏感测试图片验证此流程，选择项目中尚未存在的文件名，例如：
+
+```text
+调用 Remote Code MCP，将本条消息的附件保存到测试工作区的 attachment-test.png。使用 file_write 的 attachment 模式。
+```
+
+核对工具结果中的 `written: true` 和 `sha256`。对编辑产物可使用同一入口，实际能否接收编辑工具直接产出的文件引用以宿主行为为准。覆盖已有文件时，使用编辑前原版本的摘要作为 `expectedSha256`。
+
 ## 5. 在同一个聊天中修改文件
 
 在 Runtime 给测试工作区开启写入权限，并将 File 策略设为「审批执行」。选用已经提交到 Git 的 `README.md`，以便写入后查看未暂存差异。

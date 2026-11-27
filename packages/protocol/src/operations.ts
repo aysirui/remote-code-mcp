@@ -4,6 +4,7 @@
  */
 export const Operations = [
   'file.list',
+  'file.stat',
   'file.read',
   'file.search',
   'file.write',

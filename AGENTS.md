@@ -16,7 +16,7 @@ apps/server（NestJS Server） ── MySQL（Drizzle）
     │ WSS / 设备身份认证 / RPC
     ▼
 apps/runtime（本机 Node.js 服务）
-    ├── 本地管理 API + Vue Web UI（127.0.0.1）
+    ├── 本地管理 API + Vue Web UI（仅回环访问）
     └── 已授权 Workspace → File / Git / Command
 
 apps/console（Vue Web 管理台） ── HTTPS ──► apps/server
@@ -27,28 +27,28 @@ packages/protocol（共享 RPC、Zod Schema、类型契约）
 
 - `apps/server/src/app.module.ts`：NestJS 根模块装配；`main.ts` 为入口，`config/env.ts` 统一读取配置。
 - `apps/server/src/modules/`：按业务领域组织 `auth`、`account`、`admin`、`core`、`device`、`oauth`、`mcp`。Controller 处理协议入口，Service/Repository 负责对应业务与持久化；相关领域逻辑留在本模块。
-- `apps/server/src/modules/device/`：设备配对、WebSocket 连接、工作区同步、RPC 路由、超时和操作审计；`DeviceHub` 由 NestJS 生命周期管理。
-- `apps/server/src/modules/mcp/`：MCP HTTP 接口、工具注册和工具到设备 RPC 的映射；服务端验证 OAuth 身份及工作区归属。
+- `apps/server/src/modules/device/`：设备身份、连接生命周期、工作区同步、RPC 路由和操作审计。
+- `apps/server/src/modules/mcp/`：MCP 协议入口和工具注册；按领域组织工具，使用统一的注册入口。
 - `apps/server/src/infrastructure/database/`：Drizzle Schema、数据库连接、Store；迁移产物位于 `apps/server/drizzle/`。
 - `apps/website/`：Astro 独立静态官网，负责公开产品展示、文档、控制台和代码仓库导航；不承载后端业务。
-- `docs/`：VitePress 独立文档产物，公共访问前缀为 `/docs/`。
+- `docs/`：VitePress 文档站，承载产品用法和部署说明。
 - `apps/console/src/`：Vue 3 + Vue Router + Pinia + Element Plus；页面在 `views/`，页面复用组件在 `components/`，界面业务状态在 `composables/`，API 请求在 `api/`。
-- `apps/runtime/src/connection/`：Server WebSocket 连接与重连；`workspace/`：本机目录定义、服务器配置、工作区授权及策略。
-- `apps/runtime/src/workspace/io.ts`：工作区分块读写、UTF-8 解码、SHA-256 及 MIME 识别。File、Git 和后续工具复用该层的文件能力，各工具的权限、审批与操作语义留在对应的工具域。
+- `apps/runtime/src/connection/`：管理 Server 连接及重连。
+- `apps/runtime/src/workspace/`：管理本机目录、Server 配置、工作区授权和基础 IO；各工具复用 IO 能力，并在所属领域处理权限、审批和操作语义。
 - `apps/runtime/src/requests/`：RPC 请求分发、审批策略、审批队列与资源核验。
-- `apps/runtime/src/operations/`：文件、Git、Command 领域执行器；Git 操作独立于 `command.run`。
+- `apps/runtime/src/operations/`：按领域组织本机操作执行器。
 - `apps/runtime/src/local/`：只监听回环地址的本地管理服务及设备配对、工作区和审批 API。
 - `apps/runtime/web/src/`：Runtime 内置 Vue 管理界面。
 - `packages/protocol/src/`：Server 与 Runtime 共享的操作定义、RPC 契约、Zod 校验和脱敏审计数据结构。不得放入某个应用独有的业务实现。
 
-### 核心实现与业务边界
+### 架构与安全边界
 
 1. **身份与授权**：MCP 客户端经 OAuth 2.0 授权访问 Server；Runtime 以设备凭据建立 WSS 出站连接。Server 校验用户、设备及工作区归属；Runtime 再按本机工作区授权、读写权限及 File/Git/Command 策略执行。
 2. **本地数据隐私**：工作区绝对路径、文件内容、命令参数、审批详情和 AI 对话不作为 Server/Console 的持久化业务数据。Server 仅转发必要的 RPC 数据；操作审计只记录允许的脱敏元数据。
-3. **多服务器与工作区**：Runtime 可保存多个 Server 配置，同一时刻连接一个 Server；本地目录定义与各 Server 的工作区授权分离。设备或授权撤销必须使后续请求失效。
-4. **文件操作**：在授权工作区内执行读写、搜索、移动、删除。File 的 UTF-8 文本模式使用 JSON，原文件通过独立的 HTTP 字节流传输，WSS 只发送控制信息。Server 限量接收预览字节并按 MCP 规范编码图片块。上传完整接收并通过当前授权、原始字节 SHA-256 校验后才替换目标。危险删除遵循既定审批规则。
+3. **工作区授权隔离**：本地目录定义与各 Server 的工作区授权分离。设备或授权撤销必须使后续请求失效。
+4. **文件 IO 与传输**：工具复用 Runtime 的基础 IO。二进制字节流与 RPC 控制信令分离，协议编码集中在边界层。文件流领取时复查授权，临时凭据限定传输对象和有效期；覆盖文件前检查传输完整性、当前权限和目标版本。
 5. **Git 操作**：使用独立的 Git 工具及对应权限策略，不通过临时 Shell 命令绕过。
-6. **命令执行**：`command.run` 接受本机登记命令 ID 或临时程序/参数；登记命令遵循本机策略，未登记命令必须审批。命令以 Runtime 进程账号权限运行，不宣称具有 OS 沙箱隔离。默认超时 60 秒；内置构建、测试、类型检查各 10 分钟，本地自定义登记命令最长 20 分钟，远程请求不能自行提高超时。
+6. **命令执行**：命令遵循本机权限和审批策略，未登记命令必须逐次审批。执行使用 Runtime 进程账号的系统权限，审批与超时属于应用层控制。
 7. **数据库**：Server 使用 Drizzle ORM 与 MySQL；Schema 是数据库结构变更的来源。部署执行已提交的迁移，不在部署环境自动生成迁移文件。
 
 ## 二、强制开发约束
@@ -71,6 +71,7 @@ packages/protocol（共享 RPC、Zod Schema、类型契约）
 - 默认保持业务逻辑直接、清晰、就近实现，不为缩短文件、减少几行重复代码、预想未来扩展而引入公共函数、基类、适配器、工具包或新层级。
 - **只有属于项目基础工具、且在相关适用场景中复用率达到 50% 以上时，才考虑抽象为公共能力**；抽象前应说明复用范围及收益。
 - 领域专用的内部函数可以留在其业务模块内，但不得仅为了“架构更整齐”跨模块抽取。
+- 评估抽象时，从入口沿一次实际调用检查阅读路径。只转发参数或代填固定值的几行代码优先就地保留，让调用目标和参数在当前文件可见。
 - 不开展与当前需求无关的大规模重命名、拆文件或重构。
 
 ### 4. 模块内聚，相关逻辑就近组织
@@ -79,6 +80,9 @@ packages/protocol（共享 RPC、Zod Schema、类型契约）
 - 不把模块私有业务逻辑放入全局 `utils`、`common`、`shared` 或其他无业务归属的目录。
 - 只有确实跨领域使用的底层契约才放到 `packages/protocol`；数据库基础设施保留在 Server 的 infrastructure。
 - 新增文件之前先检查现有模块是否已有适当位置；优先修改现有实现，避免形成零散小文件。
+
+- 将功能的对外契约引用、执行和专用处理放在所属领域，保持从入口到执行的路径清晰。集中注册入口负责汇总与装配；框架或协议适配层统一处理公共交互规则。
+- 调整模块边界时，检查调用方和授权链，清理已被替代的聚合文件及转发层。通过现有对外入口验证契约、关键行为和权限边界。
 
 ### 5. 只新增与业务相关的代码和测试
 
@@ -104,9 +108,11 @@ packages/protocol（共享 RPC、Zod Schema、类型契约）
 6. 交付时报告实际修改文件、验证命令、退出状态及未验证事项。不得把命令超时或仅看到各模块日志完成描述成全项目退出码为 0。
 7. 未经用户明确要求，不执行 Git Commit、Push、部署、生产数据库迁移或清理用户已有修改。
 
-## 四、文档优先原则
+## 四、文档范围与归属
 
-架构说明和开发约束以本文件为主要入口；业务使用、部署、环境变量和操作流程继续放在 `README.md` 等相应文档。架构约束不应额外演变为侵入项目的运行时逻辑、自动审计程序或无业务价值的测试。
+- **`AGENTS.md` 只收录长期适用的项目级规范与原则**，包括通用开发约束、项目独有的架构与安全边界、模块职责、协作流程及验收约定。
+- 具体需求、业务规则、接口字段、参数限制、实现细节和使用流程记录在对应的业务文档、接口文档或部署文档。单次重构的改动与验收结果记录在任务或 PR 中，可复用的结论提炼为原则后再纳入本文件。
+- 架构约束由协作规范指导，运行时代码和测试聚焦实际行为与安全边界。
 
 ## 五、版本发布规范
 

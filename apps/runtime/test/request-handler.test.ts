@@ -297,7 +297,8 @@ test('查询大图大小，流式下载保留原图，媒体预览只中继缩�
     success: true,
     data: { encoding: 'stream', mimeType: 'image/png', size: original.length },
   })
-  expect(downloads.get(originalTransfer.id)).toEqual(original)
+  // 原图有数 MiB，逐字节比较交给 Buffer，避免 Jest 深比较遍历数百万个索引。
+  expect(downloads.get(originalTransfer.id)?.equals(original)).toBe(true)
   const previewTransfer = transferRef()
   const viewed = await handleGatewayMessage(
     rpc('file.read', { ...args, transfer: previewTransfer, mediaPreview: true }),
@@ -316,7 +317,7 @@ test('查询大图大小，流式下载保留原图，媒体预览只中继缩�
   })
   expect(thumb.length).toBeLessThanOrEqual(FILE_PREVIEW_LIMIT_BYTES)
   expect((await sharp(thumb).metadata()).width).toBe(FILE_THUMBNAIL_MAX_EDGE)
-  expect(await readFile(path.join(dir, filename))).toEqual(original)
+  expect((await readFile(path.join(dir, filename))).equals(original)).toBe(true)
 })
 
 test('受控附件流可省略长度，仍校验目标版本并写入完整文件', async () => {

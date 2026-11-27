@@ -1,6 +1,6 @@
 import { execute } from '../src/operations/executors'
 import { resolveSafe } from '../src/workspace/path-safety'
-import { mkdtemp, rm, symlink, writeFile, mkdir, stat, utimes } from 'node:fs/promises'
+import { mkdtemp, realpath, rm, symlink, writeFile, mkdir, stat, utimes } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -40,7 +40,8 @@ const rpc = (operation: RpcRequest['operation'], payload: unknown): RpcRequest =
 })
 
 beforeEach(async () => {
-  workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'rcm-security-'))
+  // 与 Runtime 使用相同的真实路径，避免 Windows 临时目录的路径大小写影响审批快照。
+  workspaceRoot = await realpath(await mkdtemp(path.join(os.tmpdir(), 'rcm-security-')))
   await writeFile(path.join(workspaceRoot, 'README.md'), 'original')
 })
 afterEach(async () => {

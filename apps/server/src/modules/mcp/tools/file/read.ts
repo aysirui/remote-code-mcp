@@ -9,12 +9,12 @@ const inputSchema = McpToolInputs['file.read']
 /**
  * 读取文本或签发原文件下载地址。
  * @param input 目标工作区、相对路径和读取方式。
- * @param context 请求身份、设备路由及下载授权复查。
+ * @param context 请求身份、设备路由及签发授权复查。
  * @returns 文本正文及摘要，或一次性下载凭据。
  */
 async function readFile(
   { workspaceId, ...payload }: z.output<typeof inputSchema>,
-  { hub, userId, clientId, authorizeDownload }: McpToolContext,
+  { hub, userId, clientId, authorizeTransfer }: McpToolContext,
 ) {
   if (payload.encoding === 'stream') {
     const ticket = await hub.prepareFileTransfer(
@@ -24,7 +24,7 @@ async function readFile(
       'file.read',
       payload,
       env.publicUrl,
-      authorizeDownload,
+      authorizeTransfer,
     )
     return { encoding: 'stream', ...ticket }
   }

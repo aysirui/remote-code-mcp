@@ -1,15 +1,19 @@
 import type { INestApplication } from '@nestjs/common'
 import cookieParser from 'cookie-parser'
-import { json, urlencoded, type Request, type Response, type NextFunction } from 'express'
+import { Router, json, urlencoded, type Request, type Response, type NextFunction } from 'express'
 import { RPC_MESSAGE_LIMIT_BYTES } from '@rcm/protocol'
 import { env } from './config/env'
 
 /** 集中装配全局 HTTP 安全头、请求体限制、Cookie、CORS 与认证入口限流。 */
 export function configureHttp(app: INestApplication) {
-  // MCP JSON 请求允许携带 Base64 文件；其他 JSON 接口和 OAuth 表单使用各自的上限。
-  app.use('/mcp', json({ limit: RPC_MESSAGE_LIMIT_BYTES }))
-  app.use(json({ limit: '1mb' }))
-  app.use(urlencoded({ extended: false, limit: '16kb' }))
+  // 文件端点始终传输原始字节，JSON 和表单文件也不能被请求体解析器提前消费。
+  const parsers = Router()
+  parsers.use('/mcp', json({ limit: RPC_MESSAGE_LIMIT_BYTES }))
+  parsers.use(json({ limit: '1mb' }), urlencoded({ extended: false, limit: '16kb' }))
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (/^\/mcp\/files\//i.test(req.path)) return next()
+    parsers(req, res, next)
+  })
   app.use((_req: Request, res: Response, next: NextFunction) => {
     res.setHeader('X-Content-Type-Options', 'nosniff')
     res.setHeader('Referrer-Policy', 'no-referrer')

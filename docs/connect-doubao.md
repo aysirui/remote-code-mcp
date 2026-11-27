@@ -93,6 +93,8 @@ description: 在豆包工作桌面客户端添加 Remote Code MCP 自定义连�
 
 如果 Runtime 发出审批请求，请核对操作内容后批准。修改已有文件时，应使用读取结果中的 SHA-256 进行写入版本检查。
 
+对于任务中已经生成到本地的图片，可用 `file_write` 的 `stream` 模式领取一次性 PUT 地址，再从持有文件的终端上传原始字节。地址有效期为 5 分钟，PUT 无需 OAuth 请求头。见 [文件流验证](./local-development.md#_8-验证连接及文件流)。
+
 ### 查看 Git 状态
 
 ```text

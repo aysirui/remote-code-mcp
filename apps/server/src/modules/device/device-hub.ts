@@ -85,7 +85,7 @@ export class DeviceHub implements OnApplicationBootstrap, OnApplicationShutdown 
     return this.sockets.get(id)?.readyState === WebSocket.OPEN
   }
 
-  /** 核对归属后签发一次性地址；下载复查原 OAuth 授权，执行时再核对工作区权限。 */
+  /** 核对归属后签发一次性地址；领取时复查原 OAuth 授权，执行时再核对工作区权限。 */
   async prepareFileTransfer(
     userId: string,
     clientId: string,
@@ -93,7 +93,7 @@ export class DeviceHub implements OnApplicationBootstrap, OnApplicationShutdown 
     operation: 'file.read' | 'file.write',
     payload: Record<string, unknown>,
     publicUrl: string,
-    authorizeDownload: () => Promise<void>,
+    authorizeTransfer: () => Promise<void>,
   ) {
     try {
       const device = await authorizeDeviceRpc(this.store, userId, workspaceId, operation)
@@ -106,8 +106,8 @@ export class DeviceHub implements OnApplicationBootstrap, OnApplicationShutdown 
       this.execute(userId, clientId, workspaceId, operation, { ...payload, transfer })
     return this.files.prepare(
       operation === 'file.read'
-        ? { method: 'GET', authorizeDownload, run }
-        : { method: 'PUT', userId, clientId, size: Number(payload.size), run },
+        ? { method: 'GET', authorizeTransfer, run }
+        : { method: 'PUT', authorizeTransfer, size: Number(payload.size), run },
       publicUrl,
     )
   }

@@ -28,7 +28,7 @@ export class McpController {
     return res.status(405).end()
   }
 
-  /** MCP 控制请求和上传领取使用同一套 OAuth 凭据校验。 */
+  /** MCP 工具调用校验 OAuth 凭据，文件地址按签发时的授权领取。 */
   private async authenticate(req: Request, res: Response) {
     const bearer = req.headers.authorization?.startsWith('Bearer ')
       ? req.headers.authorization.slice(7)
@@ -59,11 +59,10 @@ export class McpController {
     await this.hub.files.client(id, req, res)
   }
 
-  /** 凭原 OAuth 客户端授权领取上传地址，消费请求中的原始字节。 */
+  /** 凭一次性地址领取上传，复查签发授权后消费请求中的原始字节。 */
   @Put('files/:id')
   async uploadFile(@Param('id') id: string, @Req() req: Request, @Res() res: Response) {
-    const user = await this.authenticate(req, res)
-    if (user) await this.hub.files.client(id, req, res, user)
+    await this.hub.files.client(id, req, res)
   }
 
   /** 设备使用由已授权 RPC 单独下发的一次性凭证接入对应原文件流。 */

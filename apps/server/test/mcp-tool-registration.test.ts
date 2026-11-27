@@ -18,7 +18,7 @@ describe('MCP 工具结果包装', () => {
         store: {} as Store,
         userId: 'user-1',
         clientId: 'client-1',
-        authorizeDownload: async () => {},
+        authorizeTransfer: async () => {},
       }
       const data = {
         content,

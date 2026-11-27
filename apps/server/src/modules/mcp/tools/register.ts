@@ -15,8 +15,8 @@ export interface McpToolContext {
   userId: string
   /** 当前 OAuth 客户端 ID。 */
   clientId: string
-  /** 领取下载地址时复查签发授权。 */
-  authorizeDownload: () => Promise<void>
+  /** 领取原文件传输地址时复查签发授权。 */
+  authorizeTransfer: () => Promise<void>
 }
 
 /** 工具文件提供契约与执行逻辑，由 MCP 入口统一注册。 */

@@ -98,11 +98,11 @@ Git 暂存、提交和高危递归删除保留强制审批；临时命令也需�
 { "workspaceId": "工作区 ID", "path": "public/logo.png", "encoding": "stream" }
 ```
 
-工具返回 `url`、`method` 和 `expiresAt`。在 2 分钟内直接向该地址发出 GET 请求，无需 Bearer Token。地址本身是单文件、单次下载凭据，请勿共享。Server 在领取时复查签发下载地址的 OAuth 授权和工作区权限，Runtime 按原文件策略执行读取和审批。有 HTTP 下载能力的客户端可领取原始字节，用户也可在浏览器打开地址。HTTP/1.1 中继可在响应末尾提供 `X-Content-SHA256`。如果连接中断或地址已被领取，重新调用工具获取地址。
+工具返回 `url`、`method` 和 `expiresAt`。在 5 分钟内直接向该地址发出 GET 请求，无需 Bearer Token。地址本身是单文件、单次下载凭据，请勿共享。Server 在领取时复查签发下载地址的 OAuth 授权和工作区权限，Runtime 按原文件策略执行读取和审批。有 HTTP 下载能力的客户端可领取原始字节，用户也可在浏览器打开地址。HTTP/1.1 中继可在响应末尾提供 `X-Content-SHA256`。如果连接中断或地址已被领取，重新调用工具获取地址。
 
-写入时调用 `file_write`，指定 `encoding: "stream"` 和原文件准确的字节数 `size`。随后向返回的地址发起 PUT 请求，使用同一 OAuth Bearer Token，并以 `Content-Type: application/octet-stream` 发送原始文件。上传成功会返回写入后的 SHA-256。新建时省略 `expectedSha256`，覆盖时提供当前文件的原始字节 SHA-256。Runtime 在确认权限和审批后才开始消费上传流。
+写入时调用 `file_write`，指定 `encoding: "stream"` 和原文件准确的字节数 `size`。在 5 分钟内向返回的地址直接 PUT 原始文件字节，`Content-Type` 可使用文件类型（例如 `image/png`）或 `application/octet-stream`。上传地址本身是单次凭据，无需 OAuth 请求头，请勿共享。Server 在领取时复查签发授权和工作区权限。Runtime 确认权限和审批后才消费上传流。以 HTTP 200 返回的 `written: true` 和 SHA-256 确认写入。新建时省略 `expectedSha256`，覆盖时提供当前文件的原始字节 SHA-256。
 
-客户端可用 `file_write` 的 `attachment` 模式保存附件或编辑产物，传入附件标识 `file.file_id` 和临时下载地址 `file.download_url`。Server 从已配置的可信附件源取回字节，复用设备写入流。附件源未配置或地址不匹配时返回 `FILE_ATTACHMENT_URL_DENIED`。新建时指定目的路径，覆盖时还须提供编辑前原文件的 `expectedSha256`。以 `written: true` 确认写入完成，`stream` 模式要等 PUT 成功。附件源配置见 [私有化部署](./deployment.md)。
+客户端可用 `file_write` 的 `attachment` 模式保存附件或编辑产物，传入来源分配的附件标识 `file.file_id` 和可获取原文件字节的临时地址 `file.download_url`。Server 按地址下载，`file_id` 用于标识附件。初始地址和各跳转目标都必须属于已配置的可信 HTTPS 源，否则返回 `FILE_ATTACHMENT_URL_DENIED`。链接过期、上游拒绝访问或声明为图片的链接返回网页时，返回 `FILE_ATTACHMENT_DOWNLOAD_FAILED`。新建时指定目的路径，覆盖时还须提供编辑前原文件的 `expectedSha256`。以 `written: true` 确认写入完成。附件源配置见 [私有化部署](./deployment.md)。
 
 在支持 MCP Apps 的客户端中，用 `file_preview` 查看图片、音频和视频。媒体字节提供给预览卡片，模型侧收到预览元数据。最多 512 KiB 的媒体直接展示，具体编码由客户端浏览器解码。超过 512 KiB 的图片由 Runtime 生成最长边 768 像素的 WebP 缩略图，原图限 64 MiB 和 4000 万解码像素，卡片支持按需下载原图。缩略图结果的 `size` 和 `sha256` 属于缩略图，`originalSize` 标明原图字节数。大音视频、PDF 和 Office 文件可使用 `file_read stream` 获取原始内容。
 

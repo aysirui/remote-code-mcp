@@ -14,7 +14,7 @@ import { DeviceHub } from '../src/modules/device/device-hub'
 import { McpController } from '../src/modules/mcp/mcp.controller'
 import { OAuthService } from '../src/modules/oauth/oauth.service'
 
-test('一次性地址免请求头下载原始字节，上传和下载签发授权仍受 OAuth 约束', async () => {
+test('凭一次性地址分块传输原始字节，上传和下载领取时复查签发授权', async () => {
   const workspace = { id: randomUUID(), deviceId: 'device', localRead: true, localWrite: true }
   const device = { id: workspace.deviceId, userId: 'owner', status: 'active' }
   const query = {
@@ -77,7 +77,7 @@ test('一次性地址免请求头下载原始字节，上传和下载签发授�
     })
     socket = runtime
     await once(runtime, 'open')
-    const path = 'fixture.bin'
+    const path = 'fixture.png'
     const size = 6 * 1024 * 1024
     const block = Buffer.alloc(64 * 1024, 0xa5)
     let deviceSawUpload!: () => void
@@ -174,36 +174,50 @@ test('一次性地址免请求头下载原始字节，上传和下载签发授�
     await client.connect(new StreamableHTTPClientTransport(mcpUrl, { requestInit: { headers } }))
     const args = { workspaceId: workspace.id, path, encoding: 'stream' }
     const write = await client.callTool({ name: 'file_write', arguments: { ...args, size } })
-    const uploadUrl = String(McpToolOutputs['file.write'].parse(write.structuredContent).url)
+    const uploadTicket = McpToolOutputs['file.write'].parse(write.structuredContent)
+    const uploadUrl = String(uploadTicket.url)
     expect(write.structuredContent).toMatchObject({ method: 'PUT', path })
+    expect(Number(uploadTicket.expiresAt) - Date.now()).toBeGreaterThan(2 * 60_000)
     const wrongMethod = await fetch(uploadUrl, { method: 'POST', headers })
     expect(wrongMethod.status).toBe(404)
     await wrongMethod.body?.cancel()
-    const noUploadAuth = await fetch(uploadUrl, { method: 'PUT' })
-    expect(noUploadAuth.status).toBe(401)
-    await noUploadAuth.body?.cancel()
-    const wrongClient = await fetch(uploadUrl, {
-      method: 'PUT',
-      headers: { Authorization: 'Bearer other-client' },
-    })
-    expect(wrongClient.status).toBe(404)
-    await wrongClient.body?.cancel()
+    const downloadFromUpload = await fetch(uploadUrl)
+    expect(downloadFromUpload.status).toBe(405)
+    expect(downloadFromUpload.headers.get('allow')).toBe('PUT')
     const wrongLength = await fetch(uploadUrl, {
       method: 'PUT',
-      headers: { ...headers, 'Content-Type': 'application/octet-stream' },
+      headers: { 'Content-Type': 'image/png' },
       body: Buffer.from([1]),
     })
     expect(wrongLength.status).toBe(400)
     await wrongLength.body?.cancel()
     const upload: RequestInit & { duplex: 'half' } = {
       method: 'PUT',
-      headers: { ...headers, 'Content-Type': 'application/octet-stream' },
+      headers: { 'Content-Type': 'image/png' },
       body: Readable.from(chunks(deviceFirstChunk)) as unknown as RequestInit['body'],
       duplex: 'half',
     }
     const written = await fetch(uploadUrl, upload)
     expect(written.status).toBe(200)
     expect(await written.json()).toEqual({ path, written: true, sha256 })
+    expect(tokenByHash).toHaveBeenCalledTimes(1)
+    const repeatedUpload = await fetch(uploadUrl, { method: 'PUT' })
+    expect(repeatedUpload.status).toBe(404)
+    await repeatedUpload.body?.cancel()
+
+    const revokedWrite = await client.callTool({
+      name: 'file_write',
+      arguments: { ...args, size: 1 },
+    })
+    revoked = true
+    const revokedUpload = await fetch(
+      String(McpToolOutputs['file.write'].parse(revokedWrite.structuredContent).url),
+      { method: 'PUT', body: Buffer.from([1]) },
+    )
+    expect(revokedUpload.status).toBe(401)
+    expect(await revokedUpload.json()).toEqual({ error: 'FILE_UPLOAD_AUTHORIZATION_EXPIRED' })
+    expect(controlSizes).toHaveLength(1)
+    revoked = false
 
     const read = await client.callTool({ name: 'file_read', arguments: args })
     expect(read.structuredContent).toMatchObject({ method: 'GET', encoding: 'stream' })
@@ -217,8 +231,8 @@ test('一次性地址免请求头下载原始字节，上传和下载签发授�
     await duplicate.body?.cancel()
     expect(download.headers.get('content-type')).toContain('application/octet-stream')
     expect(download.headers.get('cache-control')).toBe('no-store')
-    expect(tokenByHash).toHaveBeenCalledTimes(1)
-    expect(tokenByHash).toHaveBeenCalledWith(tokenHash)
+    expect(tokenByHash).toHaveBeenCalledTimes(3)
+    expect(tokenByHash).toHaveBeenLastCalledWith(tokenHash)
     const downloaded = createHash('sha256')
     for await (const chunk of Readable.fromWeb(
       download.body! as import('node:stream/web').ReadableStream<Uint8Array>,
@@ -237,7 +251,7 @@ test('一次性地址免请求头下载原始字节，上传和下载签发授�
     const rejected = await fetch(revokedUrl)
     expect(rejected.status).toBe(401)
     expect(await rejected.json()).toEqual({ error: 'FILE_DOWNLOAD_AUTHORIZATION_EXPIRED' })
-    expect(tokenByHash).toHaveBeenCalledTimes(2)
+    expect(tokenByHash).toHaveBeenCalledTimes(4)
     expect(controlSizes).toHaveLength(2)
 
     const card = await client.callTool({
@@ -261,15 +275,18 @@ test('一次性地址免请求头下载原始字节，上传和下载签发授�
 
     // 宿主文件引用替身没有 Content-Length，MCP 调用完成时应已精确写入字节。
     const attachmentUrl = 'https://files.example.net/file-fixture?signature=test'
-    const downloadAttachment = jest.fn(
-      async (_options: RequestInit | undefined) => new Response(Uint8Array.from(preview)),
+    const finalAttachmentUrl = 'https://assets.example.org/file-fixture?signature=test'
+    const downloadAttachment = jest.fn(async (url: string, _options: RequestInit | undefined) =>
+      url === attachmentUrl
+        ? Response.redirect(finalAttachmentUrl, 302)
+        : new Response(Uint8Array.from(preview)),
     )
     const originalFetch = globalThis.fetch
     const mocked = jest
       .spyOn(globalThis, 'fetch')
       .mockImplementation((input, options) =>
-        String(input) === attachmentUrl
-          ? downloadAttachment(options)
+        String(input).startsWith('https://')
+          ? downloadAttachment(String(input), options)
           : originalFetch(input, options),
       )
     restoreAttachmentFetch = () => mocked.mockRestore()
@@ -278,7 +295,7 @@ test('一次性地址免请求头下载原始字节，上传和下载签发授�
       workspaceId: workspace.id,
       path: newPath,
       encoding: 'attachment',
-      file: { file_id: 'file-fixture', download_url: attachmentUrl },
+      file: { file_id: 'file-fixture', download_url: attachmentUrl, mime_type: 'image/png' },
     }
     const { tools } = await client.listTools()
     expect(tools.find((tool) => tool.name === 'file_write')).toMatchObject({
@@ -303,23 +320,39 @@ test('一次性地址免请求头下载原始字节，上传和下载签发授�
     })
     expect(controlSizes).toHaveLength(3)
     expect(downloadAttachment).not.toHaveBeenCalled()
+    const deniedRedirect = await client.callTool({ name: 'file_write', arguments: attachmentArgs })
+    expect(deniedRedirect).toMatchObject({
+      isError: true,
+      content: [{ type: 'text', text: 'FILE_ATTACHMENT_URL_DENIED' }],
+    })
+    expect(downloadAttachment).toHaveBeenCalledTimes(1)
+    process.env.MCP_ATTACHMENT_ORIGINS = 'https://files.example.net,https://assets.example.org'
     const saved = await client.callTool({ name: 'file_write', arguments: attachmentArgs })
     expect(saved.structuredContent).toEqual({
       path: newPath,
       written: true,
       sha256: createHash('sha256').update(preview).digest('hex'),
     })
-    expect(downloadAttachment).toHaveBeenCalledTimes(1)
-    expect(downloadAttachment).toHaveBeenCalledWith({
+    expect(downloadAttachment).toHaveBeenCalledTimes(3)
+    expect(downloadAttachment).toHaveBeenLastCalledWith(finalAttachmentUrl, {
       signal: expect.any(AbortSignal),
-      redirect: 'error',
+      redirect: 'manual',
     })
-    expect(controlSizes).toHaveLength(4)
+    expect(controlSizes).toHaveLength(5)
     expect(Math.max(...controlSizes)).toBeLessThan(1024)
 
     downloadAttachment.mockResolvedValueOnce(new Response(null, { status: 410 }))
     const expired = await client.callTool({ name: 'file_write', arguments: attachmentArgs })
     expect(expired).toMatchObject({
+      isError: true,
+      content: [{ type: 'text', text: 'FILE_ATTACHMENT_DOWNLOAD_FAILED' }],
+    })
+
+    downloadAttachment.mockResolvedValueOnce(
+      new Response('<html>Preview</html>', { headers: { 'Content-Type': 'text/html' } }),
+    )
+    const landingPage = await client.callTool({ name: 'file_write', arguments: attachmentArgs })
+    expect(landingPage).toMatchObject({
       isError: true,
       content: [{ type: 'text', text: 'FILE_ATTACHMENT_DOWNLOAD_FAILED' }],
     })
@@ -341,12 +374,29 @@ test('一次性地址免请求头下载原始字节，上传和下载签发授�
       String(McpToolOutputs['file.write'].parse(missingWrite.structuredContent).url),
       {
         method: 'PUT',
-        headers: { ...headers, 'Content-Type': 'application/octet-stream' },
+        headers: { 'Content-Type': 'application/octet-stream' },
         body: Buffer.from([1]),
       },
     )
     expect(missingUpload.status).toBe(404)
     expect(await missingUpload.json()).toEqual({ error: 'FILE_NOT_FOUND' })
+
+    // 带 JSON Content-Type 的原文件也必须绕过请求体解析器，保留原有空格和换行。
+    const jsonBytes = Buffer.from('{ "key": "value" }\r\n')
+    const jsonWrite = await client.callTool({
+      name: 'file_write',
+      arguments: { ...args, path: 'fixture.json', size: jsonBytes.length },
+    })
+    const jsonUpload = await fetch(
+      String(McpToolOutputs['file.write'].parse(jsonWrite.structuredContent).url),
+      { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: jsonBytes },
+    )
+    expect(jsonUpload.status).toBe(200)
+    expect(await jsonUpload.json()).toEqual({
+      path: 'fixture.json',
+      written: true,
+      sha256: createHash('sha256').update(jsonBytes).digest('hex'),
+    })
   } finally {
     restoreAttachmentFetch?.()
     if (publicUrl === undefined) delete process.env.PUBLIC_URL

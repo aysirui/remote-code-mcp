@@ -94,7 +94,7 @@ export const McpToolOutputs = {
     url: z
       .string()
       .optional()
-      .describe('一次性上传地址，必须使用签发地址时同一 OAuth 客户端的有效 Bearer Token'),
+      .describe('五分钟内有效的一次性上传凭据，直接 PUT 完整原始字节，无需 OAuth 请求头'),
     method: z.literal('PUT').optional().describe('上传原始字节时使用的 HTTP 方法'),
     expiresAt,
   }),

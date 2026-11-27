@@ -11,20 +11,16 @@ import {
 } from '@rcm/protocol'
 import { DeviceRpcError } from './device-rpc-pending'
 
-/** 传输方向决定领取授权；短期记录只存放在 Server 内存。 */
+/** 一次性地址绑定传输方向和签发授权，短期记录只存放在 Server 内存。 */
 type TransferRequest = {
   /** 设备控制消息执行原先授权的 File 操作，审批仍由 Runtime 决定。 */
   run: (transfer: { id: string; key: string }) => Promise<unknown>
+  /** 领取地址时复查签发地址使用的 OAuth 授权。 */
+  authorizeTransfer: () => Promise<void>
 } & (
-  | {
-      method: 'GET'
-      /** 复查签发下载地址时的 OAuth 授权。 */ authorizeDownload: () => Promise<void>
-    }
+  | { method: 'GET' }
   | {
       method: 'PUT'
-      /** 创建上传地址时的账号与 OAuth 客户端。 */
-      userId: string
-      clientId: string
       /** 待上传文件的精确字节数。 */
       size: number
     }
@@ -51,8 +47,9 @@ interface Bridge {
   receipt?: { size: number; sha256: string }
 }
 
-/** 待领取地址有效两分钟；每个活跃传输最多使用一次设备 RPC 等待预算。 */
-const TICKET_TTL_MS = 2 * 60_000
+/** 下载地址保留五分钟，上传地址保留五分钟以便客户端交给实际持有文件的进程。 */
+const DOWNLOAD_TICKET_TTL_MS = 5 * 60_000
+const UPLOAD_TICKET_TTL_MS = 5 * 60_000
 const OCTET_STREAM = 'application/octet-stream'
 
 /** 管理一次性文件地址、设备凭证及受限流式中继，文件正文不落到 Server 磁盘。 */
@@ -66,7 +63,7 @@ export class FileTransfers {
     for (const bridge of this.bridges.values()) bridge.controller.abort()
   }
 
-  /** 创建一次性传输地址；下载地址本身是凭据，调用方须先检查工作区归属和权限。 */
+  /** 创建一次性传输凭据，调用方须先检查工作区归属和权限。 */
   prepare(input: TransferRequest, publicUrl: string) {
     const now = Date.now()
     for (const [id, ticket] of this.tickets) {
@@ -74,20 +71,16 @@ export class FileTransfers {
     }
     if (this.tickets.size >= 256) throw new DeviceRpcError('FILE_TRANSFER_BUSY')
     const id = randomUUID()
-    const expiresAt = now + TICKET_TTL_MS
+    const expiresAt = now + (input.method === 'PUT' ? UPLOAD_TICKET_TTL_MS : DOWNLOAD_TICKET_TTL_MS)
     this.tickets.set(id, { ...input, expiresAt })
     return { url: new URL('/mcp/files/' + id, publicUrl).href, method: input.method, expiresAt }
   }
 
-  /** 下载凭地址领取，上传凭账号和客户端领取；按指定 HTTP 方法流式传输原始字节。 */
-  async client(id: string, req: Request, res: Response, user?: { id: string; clientId: string }) {
+  /** 按一次性地址及绑定的 HTTP 方法领取，复查签发授权后流式传输原始字节。 */
+  async client(id: string, req: Request, res: Response) {
     res.set('Cache-Control', 'no-store')
     const ticket = this.tickets.get(id)
-    if (
-      !ticket ||
-      ticket.expiresAt <= Date.now() ||
-      (ticket.method === 'PUT' && (ticket.userId !== user?.id || ticket.clientId !== user.clientId))
-    ) {
+    if (!ticket || ticket.expiresAt <= Date.now()) {
       res.status(404).json({ error: 'FILE_TRANSFER_NOT_FOUND' })
       return
     }
@@ -97,10 +90,6 @@ export class FileTransfers {
     }
     const uploading = ticket.method === 'PUT'
     if (uploading) {
-      if (req.headers['content-type']?.split(';')[0].trim().toLowerCase() !== OCTET_STREAM) {
-        res.status(415).json({ error: 'FILE_CONTENT_TYPE_REQUIRED' })
-        return
-      }
       const length = req.headers['content-length']
       if (length !== undefined && Number(length) !== ticket.size) {
         res.status(400).json({ error: 'FILE_SIZE_MISMATCH' })
@@ -115,7 +104,7 @@ export class FileTransfers {
     const controller = new AbortController()
     res.once('close', () => controller.abort())
     try {
-      if (ticket.method === 'GET') await ticket.authorizeDownload()
+      await ticket.authorizeTransfer()
       const { data, receipt } = await this.relay(
         id,
         ticket.run,
@@ -156,7 +145,10 @@ export class FileTransfers {
       res.removeHeader('Content-Disposition')
       res.removeHeader('Content-Type')
       if (error instanceof UnauthorizedException) {
-        res.status(401).json({ error: 'FILE_DOWNLOAD_AUTHORIZATION_EXPIRED' })
+        const code = uploading
+          ? 'FILE_UPLOAD_AUTHORIZATION_EXPIRED'
+          : 'FILE_DOWNLOAD_AUTHORIZATION_EXPIRED'
+        res.status(401).json({ error: code })
         return
       }
       const code = error instanceof DeviceRpcError ? error.message : 'FILE_TRANSFER_FAILED'

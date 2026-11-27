@@ -15,7 +15,7 @@ export class OAuthService {
     return this.tokenByHash(hash(raw))
   }
 
-  /** 按摘要复查原授权是否有效；一次性下载地址无需保存或交付原始 Token。 */
+  /** 按摘要复查原授权是否有效；一次性传输地址无需保存或交付原始 Token。 */
   async tokenByHash(tokenHash: string) {
     const t = await this.repository.accessToken(tokenHash)
     if (

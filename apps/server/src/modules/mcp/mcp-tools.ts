@@ -21,16 +21,16 @@ import { gitCommit } from './tools/git/commit'
 import { commandList } from './tools/command/list'
 import { commandRun } from './tools/command/run'
 
-/** 为当前用户与客户端注册工具；authorizeDownload 用于领取地址时复查签发授权。 */
+/** 为当前用户与客户端注册工具，保留领取文件地址时的签发授权复查。 */
 export function registerMcpTools(
   server: McpServer,
   hub: DeviceHub,
   store: Store,
   userId: string,
   clientId: string,
-  authorizeDownload: () => Promise<void>,
+  authorizeTransfer: () => Promise<void>,
 ) {
-  const context = { hub, store, userId, clientId, authorizeDownload }
+  const context = { hub, store, userId, clientId, authorizeTransfer }
   const { name, uri, mimeType, description, text } = filePreviewResource
   server.registerResource(name, uri, { mimeType, description }, async () => ({
     contents: [{ uri, mimeType, text }],

@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.0](https://github.com/aysirui/remote-code-mcp/compare/v0.3.1...v0.4.0) (2026-11-27)
+
+
+### Features
+
+* **console:** 支持本地运行与 ngrok 公网接入 ([2875bf6](https://github.com/aysirui/remote-code-mcp/commit/2875bf6bdf80819b759a6263743330c1a98ea913))
+* **mcp:** 扩展文件读写与预览并按领域组织工具 ([8f5b0f7](https://github.com/aysirui/remote-code-mcp/commit/8f5b0f753a514e4b053711054b8f16f36fca8592))
+* **mcp:** 支持原文件流式传输与图片预览 ([7c4fb95](https://github.com/aysirui/remote-code-mcp/commit/7c4fb95ece25ee1a74fc349b810a4f69ff9a231d))
+
+
+### Bug Fixes
+
+* **mcp:** 修复流式上传和附件写入失败 ([2c9bb67](https://github.com/aysirui/remote-code-mcp/commit/2c9bb676ec6417497521a9cbb9382ef1d911e2a7))
+* **mcp:** 明确文件缺失状态并补齐操作记录中文名 ([a847262](https://github.com/aysirui/remote-code-mcp/commit/a847262bb62e9b79bb40a2806c6e3910b22077cf))
+* **mcp:** 移除文件内联读取模式 ([a69739f](https://github.com/aysirui/remote-code-mcp/commit/a69739fc6f54afabd53dda81e60c5251a3cffdfa))
+* **oauth:** 修复 Console 登录后的授权回跳 ([9a68645](https://github.com/aysirui/remote-code-mcp/commit/9a686457201aeea2977f6b582c197deb8003163f))
+
 ## [0.3.1](https://github.com/aysirui/remote-code-mcp/compare/v0.3.0...v0.3.1) (2026-11-26)
 
 

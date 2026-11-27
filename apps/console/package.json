@@ -1,6 +1,6 @@
 {
   "name": "@rcm/console",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Remote Code MCP 的 Web 管理台",
   "license": "AGPL-3.0-only",
   "repository": {
